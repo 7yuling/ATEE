@@ -1,0 +1,20 @@
+{
+  "agent_paused": false,
+  "appeal_paths": [
+    "/atee-appeal",
+    "/security/appeal",
+    "/.well-known/atee-appeal",
+    "/api/appeal/submit"
+  ],
+  "auto_ip_ban_enabled": false,
+  "bypass_enabled": false,
+  "bypass_key_file": null,
+  "ledger_max_bytes": 268435456,
+  "local_precheck_ms": 100,
+  "locale": "zh-CN",
+  "remote_hard_timeout_ms": 5000,
+  "remote_soft_timeout_ms": 3000,
+  "runtime_mode": "observe",
+  "trusted_proxy_cidrs": []
+}
+
