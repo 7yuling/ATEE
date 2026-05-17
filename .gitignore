@@ -1,5 +1,16 @@
 __pycache__/
 *.pyc
 *.log
+*.env
+!*.env.example
+node_modules/
+reports/
+logs/
+runtime/
+backups/
 config/config.json
-
+config/secrets/
+*.key
+*.secret
+data/*.sqlite3
+data/*.sqlite3-*

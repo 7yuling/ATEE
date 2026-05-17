@@ -36,6 +36,10 @@ class AgentDecisionEngine:
         evidence = 0.0
         if packet.get("fast_path_signal", {}).get("rule_id"):
             evidence = 0.80
+        elif signals.intersection({"credential_attack", "撞库", "password_spray"}):
+            evidence = 0.60
+        elif signals.intersection({"spam", "scam", "广告", "刷屏", "诈骗", "赌博"}):
+            evidence = 0.35
         elif "union select" in signals or "script" in signals:
             evidence = 0.60
         elif signals:
@@ -105,4 +109,3 @@ class AgentDecisionEngine:
         if action == "feature_ban":
             return {"type": "feature", "name": packet.get("endpoint_type") or "unknown"}
         return {"type": "request"}
-

@@ -72,7 +72,29 @@ class PromptPacketCompiler:
         text = str(redacted)
         signals = []
         lowered = text.lower()
-        for signal in ("script", "union select", "password", "token", "phone", "@", "密码", "手机号", "手机", "邮箱", "身份证", "银行卡", "验证码"):
+        for signal in (
+            "script",
+            "union select",
+            "password",
+            "token",
+            "phone",
+            "@",
+            "密码",
+            "手机号",
+            "手机",
+            "邮箱",
+            "身份证",
+            "银行卡",
+            "验证码",
+            "spam",
+            "scam",
+            "广告",
+            "刷屏",
+            "诈骗",
+            "赌博",
+            "撞库",
+            "password_spray",
+        ):
             if signal in lowered:
                 signals.append(signal)
         return {

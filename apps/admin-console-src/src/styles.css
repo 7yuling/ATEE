@@ -1,0 +1,238 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f5f7fb;
+  color: #20242a;
+  letter-spacing: 0;
+}
+
+.atee-shell {
+  min-height: 100vh;
+}
+
+.atee-sider {
+  background: #ffffff !important;
+  border-right: 1px solid #d9dee7;
+}
+
+.brand-block {
+  min-height: 96px;
+  padding: 20px;
+  border-bottom: 1px solid #d9dee7;
+}
+
+.brand-block h3 {
+  margin: 0 0 4px;
+}
+
+.atee-header {
+  min-height: 88px;
+  height: auto;
+  padding: 16px 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #d9dee7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.atee-header h2 {
+  margin: 0 0 4px;
+}
+
+.atee-content {
+  padding: 20px 24px 32px;
+}
+
+.top-alert {
+  margin-bottom: 16px;
+}
+
+.auth-panel {
+  margin-bottom: 16px;
+}
+
+.guard-alert {
+  margin-bottom: 16px;
+}
+
+.workspace-tabs {
+  margin-top: 16px;
+}
+
+.atee-content .ant-card-body {
+  min-width: 0;
+}
+
+.metric-card .ant-card-body {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.metric-title {
+  color: #667085;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.metric-value {
+  min-width: 0;
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #111827;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.metric-value .anticon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  font-size: 24px;
+}
+
+.metric-value span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.metric-extra {
+  margin-top: 10px;
+}
+
+.table-actions {
+  margin-bottom: 12px;
+}
+
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover td {
+  background: #f0f6ff !important;
+}
+
+.review-form {
+  margin-top: 16px;
+  gap: 8px;
+}
+
+.review-form .ant-form-item {
+  margin-bottom: 8px;
+}
+
+.ant-input-number {
+  width: 100%;
+}
+
+.guide-meta {
+  margin-top: 8px;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.json-row {
+  margin-top: 16px;
+}
+
+.summary-card .ant-card-body {
+  min-width: 0;
+}
+
+.summary-block {
+  min-width: 0;
+}
+
+.summary-block .ant-descriptions-item-content,
+.summary-block .ant-descriptions-item-label {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.result-message {
+  margin-bottom: 12px;
+}
+
+.json-details {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #eaecf0;
+}
+
+.json-details summary {
+  cursor: pointer;
+  color: #344054;
+  font-weight: 600;
+}
+
+pre {
+  min-height: 220px;
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #101828;
+  color: #f8fafc;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-details pre {
+  min-height: 120px;
+  max-height: 260px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.ant-card {
+  border-radius: 6px;
+}
+
+.ant-table-cell {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .atee-shell {
+    display: block;
+  }
+
+  .atee-sider {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  .atee-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .atee-content {
+    padding: 16px;
+  }
+
+  .metric-value {
+    font-size: 24px;
+  }
+}

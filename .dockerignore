@@ -1,0 +1,13 @@
+.git/
+__pycache__/
+*.pyc
+*.log
+node_modules/
+config/config.json
+config/secrets/
+data/
+reports/
+backups/
+*.key
+*.secret
+*.zip

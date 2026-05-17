@@ -3,56 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csp-nonce" content="__ATEE_CSP_NONCE__">
   <title>ATEE 管理控制台</title>
-  <link rel="stylesheet" href="/admin/styles.css">
-  <script defer src="/admin/admin.js"></script>
+  <script type="module" crossorigin src="/admin/admin.js"></script>
+  <link rel="modulepreload" crossorigin href="/admin/admin-rolldown-runtime.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-_util.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-icons.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-card.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-button.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-dropdown.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-input.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-input-number.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-alert.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-col.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-descriptions.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-form.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-config-provider.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-list.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-checkbox.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-radio.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-table.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-typography.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-calendar.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-core.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-switch.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-layout.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-popconfirm.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-row.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-tag.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-antd-theme.js">
+  <link rel="modulepreload" crossorigin href="/admin/admin-react.js">
+  <link rel="stylesheet" crossorigin href="/admin/styles.css">
 </head>
 <body>
-  <header>
-    <h1>ATEE 管理控制台</h1>
-    <span id="statusText" class="label">正在连接</span>
-  </header>
-  <main>
-    <nav aria-label="主导航">
-      <button class="active" data-view="dashboard">仪表盘</button>
-      <button data-view="onboarding">新手引导</button>
-      <button data-view="fastpath">快速规则报告</button>
-      <button data-view="appeals">申诉处理</button>
-      <button data-view="config">配置状态</button>
-      <button data-view="runtime">运行模式</button>
-      <button data-view="breakglass">紧急旁路</button>
-    </nav>
-    <section>
-      <div class="grid" aria-label="状态卡片">
-        <div class="card"><span class="label">当前模式</span><strong id="runtime" class="value">-</strong></div>
-        <div class="card"><span class="label">Agent 状态</span><strong id="paused" class="value">-</strong></div>
-        <div class="card"><span class="label">账本记录</span><strong id="ledger" class="value">-</strong></div>
-        <div class="card"><span class="label">待处理申诉</span><strong id="appeals" class="value">-</strong></div>
-      </div>
-      <div class="panel">
-        <div class="toolbar">
-          <button id="refreshBtn" title="刷新运行状态">刷新</button>
-          <button id="observeBtn" title="切换到观察模式">观察模式</button>
-          <button id="autoBtn" title="切换到自动模式">自动模式</button>
-          <button id="pauseBtn" title="暂停或恢复 Agent">暂停/恢复</button>
-        </div>
-        <pre id="output" aria-live="polite"></pre>
-      </div>
-      <div class="panel">
-        <div class="toolbar">
-          <button id="testSafeBtn" title="发送低风险只读请求">测试安全请求</button>
-          <button id="testAttackBtn" title="发送 XSS 样例请求">测试快速拦截</button>
-          <button id="testAppealBtn" title="提交示例申诉">测试申诉</button>
-          <button id="configBtn" title="查看当前配置">配置状态</button>
-          <button id="breakGlassBtn" title="检查紧急旁路状态">紧急旁路状态</button>
-        </div>
-        <pre id="result" aria-live="polite"></pre>
-      </div>
-      <div class="panel" aria-labelledby="guideTitle">
-        <h2 id="guideTitle" class="value">新手引导</h2>
-        <ul id="guideList" class="guide-list"></ul>
-      </div>
-    </section>
-  </main>
+  <div id="root"></div>
 </body>
 </html>

@@ -1,0 +1,19 @@
+services:
+  atee-core:
+    build:
+      context: .
+    image: atee-core:p0
+    environment:
+      ATEE_HOST: "0.0.0.0"
+      ATEE_PORT: "8787"
+      ATEE_LLM_API_KEY: "${ATEE_LLM_API_KEY:-}"
+    ports:
+      - "8787:8787"
+    volumes:
+      - atee-config:/app/config
+      - atee-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  atee-config:
+  atee-data:

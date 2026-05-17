@@ -1,5 +1,8 @@
 {
   "agent_paused": false,
+  "admin_auth_enabled": false,
+  "admin_token_env": "ATEE_ADMIN_TOKEN",
+  "admin_token_file": null,
   "appeal_paths": [
     "/atee-appeal",
     "/security/appeal",
@@ -10,6 +13,15 @@
   "bypass_enabled": false,
   "bypass_key_file": null,
   "ledger_max_bytes": 268435456,
+  "ledger_sqlite_path": "data/atee_ledger.sqlite3",
+  "llm_api_base": null,
+  "llm_api_key_env": "ATEE_LLM_API_KEY",
+  "llm_api_key_file": null,
+  "llm_daily_budget_cents": 0,
+  "llm_mode": "mock",
+  "llm_model": "atee-local-mock-v1",
+  "llm_proxy_url": null,
+  "llm_provider": "mock",
   "local_precheck_ms": 100,
   "locale": "zh-CN",
   "remote_hard_timeout_ms": 5000,
@@ -17,4 +29,3 @@
   "runtime_mode": "observe",
   "trusted_proxy_cidrs": []
 }
-

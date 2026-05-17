@@ -1,7 +1,10 @@
+import base64
 import json
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from .core import CoreService
 
@@ -12,20 +15,33 @@ ADMIN_DIR = ROOT / "apps" / "admin-console"
 ADMIN_INDEX = ADMIN_DIR / "index.html"
 ADMIN_STYLES = ADMIN_DIR / "styles.css"
 ADMIN_JS = ADMIN_DIR / "admin.js"
+ADMIN_ASSET_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+}
 
 
 class AteeHandler(BaseHTTPRequestHandler):
     server_version = "ATEECore/0.1"
 
     def do_GET(self) -> None:
+        if self._is_admin_api_path() and not self._ensure_admin_auth():
+            return
         if self.path in {"/", "/admin"}:
             self._send_html(ADMIN_INDEX.read_text(encoding="utf-8"))
+            return
+        if self.path == "/favicon.ico":
+            self._send_text("", "image/x-icon", status=204)
             return
         if self.path == "/admin/styles.css":
             self._send_text(ADMIN_STYLES.read_text(encoding="utf-8"), "text/css; charset=utf-8")
             return
         if self.path == "/admin/admin.js":
             self._send_text(ADMIN_JS.read_text(encoding="utf-8"), "application/javascript; charset=utf-8")
+            return
+        if self.path.startswith("/admin/"):
+            self._send_admin_asset()
             return
         if self.path == "/health":
             self._send_json({"ok": True})
@@ -36,12 +52,26 @@ class AteeHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/admin/config":
             self._send_json(CORE.config_status())
             return
+        if self.path == "/v1/admin/llm/test":
+            self._send_json(CORE.test_llm_gateway())
+            return
+        if self.path.startswith("/v1/admin/ledger/recent"):
+            self._send_json(CORE.ledger_recent(self._query_limit(default=20)))
+            return
+        if self.path.startswith("/v1/admin/appeals"):
+            self._send_json(CORE.admin_appeals(self._query_value("status", "pending"), self._query_limit(default=50)))
+            return
+        if self.path.startswith("/v1/admin/actions"):
+            self._send_json(CORE.admin_actions(self._query_value("status", "active")))
+            return
         if self.path == "/v1/onboarding/steps":
             self._send_json(CORE.onboarding_steps())
             return
         self._send_json({"error": "not_found"}, status=404)
 
     def do_POST(self) -> None:
+        if self._is_admin_api_path() and not self._ensure_admin_auth():
+            return
         payload = self._read_json()
         remote_addr = self.client_address[0] if self.client_address else "127.0.0.1"
         if self.path == "/v1/check":
@@ -55,21 +85,48 @@ class AteeHandler(BaseHTTPRequestHandler):
             self._send_json(result, status=int(result.get("status", 200)))
             return
         if self.path == "/v1/admin/mode":
-            self._send_json(CORE.set_mode(payload))
+            self._send_json(CORE.set_mode(payload, actor=self._admin_actor()))
             return
         if self.path == "/v1/admin/pause-agent":
-            self._send_json(CORE.pause_agent(payload))
+            self._send_json(CORE.pause_agent(payload, actor=self._admin_actor()))
             return
         if self.path == "/v1/admin/config":
-            self._send_json(CORE.update_config(payload))
+            self._send_json(CORE.update_config(payload, actor=self._admin_actor()))
+            return
+        if self.path == "/v1/admin/llm/test":
+            self._send_json(CORE.test_llm_gateway())
             return
         if self.path == "/v1/admin/break-glass/status":
-            self._send_json(CORE.break_glass_status(dict(self.headers.items())))
+            self._send_json(CORE.break_glass_status(dict(self.headers.items()), actor=self._admin_actor()))
+            return
+        if self.path == "/v1/admin/appeals/review":
+            result = CORE.review_appeal(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/actions/revoke":
+            result = CORE.revoke_action(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/actions/cleanup-expired":
+            self._send_json(CORE.cleanup_expired_actions(actor=self._admin_actor()))
             return
         self._send_json({"error": "not_found"}, status=404)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _is_admin_api_path(self) -> bool:
+        return self.path == "/v1/admin" or self.path.startswith("/v1/admin/")
+
+    def _ensure_admin_auth(self) -> bool:
+        if CORE.admin_authorized(dict(self.headers.items())):
+            return True
+        self._send_json(CORE.admin_auth_challenge(), status=401)
+        return False
+
+    def _admin_actor(self) -> dict[str, str]:
+        remote_addr = self.client_address[0] if self.client_address else ""
+        return CORE.admin_actor_from_headers(dict(self.headers.items()), remote_addr=remote_addr)
 
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -82,28 +139,93 @@ class AteeHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _query_limit(self, default: int = 20) -> int:
+        value = self._query_value("limit", "")
+        if not value:
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
+    def _query_value(self, name: str, default: str = "") -> str:
+        if "?" not in self.path:
+            return default
+        query = self.path.split("?", 1)[1]
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == name:
+                return value
+        return default
+
     def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'")
+        self.send_header("Content-Security-Policy", self._content_security_policy())
         self.end_headers()
         self.wfile.write(body)
 
     def _send_html(self, text: str, status: int = 200) -> None:
-        self._send_text(text, "text/html; charset=utf-8", status=status)
+        nonce = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+        self._send_text(
+            text.replace("__ATEE_CSP_NONCE__", nonce),
+            "text/html; charset=utf-8",
+            status=status,
+            csp_nonce=nonce,
+        )
 
-    def _send_text(self, text: str, content_type: str, status: int = 200) -> None:
+    def _send_text(self, text: str, content_type: str, status: int = 200, csp_nonce: str | None = None) -> None:
         body = text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'")
+        self.send_header("Content-Security-Policy", self._content_security_policy(csp_nonce))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", self._content_security_policy())
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_admin_asset(self) -> None:
+        path = unquote(urlsplit(self.path).path)
+        relative_name = path.removeprefix("/admin/")
+        asset_path = (ADMIN_DIR / relative_name).resolve()
+        admin_root = ADMIN_DIR.resolve()
+        content_type = ADMIN_ASSET_TYPES.get(asset_path.suffix.lower())
+        if not content_type or not asset_path.is_relative_to(admin_root) or not asset_path.is_file():
+            self._send_json({"error": "not_found"}, status=404)
+            return
+        self._send_bytes(asset_path.read_bytes(), content_type)
+
+    def _content_security_policy(self, nonce: str | None = None) -> str:
+        script_src = "script-src 'self'"
+        style_src = "style-src 'self'"
+        style_src_elem = "style-src-elem 'self'"
+        if nonce:
+            script_src += f" 'nonce-{nonce}'"
+            style_src += f" 'nonce-{nonce}'"
+            style_src_elem += f" 'nonce-{nonce}'"
+        return (
+            "default-src 'self'; "
+            f"{script_src}; "
+            f"{style_src}; "
+            f"{style_src_elem}; "
+            "style-src-attr 'unsafe-inline'; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'"
+        )
 
 
 def run(host: str = "127.0.0.1", port: int = 8787) -> None:

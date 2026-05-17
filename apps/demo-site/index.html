@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATEE Demo Site</title>
+  <link rel="stylesheet" href="/demo/styles.css">
+  <script defer src="/demo/demo.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <section class="topbar" aria-label="ATEE Demo">
+      <img class="brand-mark" src="/assets/flow.svg" alt="ATEE">
+      <div>
+        <h1>ATEE 业务演示站</h1>
+        <p id="statusText">Core Service: http://127.0.0.1:8787</p>
+      </div>
+    </section>
+
+    <section class="workspace" aria-label="业务操作区">
+      <form class="panel" id="loginForm">
+        <h2>登录</h2>
+        <label>用户名<input name="username" value="demo-user" autocomplete="username"></label>
+        <label>密码<input name="password" value="demo-pass" type="password" autocomplete="current-password"></label>
+        <button type="submit">提交登录</button>
+      </form>
+
+      <form class="panel" id="commentForm">
+        <h2>评论</h2>
+        <label>内容<textarea name="text" rows="5">这是一条正常评论</textarea></label>
+        <button type="submit">发布评论</button>
+      </form>
+
+      <form class="panel" id="uploadForm">
+        <h2>上传</h2>
+        <label>文件名<input name="filename" value="demo.txt"></label>
+        <label>文本摘要<textarea name="text" rows="5">普通文件内容摘要</textarea></label>
+        <button type="submit">提交上传</button>
+      </form>
+
+      <form class="panel" id="appealForm">
+        <h2>申诉</h2>
+        <label>处罚编号<input name="punishment_id" value="demo-punishment"></label>
+        <label>理由<textarea name="reason" rows="5">我认为这次处理可能有误，请管理员复核。</textarea></label>
+        <button type="submit">提交申诉</button>
+      </form>
+    </section>
+
+    <section class="result" aria-label="结果">
+      <h2>结果</h2>
+      <div id="resultList" class="result-list"></div>
+    </section>
+  </main>
+</body>
+</html>

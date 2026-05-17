@@ -1,0 +1,38 @@
+# ATEE reverse proxy example for Caddy with SSO identity injection.
+# Replace atee.example.com and oauth2-proxy upstream before use.
+#
+# This example assumes an auth_request-compatible SSO gateway such as oauth2-proxy.
+# The browser must not be allowed to choose X-ATEE-Admin-Id. Caddy removes that
+# request header before SSO and then copies the authenticated identity into it.
+
+atee.example.com {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    request_body {
+        max_size 2MB
+    }
+
+    request_header -X-ATEE-Admin-Id
+
+    forward_auth 127.0.0.1:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-Email>X-ATEE-Admin-Id
+    }
+
+    reverse_proxy 127.0.0.1:8787 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {remote_host}
+        header_up X-ATEE-Admin-Id {http.request.header.X-ATEE-Admin-Id}
+    }
+}

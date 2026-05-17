@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -10,11 +13,13 @@ from .fast_path import FastPathRuleGate
 from .i18n import response_display, runtime_display
 from .ip_resolver import TrustedRealIpResolver
 from .ledger import SecurityLedgerLite
+from .llm_gateway import RemoteLLMGateway
 from .models import RequestContext
 from .onboarding import get_onboarding_steps
 from .prompt_packet import PromptPacketCompiler
 from .router import RequestRouter
-from .runtime import RuntimeController
+from .runtime import RuntimeController, VALID_MODES
+from .secret_store import SecretStoreError, load_secret_file
 from .tool_gateway import ToolGateway
 
 
@@ -27,16 +32,20 @@ class CoreService:
             self.config = self.config_store.load()
         else:
             self.config = deepcopy(DEFAULT_CONFIG)
+        self.project_root = self._infer_project_root()
+        self._load_admin_token()
         self._load_bypass_key()
         self.ip_resolver = TrustedRealIpResolver(self.config.trusted_proxy_cidrs)
         self.fast_path = FastPathRuleGate()
         self.router = RequestRouter()
         self.packet_compiler = PromptPacketCompiler()
         self.decision_engine = AgentDecisionEngine()
+        self.llm_gateway = RemoteLLMGateway(self.config, base_dir=self.project_root)
         self.tool_gateway = ToolGateway()
-        self.executor = ActionExecutor()
-        self.ledger = SecurityLedgerLite(self.config.ledger_max_bytes)
-        self.appeals = AppealService()
+        state_sqlite_path = self._resolve_project_path(self.config.ledger_sqlite_path)
+        self.executor = ActionExecutor(state_sqlite_path)
+        self.ledger = SecurityLedgerLite(self.config.ledger_max_bytes, state_sqlite_path)
+        self.appeals = AppealService(state_sqlite_path)
         self.runtime = RuntimeController(self.config)
 
     def check(self, payload: dict[str, Any], remote_addr: str = "127.0.0.1") -> dict[str, Any]:
@@ -58,7 +67,7 @@ class CoreService:
                     "summary": "low-risk request skipped",
                 }
             )
-            return self._response(ctx, real_ip, fast_path, route, {"selected_action": "allow"}, None, ledger_record, None)
+            return self._response(ctx, real_ip, fast_path, route, {"selected_action": "allow"}, None, ledger_record, None, None)
 
         if route["route"] == "fast_path_block":
             packet = self.packet_compiler.compile(ctx, real_ip, fast_path, route)
@@ -88,10 +97,12 @@ class CoreService:
             }
             gateway = self.tool_gateway.validate(decision, real_ip, self.config)
             action_record = self.executor.execute(decision, gateway)
-            return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record)
+            return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record, None)
 
         packet = self.packet_compiler.compile(ctx, real_ip, fast_path, route)
-        decision = self.decision_engine.decide(packet, route, payload.get("agent_decision"))
+        llm_result = self.llm_gateway.review(packet, route)
+        agent_decision = payload.get("agent_decision") or llm_result.get("agent_decision")
+        decision = self.decision_engine.decide(packet, route, agent_decision)
         gateway = self.tool_gateway.validate(decision, real_ip, self.config)
         action_record = self.executor.execute(decision, gateway)
         ledger_record = self.ledger.record(
@@ -102,10 +113,10 @@ class CoreService:
                 "rule_id": fast_path.get("rule_id"),
                 "endpoint_type": route.get("event_type"),
                 "action": gateway.get("effective_action"),
-                "summary": decision.get("admin_explanation", ""),
+                "summary": f"{decision.get('admin_explanation', '')} llm_reason={llm_result.get('reason')}",
             }
         )
-        return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record)
+        return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record, llm_result)
 
     def event(self, payload: dict[str, Any], remote_addr: str = "127.0.0.1") -> dict[str, Any]:
         event_payload = dict(payload)
@@ -136,23 +147,38 @@ class CoreService:
             **self.runtime.status(),
             "ledger": self.ledger.status(),
             "actions_executed": len(self.executor.actions),
+            "active_actions": len(self.executor.list_actions(status="active")),
             "pending_appeals": sum(1 for appeal in self.appeals.appeals.values() if appeal["status"] == "pending"),
+            "llm_gateway": self.llm_gateway.status(),
+            "admin_auth": self.admin_auth_status(),
             "config": self.config_store.public_payload(self.config) if self.config_store else config_to_dict(self.config),
         }
         status["display"] = runtime_display(status)
         return status
 
-    def set_mode(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def set_mode(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         result = self.runtime.set_mode(str(payload.get("mode", "")))
         if result.get("ok"):
             self._save_config()
+            self._record_admin_audit(
+                "admin_runtime_mode",
+                "set_mode",
+                f"runtime_mode={result.get('mode')}",
+                actor,
+            )
         result["display"] = runtime_display(self.runtime.status())
         return result
 
-    def pause_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def pause_agent(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         result = self.runtime.pause_agent(bool(payload.get("paused", True)))
         if result.get("ok"):
             self._save_config()
+            self._record_admin_audit(
+                "admin_pause_agent",
+                "pause_agent",
+                f"agent_paused={result.get('agent_paused')}",
+                actor,
+            )
         result["display"] = runtime_display(self.runtime.status())
         return result
 
@@ -166,8 +192,9 @@ class CoreService:
             },
         }
 
-    def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def update_config(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         allowed = {
+            "runtime_mode",
             "locale",
             "trusted_proxy_cidrs",
             "auto_ip_ban_enabled",
@@ -175,6 +202,18 @@ class CoreService:
             "remote_soft_timeout_ms",
             "remote_hard_timeout_ms",
             "ledger_max_bytes",
+            "ledger_sqlite_path",
+            "admin_auth_enabled",
+            "admin_token_file",
+            "admin_token_env",
+            "llm_mode",
+            "llm_provider",
+            "llm_model",
+            "llm_api_base",
+            "llm_api_key_file",
+            "llm_api_key_env",
+            "llm_proxy_url",
+            "llm_daily_budget_cents",
             "bypass_enabled",
             "bypass_key_file",
         }
@@ -185,9 +224,13 @@ class CoreService:
             value = payload[key]
             if key == "trusted_proxy_cidrs":
                 value = [str(item) for item in (value or [])]
-            elif key.endswith("_ms") or key == "ledger_max_bytes":
+            elif key == "runtime_mode":
+                value = str(value)
+                if value not in VALID_MODES:
+                    continue
+            elif key.endswith("_ms") or key in {"ledger_max_bytes", "llm_daily_budget_cents"}:
                 value = int(value)
-            elif key in {"auto_ip_ban_enabled", "bypass_enabled"}:
+            elif key in {"auto_ip_ban_enabled", "bypass_enabled", "admin_auth_enabled"}:
                 value = bool(value)
             elif value is not None:
                 value = str(value)
@@ -195,13 +238,27 @@ class CoreService:
             changed[key] = value
 
         if changed:
+            self._load_admin_token()
             self._load_bypass_key()
             self.ip_resolver = TrustedRealIpResolver(self.config.trusted_proxy_cidrs)
-            self.ledger.max_bytes = self.config.ledger_max_bytes
+            self.llm_gateway = RemoteLLMGateway(self.config, base_dir=self.project_root)
+            if "ledger_max_bytes" in changed or "ledger_sqlite_path" in changed:
+                state_sqlite_path = self._resolve_project_path(self.config.ledger_sqlite_path)
+                self.ledger = SecurityLedgerLite(self.config.ledger_max_bytes, state_sqlite_path)
+                if "ledger_sqlite_path" in changed:
+                    self.executor = ActionExecutor(state_sqlite_path)
+                    self.appeals = AppealService(state_sqlite_path)
             self._save_config()
+            public_changed = self._public_changed(changed)
+            self._record_admin_audit(
+                "admin_config_update",
+                "update_config",
+                f"changed_keys={','.join(sorted(public_changed))}",
+                actor,
+            )
         return {
             "ok": True,
-            "changed": changed,
+            "changed": self._public_changed(changed),
             "config": self.config_store.public_payload(self.config) if self.config_store else config_to_dict(self.config),
             "display": {
                 "locale": "zh-CN",
@@ -212,32 +269,259 @@ class CoreService:
     def onboarding_steps(self) -> dict[str, Any]:
         return get_onboarding_steps()
 
+    def test_llm_gateway(self) -> dict[str, Any]:
+        return self.llm_gateway.test_connection()
+
+    def ledger_recent(self, limit: int = 20) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "records": self.ledger.recent(limit),
+            "status": self.ledger.status(),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "最近账本记录已返回。低危聚合事件不会高频写入 SQLite。",
+            },
+        }
+
+    def admin_appeals(self, status: str = "pending", limit: int = 50) -> dict[str, Any]:
+        appeals = self.appeals.list(status=status, limit=limit)
+        return {
+            "ok": True,
+            "appeals": appeals,
+            "count": len(appeals),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "申诉列表已返回。申诉理由按不可信文本处理。",
+            },
+        }
+
+    def review_appeal(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        result = self.appeals.review(payload)
+        if result.get("ok"):
+            appeal = result["appeal"]
+            self.ledger.record(
+                {
+                    "severity": "medium",
+                    "event_type": "appeal_review",
+                    "endpoint_type": "admin",
+                    "action": f"appeal_{appeal.get('status')}",
+                    "summary": self._admin_summary(
+                        f"appeal_review punishment_id={appeal.get('punishment_id')}",
+                        actor,
+                    ),
+                }
+            )
+        result["display"] = {
+            "locale": "zh-CN",
+            "message_zh": "申诉审核已保存。" if result.get("ok") else "申诉审核未保存，请检查处罚编号和审核结果。",
+        }
+        return result
+
+    def admin_actions(self, status: str = "active") -> dict[str, Any]:
+        actions = self.executor.list_actions(status=status)
+        return {
+            "ok": True,
+            "actions": actions,
+            "count": len(actions),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "动作列表已返回。撤销只影响 ATEE 执行动作记录。",
+            },
+        }
+
+    def revoke_action(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        try:
+            action_id = int(payload.get("action_id"))
+        except (TypeError, ValueError):
+            result = {"ok": False, "status": 400, "reason": "action_id_required"}
+        else:
+            result = self.executor.revoke(action_id, str(payload.get("reason") or ""))
+        if result.get("ok"):
+            action = result["action"]
+            self.ledger.record(
+                {
+                    "severity": "medium",
+                    "event_type": "action_revoke",
+                    "endpoint_type": "admin",
+                    "action": "revoke_action",
+                    "summary": self._admin_summary(
+                        f"action_revoke id={action.get('id')} action={action.get('action')}",
+                        actor,
+                    ),
+                }
+            )
+        result["display"] = {
+            "locale": "zh-CN",
+            "message_zh": "动作已撤销。" if result.get("ok") else "动作撤销未完成，请检查动作编号或状态。",
+        }
+        return result
+
+    def cleanup_expired_actions(self, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        changed = self.executor.cleanup_expired()
+        if changed:
+            self.ledger.record(
+                {
+                    "severity": "medium",
+                    "event_type": "action_cleanup",
+                    "endpoint_type": "admin",
+                    "action": "cleanup_expired_actions",
+                    "summary": self._admin_summary(f"expired_actions_marked={changed}", actor),
+                }
+            )
+        return {
+            "ok": True,
+            "expired_marked": changed,
+            "active_actions": len(self.executor.list_actions(status="active")),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": f"已标记 {changed} 条过期动作。",
+            },
+        }
+
     def _save_config(self) -> None:
         if self.config_store:
             self.config_store.save(self.config)
 
+    def _resolve_project_path(self, value: str | None) -> Path | None:
+        if not value:
+            return None
+        path = Path(value)
+        if path.is_absolute():
+            return path
+        return self.project_root / path
+
+    def _infer_project_root(self) -> Path:
+        if not self.config_store:
+            return Path.cwd()
+        config_parent = self.config_store.path.resolve().parent
+        if config_parent.name.lower() == "config":
+            return config_parent.parent
+        return config_parent
+
     def _load_bypass_key(self) -> None:
         if not self.config.bypass_key_file:
             return
+        key_path = self._resolve_project_path(self.config.bypass_key_file)
         try:
-            self.config.bypass_key = Path(self.config.bypass_key_file).read_text(encoding="utf-8").strip()
+            self.config.bypass_key = key_path.read_text(encoding="utf-8").strip() if key_path else None
         except OSError:
             self.config.bypass_key = None
 
-    def break_glass_status(self, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    def _load_admin_token(self) -> None:
+        self._admin_token = None
+        env_name = str(self.config.admin_token_env or "")
+        if env_name:
+            self._admin_token = (os.environ.get(env_name) or "").strip() or None
+        if self._admin_token or not self.config.admin_token_file:
+            return
+        token_path = self._resolve_project_path(self.config.admin_token_file)
+        try:
+            self._admin_token = (load_secret_file(token_path) or "").strip() if token_path else None
+        except (OSError, SecretStoreError):
+            self._admin_token = None
+
+    def admin_auth_status(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self.config.admin_auth_enabled),
+            "token_configured": bool(self._admin_token),
+            "token_file_configured": bool(self.config.admin_token_file),
+            "token_env": self.config.admin_token_env,
+        }
+
+    def admin_authorized(self, headers: dict[str, str] | None = None) -> bool:
+        if not self.config.admin_auth_enabled:
+            return True
+        if not self._admin_token:
+            return False
+        supplied = self._admin_token_from_headers(headers or {})
+        return bool(supplied and hmac.compare_digest(supplied, self._admin_token))
+
+    def admin_auth_challenge(self) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": "admin_auth_required",
+            "admin_auth": self.admin_auth_status(),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "管理接口需要有效的 Admin Token。",
+            },
+        }
+
+    def _admin_token_from_headers(self, headers: dict[str, str]) -> str | None:
+        normalized = {str(key).lower(): str(value) for key, value in headers.items()}
+        bearer = normalized.get("authorization", "")
+        if bearer.lower().startswith("bearer "):
+            return bearer[7:].strip()
+        header_token = normalized.get("x-atee-admin-token")
+        return header_token.strip() if header_token else None
+
+    def admin_actor_from_headers(self, headers: dict[str, str] | None = None, remote_addr: str = "") -> dict[str, str]:
+        normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+        actor_id = self._clean_admin_actor_id(normalized.get("x-atee-admin-id", "unknown"))
+        source = normalized.get("x-real-ip") or remote_addr or "unknown"
+        return {
+            "id": actor_id,
+            "id_hash": self._short_hash(actor_id),
+            "source_hash": self._short_hash(source),
+        }
+
+    def _clean_admin_actor_id(self, value: str) -> str:
+        cleaned = "".join(ch for ch in str(value).strip() if ch.isalnum() or ch in {"@", ".", "_", "-"})
+        return (cleaned or "unknown")[:80]
+
+    def _short_hash(self, value: str) -> str:
+        digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+        return f"sha256:{digest[:16]}"
+
+    def _admin_summary(self, summary: str, actor: dict[str, str] | None = None) -> str:
+        actor = actor or {"id": "unknown", "id_hash": self._short_hash("unknown"), "source_hash": self._short_hash("unknown")}
+        return (
+            f"{summary} admin_actor_id={actor.get('id', 'unknown')} "
+            f"admin_actor_hash={actor.get('id_hash')} admin_source_hash={actor.get('source_hash')}"
+        )
+
+    def _record_admin_audit(
+        self,
+        event_type: str,
+        action: str,
+        summary: str,
+        actor: dict[str, str] | None = None,
+        severity: str = "medium",
+    ) -> None:
+        self.ledger.record(
+            {
+                "severity": severity,
+                "event_type": event_type,
+                "endpoint_type": "admin",
+                "action": action,
+                "summary": self._admin_summary(summary, actor),
+            }
+        )
+
+    def _public_changed(self, changed: dict[str, Any]) -> dict[str, Any]:
+        public = dict(changed)
+        if "llm_api_key_file" in public:
+            public.pop("llm_api_key_file", None)
+            public["llm_api_key_file_configured"] = bool(changed.get("llm_api_key_file"))
+        if "llm_proxy_url" in public:
+            public.pop("llm_proxy_url", None)
+            public["llm_proxy_configured"] = bool(changed.get("llm_proxy_url"))
+        if "admin_token_file" in public:
+            public.pop("admin_token_file", None)
+            public["admin_token_file_configured"] = bool(changed.get("admin_token_file"))
+        return public
+
+    def break_glass_status(self, headers: dict[str, str] | None = None, actor: dict[str, str] | None = None) -> dict[str, Any]:
         headers = {k.lower(): v for k, v in (headers or {}).items()}
         supplied = headers.get("x-atee-bypass")
         valid = bool(self.config.bypass_enabled and self.config.bypass_key and supplied == self.config.bypass_key)
-        if valid:
-            self.ledger.record(
-                {
-                    "severity": "high",
-                    "event_type": "break_glass",
-                    "endpoint_type": "admin",
-                    "action": "bypass_status_check",
-                    "summary": "Break-glass header accepted; rotate key after use.",
-                }
-            )
+        self._record_admin_audit(
+            "break_glass",
+            "bypass_status_check",
+            f"valid_for_request={valid} rotate_key_after_use={valid}",
+            actor,
+            severity="high" if valid else "medium",
+        )
         return {
             "enabled": self.config.bypass_enabled,
             "header": "X-ATEE-Bypass",
@@ -273,6 +557,7 @@ class CoreService:
         gateway: dict[str, Any] | None,
         ledger_record: dict[str, Any] | None,
         action_record: dict[str, Any] | None,
+        llm_result: dict[str, Any] | None,
     ) -> dict[str, Any]:
         runtime_status = self.runtime.status()
         return {
@@ -283,6 +568,7 @@ class CoreService:
             "decision": decision,
             "tool_gateway": gateway,
             "action_result": action_record,
+            "llm_gateway": llm_result,
             "ledger_record": ledger_record,
             "runtime": runtime_status,
             "display": response_display(route, decision, gateway, runtime_status),

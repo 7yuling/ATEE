@@ -13,6 +13,9 @@ class AteeThinAdapter:
     def event(self, request_context: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/event", request_context)
 
+    def appeal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/appeal", payload)
+
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -25,12 +28,21 @@ class AteeThinAdapter:
             return json.loads(response.read().decode("utf-8"))
 
 
-def build_context(method: str, path: str, headers: dict[str, str], body: Any, remote_addr: str) -> dict[str, Any]:
-    return {
+def build_context(
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    body: Any,
+    remote_addr: str,
+    event_type: str | None = None,
+) -> dict[str, Any]:
+    context = {
         "method": method,
         "path": path,
         "headers": headers,
         "body": body,
         "remote_addr": remote_addr,
     }
-
+    if event_type:
+        context["event_type"] = event_type
+    return context
