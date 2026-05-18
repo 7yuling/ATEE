@@ -787,3 +787,24 @@ P0 生产部署：未通过
 - 快速模式：`--quick` 用于本地开发和单元测试，仍覆盖同类检查，但只运行聚焦测试集合，避免在全量测试中递归触发完整回归。
 - 验证：`python -m unittest tests.test_local_release_gate` 1 个测试通过；`python scripts\local-release-gate.py --help` 通过。
 - 完整闸门：`python scripts\local-release-gate.py --report reports\local-release-gate.md` 通过，配置预检通过、Python 编译通过、86 个单元测试通过、默认 fake Agent AI 全流程冒烟通过、敏感扫描 145 个文件且 findings=0。
+
+### 2026-05-18 Step 60：管理台全配置与 API 保密回显
+
+- 问题一句话：管理台配置项尚未覆盖所有可调字段，且 API Base 会在配置 JSON 中回显，容易造成“界面显示已接入、原始 JSON 又像未安全接入”的认知冲突。
+- 最小解决方案：不新增密钥明文入口，只补齐既有可持久化配置的控制项，并把 API Base、API Key 文件、代理 URL、Admin Token 文件统一处理为写入后不回显的配置状态。
+- 后端：`config_to_dict()` 将 `llm_api_base` 改为 `llm_api_base_configured`；`update_config()` 新增 `agent_paused`、`locale`、`appeal_paths` 更新路径，并在 `changed` 响应中脱敏 API Base。
+- 管理台：网关配置页新增显示语言、Agent 暂停、申诉入口路径等控制项；模型模式补齐 `remote` 与 `disabled`；每个网关配置项都增加简短说明。
+- 保密：API Base 改为“新 API Base（留空不变）”的密码输入，不回填旧值；API Key 文件、代理 URL、Admin Token 文件等敏感输入关闭可见性切换；运行状态 JSON 和操作结果 JSON 增加前端兜底脱敏。
+- 展示：敏感配置区只展示 API Base、API Key 文件、模型代理的“已配置/未配置”状态，不展示原始值。
+- 文档：开发 API 文档补充写入字段与只返回 `*_configured` 布尔值的约束，避免生产接入时误依赖明文回显。
+- 验证：`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 16 项浏览器交互通过；`python -m unittest tests.test_core tests.test_admin_console` 37 个测试通过；`python -m unittest discover -s tests` 86 个测试通过。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、25 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 145 个文件且 findings=0。
+
+### 2026-05-18 Step 61：Ubuntu systemd user unit 解析修复
+
+- 问题一句话：Ubuntu 上 `bash scripts/linux/install-atee-systemd.sh --user` 能创建 symlink，但 `systemctl --user` 启动时报 `Unit ... has a bad unit file setting`，原因是安装脚本把 `ExecStart`、`EnvironmentFile` 等 systemd 字段写成了 shell 风格带引号路径。
+- 最小解决方案：不改启动脚本和服务语义，只把 unit 生成逻辑改为输出 systemd 可直接解析的未加引号 path/value，并保留 `%` 转义，避免 systemd specifier 误解析。
+- 修改范围：`scripts/linux/install-atee-systemd.sh` 将 `systemd_escape()` 改为 `systemd_unit_value()`，生成 `WorkingDirectory=/home/ATEE`、`EnvironmentFile=-/root/.config/atee/atee-core.env`、`ExecStart=/home/ATEE/scripts/linux/start-atee-core.sh` 这类 unit 行。
+- 回归保护：`tests/test_deployment_assets.py` 新增断言，确保 installer 不再生成旧的 `systemd_escape` 引号路径形式。
+- 验证：`python -m unittest tests.test_deployment_assets` 23 个测试通过；`python -m unittest tests.test_deployment_assets tests.test_admin_console` 27 个测试通过。
+- 本机限制：Windows 环境的 `bash -n` 调用的是未安装发行版的 WSL，无法在本机完成 shell 语法检查；需要在 Ubuntu 目标机用 `bash -n scripts/linux/install-atee-systemd.sh` 和 `systemd-analyze --user verify ...` 复验。

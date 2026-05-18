@@ -272,16 +272,19 @@ Management clients may also send `X-ATEE-Admin-Id` on `/v1/admin/*` requests. AT
 
 Returns the current non-secret configuration and the local config path.
 
-Relative file paths in config resolve from the project root. This includes `llm_api_key_file`, `bypass_key_file`, and `ledger_sqlite_path`, so the service does not depend on the shell directory used to start it.
+Relative file paths written through config resolve from the project root. This includes write-only fields such as `llm_api_key_file`, plus `bypass_key_file` and `ledger_sqlite_path`, so the service does not depend on the shell directory used to start it.
 
 ## POST /v1/admin/config
 
-Allowed fields:
+Allowed fields. Sensitive write-only fields such as `llm_api_base`, `llm_api_key_file`, `llm_proxy_url`, and `admin_token_file` are accepted on update, then returned only as `*_configured` booleans.
 
 ```json
 {
   "locale": "zh-CN",
+  "runtime_mode": "observe",
+  "agent_paused": false,
   "trusted_proxy_cidrs": ["10.0.0.0/8"],
+  "appeal_paths": ["/atee-appeal", "/security/appeal"],
   "auto_ip_ban_enabled": false,
   "local_precheck_ms": 100,
   "remote_soft_timeout_ms": 3000,
@@ -289,15 +292,15 @@ Allowed fields:
   "ledger_max_bytes": 268435456,
   "ledger_sqlite_path": "data/atee_ledger.sqlite3",
   "admin_auth_enabled": false,
-  "admin_token_file": null,
+  "admin_token_file": "config/secrets/admin-token.dpapi.json",
   "admin_token_env": "ATEE_ADMIN_TOKEN",
   "llm_mode": "mock",
   "llm_provider": "mock",
   "llm_model": "atee-local-mock-v1",
-  "llm_api_base": null,
-  "llm_api_key_file": null,
+  "llm_api_base": "https://provider.example/v1",
+  "llm_api_key_file": "config/secrets/provider.dpapi.json",
   "llm_api_key_env": "ATEE_LLM_API_KEY",
-  "llm_proxy_url": null,
+  "llm_proxy_url": "http://127.0.0.1:7890",
   "llm_daily_budget_cents": 0,
   "bypass_enabled": false,
   "bypass_key_file": null
@@ -414,7 +417,7 @@ Use `/v1/admin/llm/test` to verify the gateway is reachable.
 
 ## OpenAI-Compatible Gateway
 
-Set `llm_mode` to `openai_compatible` to call a provider at `{llm_api_base}/chat/completions`. API keys can be provided by `llm_api_key_env` or `llm_api_key_file`; the key value is never returned by config, status, or test APIs.
+Set `llm_mode` to `openai_compatible` to call a provider at `{llm_api_base}/chat/completions`. API keys can be provided by `llm_api_key_env` or `llm_api_key_file`; API Base, API key file paths, proxy URLs, and key values are never returned by config, status, or test APIs.
 
 For strict secret transport, public `http://` API bases are rejected with `insecure_api_base_requires_https`. Localhost HTTP remains allowed for test doubles.
 

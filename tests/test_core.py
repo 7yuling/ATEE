@@ -247,6 +247,7 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(config_path.exists())
             config.runtime_mode = "auto"
             config.trusted_proxy_cidrs = ["10.0.0.0/8"]
+            config.llm_api_base = "https://provider.example/v1"
             config.llm_api_key_file = "config/secrets/provider.dpapi.json"
             config.llm_proxy_url = "http://proxy.example:1080"
             config.admin_auth_enabled = True
@@ -261,9 +262,11 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(loaded.admin_token_file, "config/secrets/admin-token.txt")
 
             public = store.public_payload(loaded)
+            self.assertNotIn("llm_api_base", public)
             self.assertNotIn("llm_api_key_file", public)
             self.assertNotIn("llm_proxy_url", public)
             self.assertNotIn("admin_token_file", public)
+            self.assertTrue(public["llm_api_base_configured"])
             self.assertTrue(public["llm_api_key_file_configured"])
             self.assertTrue(public["llm_proxy_configured"])
             self.assertTrue(public["admin_token_file_configured"])
@@ -419,10 +422,22 @@ class AteeCoreTests(unittest.TestCase):
                     "runtime_mode": "degraded",
                     "trusted_proxy_cidrs": ["10.0.0.0/8"],
                     "auto_ip_ban_enabled": True,
+                    "agent_paused": True,
+                    "locale": "zh-CN",
+                    "appeal_paths": ["/appeal", "/security/appeal"],
+                    "llm_api_base": "https://provider.example/v1",
                 }
             )
             self.assertEqual(result["changed"]["runtime_mode"], "degraded")
+            self.assertEqual(result["changed"]["locale"], "zh-CN")
+            self.assertTrue(result["changed"]["agent_paused"])
+            self.assertEqual(result["changed"]["appeal_paths"], ("/appeal", "/security/appeal"))
+            self.assertNotIn("llm_api_base", result["changed"])
+            self.assertTrue(result["changed"]["llm_api_base_configured"])
             self.assertEqual(core.runtime_status()["runtime_mode"], "degraded")
+            self.assertTrue(core.runtime_status()["agent_paused"])
+            self.assertNotIn("llm_api_base", core.runtime_status()["config"])
+            self.assertTrue(core.runtime_status()["config"]["llm_api_base_configured"])
             self.assertEqual(result["changed"]["trusted_proxy_cidrs"], ["10.0.0.0/8"])
             check = core.check(
                 {

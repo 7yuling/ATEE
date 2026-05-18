@@ -72,6 +72,7 @@ def config_to_dict(config: AdminConfig, include_secret: bool = False) -> dict[st
     data = asdict(config)
     if not include_secret:
         data.pop("bypass_key", None)
+        data["llm_api_base_configured"] = bool(data.pop("llm_api_base", None))
         data["llm_api_key_file_configured"] = bool(data.pop("llm_api_key_file", None))
         data["llm_proxy_configured"] = bool(data.pop("llm_proxy_url", None))
         data["admin_token_file_configured"] = bool(data.pop("admin_token_file", None))

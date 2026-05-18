@@ -53,6 +53,48 @@ function cspNonce() {
 const runtimeCspNonce = cspNonce();
 const ADMIN_TOKEN_STORAGE_KEY = "atee.adminToken";
 const ADMIN_ID_STORAGE_KEY = "atee.adminId";
+const SECRET_PLACEHOLDER = "已配置的敏感值不会回显；留空保持当前配置";
+const REDACTED_VALUE = "[已保密]";
+const SECRET_JSON_KEYS = new Set([
+  "api_base",
+  "llm_api_base",
+  "api_key",
+  "llm_api_key",
+  "llm_api_key_file",
+  "llm_proxy_url",
+  "proxy_url",
+  "admin_token",
+  "admin_token_file",
+  "authorization",
+  "bypass_header",
+  "bypass_key",
+]);
+const GATEWAY_HELP = {
+  locale: "控制台与后端展示语言；当前建议使用 zh-CN。",
+  runtime_mode: "observe 只观察，auto 自动执行，degraded 限制高影响动作，read_only 禁止写入。",
+  agent_paused: "暂停后 Agent 不继续自动推进，适合排障或人工接管。",
+  auto_ip_ban_enabled: "开启后工具网关可执行自动 IP 封禁；关闭时只记录或降级动作。",
+  admin_auth_enabled: "开启后 /v1/admin/* 需要 Admin Token，生产环境建议开启。",
+  llm_daily_budget_cents: "0 表示不限制每日模型调用预算；大于 0 时按天扣减远程调用预算。",
+  admin_token_env: "服务端读取 Admin Token 的环境变量名，不是 Token 值。",
+  new_admin_token_file: "仅填写服务端密钥文件路径，保存后不回显；留空保持不变。",
+  local_precheck_ms: "本地规则预检的目标耗时，用于保护同步链路。",
+  remote_soft_timeout_ms: "远程模型软超时，超过后可进入降级判断。",
+  remote_hard_timeout_ms: "远程模型硬超时，超过后强制结束远程调用。",
+  llm_mode: "mock 为本地模拟；openai_compatible/remote 调用兼容网关；disabled 关闭远程模型。",
+  llm_provider: "供应商标识，只用于状态展示与审计，不包含密钥。",
+  llm_model: "远程模型名称，由供应商网关识别。",
+  new_llm_api_base: "模型接口根地址，仅写入不回显；留空保持不变。",
+  llm_api_key_env: "服务端读取 API Key 的环境变量名，不是密钥值。",
+  new_llm_api_key_file: "推荐填写加密后的密钥文件路径；保存后不回显，留空保持不变。",
+  new_llm_proxy_url: "服务端访问模型时使用的代理 URL；保存后不回显，留空保持不变。",
+  ledger_sqlite_path: "安全账本 SQLite 文件位置；改动后会重建账本句柄。",
+  ledger_max_bytes: "账本文件上限，超过后会触发轮转。",
+  trusted_proxy_cidrs: "一行一个或用逗号分隔，只信任这些代理转发的真实 IP 头。",
+  appeal_paths: "一行一个或用逗号分隔，用于识别用户申诉入口。",
+  bypass_enabled: "开启紧急旁路校验，仅用于受控排障。",
+  bypass_key_file: "旁路密钥文件路径；不要把密钥明文填入控制台。",
+};
 
 function installStyleNonce(nonce) {
   if (!nonce || window.__ateeStyleNonceInstalled) {
@@ -132,8 +174,35 @@ async function apiRequest(path, options = {}) {
   return { status: response.status, data };
 }
 
+function isSecretJsonKey(key) {
+  const normalized = String(key || "").toLowerCase();
+  return SECRET_JSON_KEYS.has(normalized);
+}
+
+function redactSecrets(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSecrets(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        isSecretJsonKey(key) ? REDACTED_VALUE : redactSecrets(item),
+      ]),
+    );
+  }
+  return value;
+}
+
 function pretty(value) {
-  return JSON.stringify(value ?? {}, null, 2);
+  return JSON.stringify(redactSecrets(value ?? {}), null, 2);
+}
+
+function splitListInput(value) {
+  return String(value || "")
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function tagForBoolean(value, labels = ["正常", "异常"]) {
@@ -369,7 +438,9 @@ function App() {
 
   function configToFormValues(config = {}) {
     return {
+      locale: config.locale || "zh-CN",
       runtime_mode: config.runtime_mode || "observe",
+      agent_paused: Boolean(config.agent_paused),
       trusted_proxy_cidrs: (config.trusted_proxy_cidrs || []).join("\n"),
       auto_ip_ban_enabled: Boolean(config.auto_ip_ban_enabled),
       local_precheck_ms: Number(config.local_precheck_ms ?? 100),
@@ -378,15 +449,16 @@ function App() {
       llm_mode: config.llm_mode || "mock",
       llm_provider: config.llm_provider || "mock",
       llm_model: config.llm_model || "atee-local-mock-v1",
-      llm_api_base: config.llm_api_base || "",
       llm_api_key_env: config.llm_api_key_env || "ATEE_LLM_API_KEY",
       llm_daily_budget_cents: Number(config.llm_daily_budget_cents ?? 0),
       ledger_max_bytes: Number(config.ledger_max_bytes ?? 268435456),
       ledger_sqlite_path: config.ledger_sqlite_path || "data/atee_ledger.sqlite3",
+      appeal_paths: (config.appeal_paths || []).join("\n"),
       bypass_enabled: Boolean(config.bypass_enabled),
       bypass_key_file: config.bypass_key_file || "",
       admin_auth_enabled: Boolean(config.admin_auth_enabled),
       admin_token_env: config.admin_token_env || "ATEE_ADMIN_TOKEN",
+      new_llm_api_base: "",
       new_llm_api_key_file: "",
       new_llm_proxy_url: "",
       new_admin_token_file: "",
@@ -584,11 +656,10 @@ function App() {
     await run("save-config", async () => {
       const values = configForm.getFieldsValue();
       const body = {
+        locale: values.locale || "zh-CN",
         runtime_mode: values.runtime_mode,
-        trusted_proxy_cidrs: String(values.trusted_proxy_cidrs || "")
-          .split(/[\n,]/)
-          .map((item) => item.trim())
-          .filter(Boolean),
+        agent_paused: Boolean(values.agent_paused),
+        trusted_proxy_cidrs: splitListInput(values.trusted_proxy_cidrs),
         auto_ip_ban_enabled: Boolean(values.auto_ip_ban_enabled),
         local_precheck_ms: Number(values.local_precheck_ms),
         remote_soft_timeout_ms: Number(values.remote_soft_timeout_ms),
@@ -596,19 +667,23 @@ function App() {
         llm_mode: values.llm_mode,
         llm_provider: String(values.llm_provider || "").trim() || "mock",
         llm_model: String(values.llm_model || "").trim() || "atee-local-mock-v1",
-        llm_api_base: String(values.llm_api_base || "").trim() || null,
         llm_api_key_env: String(values.llm_api_key_env || "").trim() || "ATEE_LLM_API_KEY",
         llm_daily_budget_cents: Number(values.llm_daily_budget_cents),
         ledger_max_bytes: Number(values.ledger_max_bytes),
         ledger_sqlite_path: String(values.ledger_sqlite_path || "").trim() || "data/atee_ledger.sqlite3",
+        appeal_paths: splitListInput(values.appeal_paths),
         admin_auth_enabled: Boolean(values.admin_auth_enabled),
         admin_token_env: String(values.admin_token_env || "").trim() || "ATEE_ADMIN_TOKEN",
         bypass_enabled: Boolean(values.bypass_enabled),
         bypass_key_file: String(values.bypass_key_file || "").trim() || null,
       };
+      const apiBase = String(values.new_llm_api_base || "").trim();
       const keyFile = String(values.new_llm_api_key_file || "").trim();
       const proxyUrl = String(values.new_llm_proxy_url || "").trim();
       const adminTokenFile = String(values.new_admin_token_file || "").trim();
+      if (apiBase) {
+        body.llm_api_base = apiBase;
+      }
       if (keyFile) {
         body.llm_api_key_file = keyFile;
       }
@@ -763,6 +838,7 @@ function App() {
                 value={adminToken}
                 onChange={(event) => setAdminToken(event.target.value)}
                 autoComplete="off"
+                visibilityToggle={false}
                 placeholder="Admin Token"
                 style={{ width: 260 }}
               />
@@ -1030,7 +1106,18 @@ function App() {
                         <Form form={configForm} layout="vertical">
                           <Row gutter={12}>
                             <Col xs={24} md={8}>
-                              <Form.Item label="运行模式" name="runtime_mode">
+                              <Form.Item label="显示语言" name="locale" extra={GATEWAY_HELP.locale}>
+                                <Select
+                                  id="localeSelect"
+                                  options={[
+                                    { value: "zh-CN", label: "中文（简体）" },
+                                    { value: "en-US", label: "English" },
+                                  ]}
+                                />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} md={8}>
+                              <Form.Item label="运行模式" name="runtime_mode" extra={GATEWAY_HELP.runtime_mode}>
                                 <Select
                                   id="configModeSelect"
                                   options={[
@@ -1043,109 +1130,121 @@ function App() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="自动 IP 封禁" name="auto_ip_ban_enabled" valuePropName="checked">
+                              <Form.Item label="Agent 暂停" name="agent_paused" valuePropName="checked" extra={GATEWAY_HELP.agent_paused}>
+                                <Switch id="agentPausedSwitch" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} md={8}>
+                              <Form.Item label="自动 IP 封禁" name="auto_ip_ban_enabled" valuePropName="checked" extra={GATEWAY_HELP.auto_ip_ban_enabled}>
                                 <Switch id="autoIpBanSwitch" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="管理接口认证" name="admin_auth_enabled" valuePropName="checked">
+                              <Form.Item label="管理接口认证" name="admin_auth_enabled" valuePropName="checked" extra={GATEWAY_HELP.admin_auth_enabled}>
                                 <Switch id="adminAuthSwitch" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="每日预算（cent，0 不限）" name="llm_daily_budget_cents">
+                              <Form.Item label="每日预算（cent，0 不限）" name="llm_daily_budget_cents" extra={GATEWAY_HELP.llm_daily_budget_cents}>
                                 <InputNumber id="dailyBudgetInput" min={0} max={1000000} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="Admin Token 环境变量" name="admin_token_env">
+                              <Form.Item label="Admin Token 环境变量" name="admin_token_env" extra={GATEWAY_HELP.admin_token_env}>
                                 <Input id="adminTokenEnvInput" autoComplete="off" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="新 Admin Token 文件路径（留空不变）" name="new_admin_token_file">
-                                <Input id="adminTokenFileInput" autoComplete="off" />
+                              <Form.Item label="新 Admin Token 文件路径（留空不变）" name="new_admin_token_file" extra={GATEWAY_HELP.new_admin_token_file}>
+                                <Input.Password id="adminTokenFileInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="本地预检 ms" name="local_precheck_ms">
+                              <Form.Item label="本地预检 ms" name="local_precheck_ms" extra={GATEWAY_HELP.local_precheck_ms}>
                                 <InputNumber id="localPrecheckInput" min={1} max={60000} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="远程软超时 ms" name="remote_soft_timeout_ms">
+                              <Form.Item label="远程软超时 ms" name="remote_soft_timeout_ms" extra={GATEWAY_HELP.remote_soft_timeout_ms}>
                                 <InputNumber id="softTimeoutInput" min={1} max={120000} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="远程硬超时 ms" name="remote_hard_timeout_ms">
+                              <Form.Item label="远程硬超时 ms" name="remote_hard_timeout_ms" extra={GATEWAY_HELP.remote_hard_timeout_ms}>
                                 <InputNumber id="hardTimeoutInput" min={1} max={120000} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="模型模式" name="llm_mode">
+                              <Form.Item label="模型模式" name="llm_mode" extra={GATEWAY_HELP.llm_mode}>
                                 <Select
                                   id="llmModeSelect"
                                   options={[
                                     { value: "mock", label: "Mock" },
                                     { value: "openai_compatible", label: "OpenAI-compatible" },
+                                    { value: "remote", label: "Remote" },
+                                    { value: "disabled", label: "Disabled" },
                                   ]}
                                 />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="供应商" name="llm_provider">
+                              <Form.Item label="供应商" name="llm_provider" extra={GATEWAY_HELP.llm_provider}>
                                 <Input id="llmProviderInput" autoComplete="off" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="模型名" name="llm_model">
+                              <Form.Item label="模型名" name="llm_model" extra={GATEWAY_HELP.llm_model}>
                                 <Input id="llmModelInput" autoComplete="off" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="API Base" name="llm_api_base">
-                                <Input id="llmApiBaseInput" autoComplete="off" />
+                              <Form.Item label="新 API Base（留空不变）" name="new_llm_api_base" extra={GATEWAY_HELP.new_llm_api_base}>
+                                <Input.Password id="llmApiBaseInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="API Key 环境变量" name="llm_api_key_env">
+                              <Form.Item label="API Key 环境变量" name="llm_api_key_env" extra={GATEWAY_HELP.llm_api_key_env}>
                                 <Input id="llmApiKeyEnvInput" autoComplete="off" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="新密钥文件路径（留空不变）" name="new_llm_api_key_file">
-                                <Input id="llmApiKeyFileInput" autoComplete="off" />
+                              <Form.Item label="新密钥文件路径（留空不变）" name="new_llm_api_key_file" extra={GATEWAY_HELP.new_llm_api_key_file}>
+                                <Input.Password id="llmApiKeyFileInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="新代理 URL（留空不变）" name="new_llm_proxy_url">
-                                <Input.Password id="llmProxyUrlInput" autoComplete="off" />
+                              <Form.Item label="新代理 URL（留空不变）" name="new_llm_proxy_url" extra={GATEWAY_HELP.new_llm_proxy_url}>
+                                <Input.Password id="llmProxyUrlInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="SQLite 路径" name="ledger_sqlite_path">
+                              <Form.Item label="SQLite 路径" name="ledger_sqlite_path" extra={GATEWAY_HELP.ledger_sqlite_path}>
                                 <Input id="ledgerPathInput" autoComplete="off" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="账本上限 bytes" name="ledger_max_bytes">
+                              <Form.Item label="账本上限 bytes" name="ledger_max_bytes" extra={GATEWAY_HELP.ledger_max_bytes}>
                                 <InputNumber id="ledgerMaxBytesInput" min={1048576} max={1073741824} />
                               </Form.Item>
                             </Col>
                             <Col xs={24}>
-                              <Form.Item label="可信代理 CIDR" name="trusted_proxy_cidrs">
+                              <Form.Item label="可信代理 CIDR" name="trusted_proxy_cidrs" extra={GATEWAY_HELP.trusted_proxy_cidrs}>
                                 <Input.TextArea id="trustedProxyInput" autoSize={{ minRows: 2, maxRows: 5 }} />
                               </Form.Item>
                             </Col>
+                            <Col xs={24}>
+                              <Form.Item label="申诉入口路径" name="appeal_paths" extra={GATEWAY_HELP.appeal_paths}>
+                                <Input.TextArea id="appealPathsInput" autoSize={{ minRows: 2, maxRows: 5 }} />
+                              </Form.Item>
+                            </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="紧急旁路启用" name="bypass_enabled" valuePropName="checked">
+                              <Form.Item label="紧急旁路启用" name="bypass_enabled" valuePropName="checked" extra={GATEWAY_HELP.bypass_enabled}>
                                 <Switch id="bypassEnabledSwitch" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={16}>
-                              <Form.Item label="旁路密钥文件" name="bypass_key_file">
-                                <Input id="bypassKeyFileInput" autoComplete="off" />
+                              <Form.Item label="旁路密钥文件" name="bypass_key_file" extra={GATEWAY_HELP.bypass_key_file}>
+                                <Input.Password id="bypassKeyFileInput" autoComplete="off" visibilityToggle={false} />
                               </Form.Item>
                             </Col>
                           </Row>
@@ -1169,12 +1268,15 @@ function App() {
                     <Col xs={24} xl={8}>
                       <Card title="紧急旁路">
                         <Descriptions size="small" column={1}>
+                          <Descriptions.Item label="API Base">{tagForBoolean(Boolean(status?.config?.llm_api_base_configured), ["已配置", "未配置"])}</Descriptions.Item>
+                          <Descriptions.Item label="API Key 文件">{tagForBoolean(Boolean(status?.config?.llm_api_key_file_configured), ["已配置", "未配置"])}</Descriptions.Item>
+                          <Descriptions.Item label="模型代理">{tagForBoolean(Boolean(status?.config?.llm_proxy_configured), ["已配置", "未配置"])}</Descriptions.Item>
                           <Descriptions.Item label="旁路启用">{tagForBoolean(Boolean(status?.config?.bypass_enabled), ["已启用", "未启用"])}</Descriptions.Item>
                           <Descriptions.Item label="密钥文件">{tagForBoolean(Boolean(status?.config?.bypass_key_file), ["已配置", "未配置"])}</Descriptions.Item>
                         </Descriptions>
                         <Form form={breakGlassForm} layout="vertical" className="review-form">
                           <Form.Item label="X-ATEE-Bypass Header" name="bypass_header">
-                            <Input.Password id="breakGlassHeaderInput" autoComplete="off" />
+                            <Input.Password id="breakGlassHeaderInput" autoComplete="off" visibilityToggle={false} />
                           </Form.Item>
                           <Button id="breakGlassBtn" icon={<SafetyCertificateOutlined />} onClick={breakGlass}>验证旁路状态</Button>
                         </Form>

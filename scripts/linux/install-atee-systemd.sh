@@ -29,11 +29,10 @@ Options:
 USAGE
 }
 
-systemd_escape() {
+systemd_unit_value() {
   local value="$1"
-  value=${value//\\/\\\\}
-  value=${value//\"/\\\"}
-  printf '"%s"' "$value"
+  value=${value//%/%%}
+  printf '%s' "$value"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -107,14 +106,14 @@ fi
   if [ "$MODE" = "system" ]; then
     echo "User=$RUN_USER"
   fi
-  echo "WorkingDirectory=$(systemd_escape "$PROJECT_ROOT")"
-  echo "EnvironmentFile=-$(systemd_escape "$ENV_FILE")"
-  echo "Environment=ATEE_PROJECT_ROOT=$(systemd_escape "$PROJECT_ROOT")"
-  echo "Environment=ATEE_PYTHON=$(systemd_escape "$PYTHON_BIN")"
+  echo "WorkingDirectory=$(systemd_unit_value "$PROJECT_ROOT")"
+  echo "EnvironmentFile=-$(systemd_unit_value "$ENV_FILE")"
+  echo "Environment=ATEE_PROJECT_ROOT=$(systemd_unit_value "$PROJECT_ROOT")"
+  echo "Environment=ATEE_PYTHON=$(systemd_unit_value "$PYTHON_BIN")"
   echo "Environment=ATEE_HOST=$BIND_HOST"
   echo "Environment=ATEE_PORT=$PORT"
-  echo "Environment=ATEE_LOG_DIR=$(systemd_escape "$PROJECT_ROOT/logs")"
-  echo "ExecStart=$(systemd_escape "$START_SCRIPT")"
+  echo "Environment=ATEE_LOG_DIR=$(systemd_unit_value "$PROJECT_ROOT/logs")"
+  echo "ExecStart=$(systemd_unit_value "$START_SCRIPT")"
   echo "Restart=on-failure"
   echo "RestartSec=5"
   echo "NoNewPrivileges=true"

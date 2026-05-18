@@ -73,13 +73,24 @@ class AdminConsoleTests(unittest.TestCase):
             "resultSummary",
             "ledgerLimitInput",
             "configSaveBtn",
+            "localeSelect",
             "configModeSelect",
+            "agentPausedSwitch",
             "trustedProxyInput",
+            "appealPathsInput",
+            "llmApiBaseInput",
             "llmProxyUrlInput",
+            "bypassKeyFileInput",
             "breakGlassHeaderInput",
             "guideList",
         ]:
             self.assertIn(element_id, source)
+        self.assertIn("SECRET_JSON_KEYS", source)
+        self.assertIn("REDACTED_VALUE", source)
+        self.assertIn("new_llm_api_base", source)
+        self.assertIn("llm_api_base_configured", source)
+        self.assertIn("visibilityToggle={false}", source)
+        self.assertNotIn('name="llm_api_base"', source)
         self.assertIn("async function saveConfig()", source)
         self.assertIn("Popconfirm", source)
         self.assertIn("writeLocked", source)

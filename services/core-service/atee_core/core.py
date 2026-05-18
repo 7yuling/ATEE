@@ -197,6 +197,7 @@ class CoreService:
             "runtime_mode",
             "locale",
             "trusted_proxy_cidrs",
+            "agent_paused",
             "auto_ip_ban_enabled",
             "local_precheck_ms",
             "remote_soft_timeout_ms",
@@ -216,6 +217,7 @@ class CoreService:
             "llm_daily_budget_cents",
             "bypass_enabled",
             "bypass_key_file",
+            "appeal_paths",
         }
         changed: dict[str, Any] = {}
         for key in allowed:
@@ -223,14 +225,18 @@ class CoreService:
                 continue
             value = payload[key]
             if key == "trusted_proxy_cidrs":
-                value = [str(item) for item in (value or [])]
+                raw_items = str(value).replace(",", "\n").splitlines() if isinstance(value, str) else (value or [])
+                value = [str(item).strip() for item in raw_items if str(item).strip()]
+            elif key == "appeal_paths":
+                raw_items = str(value).replace(",", "\n").splitlines() if isinstance(value, str) else (value or [])
+                value = tuple(str(item).strip() for item in raw_items if str(item).strip())
             elif key == "runtime_mode":
                 value = str(value)
                 if value not in VALID_MODES:
                     continue
             elif key.endswith("_ms") or key in {"ledger_max_bytes", "llm_daily_budget_cents"}:
                 value = int(value)
-            elif key in {"auto_ip_ban_enabled", "bypass_enabled", "admin_auth_enabled"}:
+            elif key in {"agent_paused", "auto_ip_ban_enabled", "bypass_enabled", "admin_auth_enabled"}:
                 value = bool(value)
             elif value is not None:
                 value = str(value)
@@ -500,6 +506,9 @@ class CoreService:
 
     def _public_changed(self, changed: dict[str, Any]) -> dict[str, Any]:
         public = dict(changed)
+        if "llm_api_base" in public:
+            public.pop("llm_api_base", None)
+            public["llm_api_base_configured"] = bool(changed.get("llm_api_base"))
         if "llm_api_key_file" in public:
             public.pop("llm_api_key_file", None)
             public["llm_api_key_file_configured"] = bool(changed.get("llm_api_key_file"))
