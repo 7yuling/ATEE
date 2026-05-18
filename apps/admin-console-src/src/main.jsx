@@ -59,7 +59,10 @@ const SECRET_JSON_KEYS = new Set([
   "api_base",
   "llm_api_base",
   "api_key",
+  "openai_api",
+  "openai_api_key",
   "llm_api_key",
+  "llm_api_key_value",
   "llm_api_key_file",
   "llm_proxy_url",
   "proxy_url",
@@ -85,7 +88,8 @@ const GATEWAY_HELP = {
   llm_provider: "供应商标识，只用于状态展示与审计，不包含密钥。",
   llm_model: "远程模型名称，由供应商网关识别。",
   new_llm_api_base: "模型接口根地址，仅写入不回显；留空保持不变。",
-  llm_api_key_env: "服务端读取 API Key 的环境变量名，不是密钥值。",
+  llm_api_key_env: "服务端读取 API Key 的环境变量名；控制台输入的 Key 会写入这个变量。",
+  llm_api_key_value: "一次性输入 API Key，后端写入当前服务进程环境变量，不回显、不写入配置文件；生产请用 systemd 环境文件或密钥管理器。",
   new_llm_api_key_file: "推荐填写加密后的密钥文件路径；保存后不回显，留空保持不变。",
   new_llm_proxy_url: "服务端访问模型时使用的代理 URL；保存后不回显，留空保持不变。",
   ledger_sqlite_path: "安全账本 SQLite 文件位置；改动后会重建账本句柄。",
@@ -267,6 +271,9 @@ function budgetLabel(budget = {}) {
 }
 
 function resultKind(result = {}) {
+  if (result.llm_gateway_test) {
+    return "配置保存并检测";
+  }
   if ("api_base_configured" in result || "api_key_configured" in result) {
     return "模型网关检测";
   }
@@ -295,6 +302,9 @@ function resultKind(result = {}) {
 }
 
 function resultMessage(result = {}) {
+  if (result.llm_gateway_test?.display?.message_zh) {
+    return result.llm_gateway_test.display.message_zh;
+  }
   if (result.display?.message_zh) {
     return result.display.message_zh;
   }
@@ -364,14 +374,15 @@ function RuntimeSummary({ status }) {
 }
 
 function OperationSummary({ result }) {
-  const budget = result?.budget || result?.llm_gateway?.budget || {};
-  const circuit = result?.circuit || result?.llm_gateway?.circuit || {};
-  const gatewayResult = result?.llm_gateway || {};
-  const reason = result?.reason || gatewayResult.reason;
+  const connectionResult = result?.llm_gateway_test || result;
+  const gatewayResult = connectionResult?.llm_gateway || {};
+  const budget = connectionResult?.budget || gatewayResult.budget || {};
+  const circuit = connectionResult?.circuit || gatewayResult.circuit || {};
+  const reason = connectionResult?.reason || gatewayResult.reason;
   const route = result?.route?.route;
   const action = result?.tool_gateway?.effective_action || result?.decision?.selected_action || result?.action_result?.record?.action;
-  const modelText = result?.provider || gatewayResult.provider
-    ? `${providerLabel(result?.provider || gatewayResult.provider)} / ${modeLabel(result?.mode || gatewayResult.mode)}`
+  const modelText = connectionResult?.provider || gatewayResult.provider
+    ? `${providerLabel(connectionResult?.provider || gatewayResult.provider)} / ${modeLabel(connectionResult?.mode || gatewayResult.mode)}`
     : "-";
   return (
     <div id="resultSummary" className="summary-block">
@@ -388,10 +399,10 @@ function OperationSummary({ result }) {
         <Descriptions.Item label="原因">{reasonLabel(reason)}</Descriptions.Item>
         <Descriptions.Item label="路由">{route || "-"}</Descriptions.Item>
         <Descriptions.Item label="动作">{action || "-"}</Descriptions.Item>
-        <Descriptions.Item label="延迟">{result?.latency_ms ?? gatewayResult.latency_ms ?? "-"} ms</Descriptions.Item>
-        <Descriptions.Item label="API Base">{tagForNullableBoolean(result?.api_base_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
-        <Descriptions.Item label="API Key">{tagForNullableBoolean(result?.api_key_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
-        <Descriptions.Item label="代理">{tagForNullableBoolean(result?.proxy_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
+        <Descriptions.Item label="延迟">{connectionResult?.latency_ms ?? gatewayResult.latency_ms ?? "-"} ms</Descriptions.Item>
+        <Descriptions.Item label="API Base">{tagForNullableBoolean(connectionResult?.api_base_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
+        <Descriptions.Item label="API Key">{tagForNullableBoolean(connectionResult?.api_key_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
+        <Descriptions.Item label="代理">{tagForNullableBoolean(connectionResult?.proxy_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
         <Descriptions.Item label="熔断">{circuit.open ? <Tag color="warning">已熔断</Tag> : <Tag color="success">正常</Tag>}</Descriptions.Item>
         <Descriptions.Item label="预算余额">{budgetLabel(budget)}</Descriptions.Item>
       </Descriptions>
@@ -459,6 +470,7 @@ function App() {
       admin_auth_enabled: Boolean(config.admin_auth_enabled),
       admin_token_env: config.admin_token_env || "ATEE_ADMIN_TOKEN",
       new_llm_api_base: "",
+      llm_api_key_value: "",
       new_llm_api_key_file: "",
       new_llm_proxy_url: "",
       new_admin_token_file: "",
@@ -678,11 +690,18 @@ function App() {
         bypass_key_file: String(values.bypass_key_file || "").trim() || null,
       };
       const apiBase = String(values.new_llm_api_base || "").trim();
+      const apiKeyValue = String(values.llm_api_key_value || "").trim();
       const keyFile = String(values.new_llm_api_key_file || "").trim();
       const proxyUrl = String(values.new_llm_proxy_url || "").trim();
       const adminTokenFile = String(values.new_admin_token_file || "").trim();
+      if ((apiBase || apiKeyValue) && body.llm_mode === "mock") {
+        body.llm_mode = "openai_compatible";
+      }
       if (apiBase) {
         body.llm_api_base = apiBase;
+      }
+      if (apiKeyValue) {
+        body.llm_api_key_value = apiKeyValue;
       }
       if (keyFile) {
         body.llm_api_key_file = keyFile;
@@ -699,6 +718,16 @@ function App() {
       });
       configForm.setFieldsValue(configToFormValues(data.config || {}));
       await refresh();
+      if (apiBase || apiKeyValue) {
+        const { data: testData } = await apiRequest("/v1/admin/llm/test");
+        await refresh();
+        return {
+          ...data,
+          ok: Boolean(data.ok && testData.ok),
+          llm_gateway_test: testData,
+          display: testData.display || data.display,
+        };
+      }
       return data;
     });
   }
@@ -1208,6 +1237,11 @@ function App() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
+                              <Form.Item label="OpenAI API Key（保存为环境变量）" name="llm_api_key_value" extra={GATEWAY_HELP.llm_api_key_value}>
+                                <Input.Password id="llmApiKeyValueInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} md={12}>
                               <Form.Item label="新密钥文件路径（留空不变）" name="new_llm_api_key_file" extra={GATEWAY_HELP.new_llm_api_key_file}>
                                 <Input.Password id="llmApiKeyFileInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
@@ -1269,6 +1303,7 @@ function App() {
                       <Card title="紧急旁路">
                         <Descriptions size="small" column={1}>
                           <Descriptions.Item label="API Base">{tagForBoolean(Boolean(status?.config?.llm_api_base_configured), ["已配置", "未配置"])}</Descriptions.Item>
+                          <Descriptions.Item label="API Key 环境变量">{tagForBoolean(Boolean(status?.config?.llm_api_key_env_configured), ["已写入", "未写入"])}</Descriptions.Item>
                           <Descriptions.Item label="API Key 文件">{tagForBoolean(Boolean(status?.config?.llm_api_key_file_configured), ["已配置", "未配置"])}</Descriptions.Item>
                           <Descriptions.Item label="模型代理">{tagForBoolean(Boolean(status?.config?.llm_proxy_configured), ["已配置", "未配置"])}</Descriptions.Item>
                           <Descriptions.Item label="旁路启用">{tagForBoolean(Boolean(status?.config?.bypass_enabled), ["已启用", "未启用"])}</Descriptions.Item>

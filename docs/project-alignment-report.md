@@ -808,3 +808,23 @@ P0 生产部署：未通过
 - 回归保护：`tests/test_deployment_assets.py` 新增断言，确保 installer 不再生成旧的 `systemd_escape` 引号路径形式。
 - 验证：`python -m unittest tests.test_deployment_assets` 23 个测试通过；`python -m unittest tests.test_deployment_assets tests.test_admin_console` 27 个测试通过。
 - 本机限制：Windows 环境的 `bash -n` 调用的是未安装发行版的 WSL，无法在本机完成 shell 语法检查；需要在 Ubuntu 目标机用 `bash -n scripts/linux/install-atee-systemd.sh` 和 `systemd-analyze --user verify ...` 复验。
+
+### 2026-05-18 Step 62：控制台 API Key 写入环境变量与远程连通检测
+
+- 问题一句话：上一版控制台只要求用户填写 API Key 环境变量名，不能直接输入测试 API Key 并立即验证远程 AI 链接，和实际调试流程不一致。
+- 最小解决方案：新增写入型字段 `llm_api_key_value`，管理台输入一次 API Key 后，后端只把它放进当前服务进程的 `llm_api_key_env` 环境变量，不写入 `config.json`、不回显、不进入生产产物。
+- 管理台：新增“OpenAI API Key（保存为环境变量）”密码输入；当保存 API Base 或 API Key 时，如果当前仍是 `mock`，自动切到 `openai_compatible`，随后立即调用 `/v1/admin/llm/test` 展示远程连通检测摘要。
+- 后端：`update_config()` 识别 `llm_api_key_value`，写入 `os.environ[llm_api_key_env]`；公共配置新增 `llm_api_key_env_configured` 布尔状态，仍不返回密钥值。
+- 保密边界：测试 Key 仅用于当前进程调试；重启后不会从 ATEE 配置恢复。生产部署仍应通过 systemd 环境文件或密钥管理器注入真实 Key。
+- 文档：开发 API 文档补充 `llm_api_key_value` 为 write-only runtime secret，并明确生产环境不要依赖控制台输入的测试 Key。
+- 验证：`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 16 项浏览器交互通过；`python -m unittest tests.test_core tests.test_admin_console` 38 个测试通过；`python -m unittest discover -s tests` 87 个测试通过。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、25 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 145 个文件且 findings=0。
+
+### 2026-05-18 Step 63：Linux systemd 安装前配置初始化防呆
+
+- 问题一句话：Ubuntu/Linux 直接运行 systemd 安装脚本时，如果还没有初始化 `config/config.json`，服务会被安装后立刻启动失败或进入 restart 循环，问题表现容易和 unit 文件错误混在一起。
+- 最小解决方案：安装脚本在写入 unit 和调用 `systemctl` 前先检查 `config/config.json`；缺失时直接退出并打印 `cp config/config.example.json config/config.json` 初始化命令。
+- 修改范围：`scripts/linux/install-atee-systemd.sh` 新增 `CONFIG_FILE` / `CONFIG_EXAMPLE` 检查；`README.md` 与 `docs/deployment.md` 将 Linux systemd 部署顺序改为先复制配置、可选编辑，再安装服务。
+- 回归保护：`tests/test_deployment_assets.py` 新增断言，确保配置检查发生在 `systemctl --user` 调用之前，并保留初始化命令提示。
+- 验证：`python -m unittest tests.test_deployment_assets` 23 个测试通过；`python -m unittest tests.test_core tests.test_admin_console` 38 个测试通过。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、25 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 145 个文件且 findings=0。

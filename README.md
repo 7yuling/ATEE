@@ -72,6 +72,8 @@ Docker deployment notes are in [docs/deployment.md](docs/deployment.md). The ima
 For Ubuntu/Linux systemd deployment:
 
 ```bash
+cp config/config.example.json config/config.json
+# Optional: edit config/config.json for your environment.
 bash scripts/linux/install-atee-systemd.sh --user
 ```
 

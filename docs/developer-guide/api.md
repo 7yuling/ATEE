@@ -276,7 +276,7 @@ Relative file paths written through config resolve from the project root. This i
 
 ## POST /v1/admin/config
 
-Allowed fields. Sensitive write-only fields such as `llm_api_base`, `llm_api_key_file`, `llm_proxy_url`, and `admin_token_file` are accepted on update, then returned only as `*_configured` booleans.
+Allowed fields. Sensitive write-only fields such as `llm_api_base`, `llm_api_key_value`, `llm_api_key_file`, `llm_proxy_url`, and `admin_token_file` are accepted on update, then returned only as `*_configured` booleans. `llm_api_key_value` is copied into the service process environment variable named by `llm_api_key_env`; it is not persisted to `config.json`.
 
 ```json
 {
@@ -298,6 +298,7 @@ Allowed fields. Sensitive write-only fields such as `llm_api_base`, `llm_api_key
   "llm_provider": "mock",
   "llm_model": "atee-local-mock-v1",
   "llm_api_base": "https://provider.example/v1",
+  "llm_api_key_value": "write-only-runtime-secret",
   "llm_api_key_file": "config/secrets/provider.dpapi.json",
   "llm_api_key_env": "ATEE_LLM_API_KEY",
   "llm_proxy_url": "http://127.0.0.1:7890",
@@ -417,7 +418,9 @@ Use `/v1/admin/llm/test` to verify the gateway is reachable.
 
 ## OpenAI-Compatible Gateway
 
-Set `llm_mode` to `openai_compatible` to call a provider at `{llm_api_base}/chat/completions`. API keys can be provided by `llm_api_key_env` or `llm_api_key_file`; API Base, API key file paths, proxy URLs, and key values are never returned by config, status, or test APIs.
+Set `llm_mode` to `openai_compatible` to call a provider at `{llm_api_base}/chat/completions`. API keys can be provided by `llm_api_key_env`, one-time write-only `llm_api_key_value`, or `llm_api_key_file`; API Base, API key file paths, proxy URLs, and key values are never returned by config, status, or test APIs.
+
+`llm_api_key_value` is for controlled console entry and connection testing. It sets only the current service process environment variable named by `llm_api_key_env`; production deployments should inject the key through systemd environment files or a secret manager before service start.
 
 For strict secret transport, public `http://` API bases are rejected with `insecure_api_base_requires_https`. Localhost HTTP remains allowed for test doubles.
 

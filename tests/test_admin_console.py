@@ -79,6 +79,7 @@ class AdminConsoleTests(unittest.TestCase):
             "trustedProxyInput",
             "appealPathsInput",
             "llmApiBaseInput",
+            "llmApiKeyValueInput",
             "llmProxyUrlInput",
             "bypassKeyFileInput",
             "breakGlassHeaderInput",
@@ -88,7 +89,10 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("SECRET_JSON_KEYS", source)
         self.assertIn("REDACTED_VALUE", source)
         self.assertIn("new_llm_api_base", source)
+        self.assertIn("llm_api_key_value", source)
+        self.assertIn("llm_gateway_test", source)
         self.assertIn("llm_api_base_configured", source)
+        self.assertIn("llm_api_key_env_configured", source)
         self.assertIn("visibilityToggle={false}", source)
         self.assertNotIn('name="llm_api_base"', source)
         self.assertIn("async function saveConfig()", source)

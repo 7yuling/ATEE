@@ -268,6 +268,7 @@ class AteeCoreTests(unittest.TestCase):
             self.assertNotIn("admin_token_file", public)
             self.assertTrue(public["llm_api_base_configured"])
             self.assertTrue(public["llm_api_key_file_configured"])
+            self.assertFalse(public["llm_api_key_env_configured"])
             self.assertTrue(public["llm_proxy_configured"])
             self.assertTrue(public["admin_token_file_configured"])
 
@@ -449,6 +450,31 @@ class AteeCoreTests(unittest.TestCase):
                 }
             )
             self.assertEqual(check["real_ip"]["client_ip"], "203.0.113.8")
+
+    def test_update_config_stores_api_key_value_only_in_runtime_env(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_name = "ATEE_TEST_RUNTIME_ONLY_API_KEY"
+            os.environ.pop(env_name, None)
+            try:
+                config_path = Path(temp_dir) / "config.json"
+                core = CoreService(config_path=config_path)
+                result = core.update_config(
+                    {
+                        "llm_api_key_env": env_name,
+                        "llm_api_key_value": "test-runtime-key",
+                    }
+                )
+
+                self.assertEqual(os.environ.get(env_name), "test-runtime-key")
+                self.assertTrue(result["changed"]["llm_api_key_env_configured"])
+                self.assertNotIn("llm_api_key_value", json.dumps(result, ensure_ascii=False))
+                self.assertTrue(core.runtime_status()["config"]["llm_api_key_env_configured"])
+                persisted = config_path.read_text(encoding="utf-8")
+                self.assertIn(env_name, persisted)
+                self.assertNotIn("test-runtime-key", persisted)
+                self.assertNotIn("llm_api_key_value", persisted)
+            finally:
+                os.environ.pop(env_name, None)
 
     def test_mock_llm_gateway_allows_normal_request(self):
         gateway = RemoteLLMGateway(AdminConfig())

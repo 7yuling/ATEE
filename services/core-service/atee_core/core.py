@@ -193,6 +193,7 @@ class CoreService:
         }
 
     def update_config(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        api_key_value = str(payload.get("llm_api_key_value") or "").lstrip("\ufeff").strip()
         allowed = {
             "runtime_mode",
             "locale",
@@ -242,6 +243,11 @@ class CoreService:
                 value = str(value)
             setattr(self.config, key, value)
             changed[key] = value
+        if api_key_value:
+            env_name = str(self.config.llm_api_key_env or "ATEE_LLM_API_KEY").strip()
+            if env_name:
+                os.environ[env_name] = api_key_value
+                changed["llm_api_key_env_configured"] = True
 
         if changed:
             self._load_admin_token()

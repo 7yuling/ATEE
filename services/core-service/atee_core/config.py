@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,7 @@ def config_to_dict(config: AdminConfig, include_secret: bool = False) -> dict[st
         data.pop("bypass_key", None)
         data["llm_api_base_configured"] = bool(data.pop("llm_api_base", None))
         data["llm_api_key_file_configured"] = bool(data.pop("llm_api_key_file", None))
+        data["llm_api_key_env_configured"] = bool(config.llm_api_key_env and os.environ.get(config.llm_api_key_env))
         data["llm_proxy_configured"] = bool(data.pop("llm_proxy_url", None))
         data["admin_token_file_configured"] = bool(data.pop("admin_token_file", None))
     data["appeal_paths"] = list(config.appeal_paths)

@@ -84,6 +84,8 @@ Ubuntu and other Linux servers should not use Windows DPAPI `*.dpapi.json` secre
 For a current-user systemd service:
 
 ```bash
+cp config/config.example.json config/config.json
+# Optional: edit config/config.json for your environment.
 bash scripts/linux/install-atee-systemd.sh --user
 systemctl --user status atee-core.service
 ```
@@ -97,6 +99,8 @@ loginctl enable-linger <linux-user>
 For a system service, run as root and explicitly choose a non-root runtime user:
 
 ```bash
+cp config/config.example.json config/config.json
+# Optional: edit config/config.json for your environment.
 sudo bash scripts/linux/install-atee-systemd.sh --system --run-user atee
 sudo systemctl status atee-core.service
 ```

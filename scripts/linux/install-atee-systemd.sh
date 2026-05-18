@@ -54,8 +54,21 @@ done
 
 PROJECT_ROOT=$(CDPATH= cd -- "$PROJECT_ROOT" && pwd)
 START_SCRIPT="$PROJECT_ROOT/scripts/linux/start-atee-core.sh"
+CONFIG_FILE="$PROJECT_ROOT/config/config.json"
+CONFIG_EXAMPLE="$PROJECT_ROOT/config/config.example.json"
 if [ ! -f "$START_SCRIPT" ]; then
   echo "start-atee-core.sh was not found under $PROJECT_ROOT" >&2
+  exit 1
+fi
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "config/config.json was not found under $PROJECT_ROOT." >&2
+  echo "Initialize it before installing the systemd service:" >&2
+  echo "  cd $PROJECT_ROOT" >&2
+  echo "  cp config/config.example.json config/config.json" >&2
+  echo "  # Optional: edit config/config.json for your environment." >&2
+  if [ ! -f "$CONFIG_EXAMPLE" ]; then
+    echo "config/config.example.json is also missing; check that the repository was copied completely." >&2
+  fi
   exit 1
 fi
 
