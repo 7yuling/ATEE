@@ -72,6 +72,14 @@ class DemoSiteTests(unittest.TestCase):
         self.assertIn("def appeal", text)
         self.assertIn('"/v1/appeal"', text)
 
+    def test_demo_server_has_deployment_overrides_and_core_error_response(self):
+        source = (self.demo_dir / "server.py").read_text(encoding="utf-8")
+
+        self.assertIn("ATEE_CORE_URL", source)
+        self.assertIn("ATEE_DEMO_PORT", source)
+        self.assertIn("core_request_failed", source)
+        self.assertIn("could not bind", source)
+
 
 if __name__ == "__main__":
     unittest.main()

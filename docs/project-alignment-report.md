@@ -828,3 +828,18 @@ P0 生产部署：未通过
 - 回归保护：`tests/test_deployment_assets.py` 新增断言，确保配置检查发生在 `systemctl --user` 调用之前，并保留初始化命令提示。
 - 验证：`python -m unittest tests.test_deployment_assets` 23 个测试通过；`python -m unittest tests.test_core tests.test_admin_console` 38 个测试通过。
 - 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、25 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 145 个文件且 findings=0。
+
+### 2026-05-19 Step 64：Ubuntu 端口、Nginx 与演示站部署故障收敛
+
+- 问题一句话：当前部署故障来自同一类边界问题：systemd 依赖脚本执行位、Core/Demo/Nginx 端口互相占用、远程模型缺少服务端环境密钥、代理层 Cookie/Header 过大，以及管理台遇到非 JSON 代理错误时反馈不清晰。
+- 最小解决方案：不改核心业务逻辑，只在启动器、反向代理示例、Demo Site 和管理台请求层增加清晰失败边界与可操作提示。
+- systemd：`install-atee-systemd.sh` 的 unit 改为 `ExecStart=/usr/bin/env sh .../start-atee-core.sh`，避免 git clone 后脚本没有可执行位导致 `status=203/EXEC`。
+- Core 启动：`start-atee-core.sh` 在 `check_config.py` 前先做端口 bind 预检，并把结果写到 `logs/atee-port-preflight.log`；`run_server.py` 对 `EADDRINUSE` 输出明确端口占用错误。
+- 配置预检：`check_config.py` 在远程模型模式缺少 `llm_api_key_env`/`llm_api_key_file` 时提示 service env 文件位置，提醒设置环境变量或切回 `mock`。
+- Demo Site：新增 `ATEE_DEMO_PORT` 与 `ATEE_CORE_URL` 环境变量；建议 Nginx 公共 `8790` 反代到私有 `127.0.0.1:8791`，避免 Demo 进程和 Nginx 抢同一端口；Core 不可达时返回 502 JSON 而不是裸 500。
+- Nginx：新增 `deploy/reverse-proxy/nginx/atee-demo.conf.example`；Core/Demo Nginx 示例增加 `large_client_header_buffers 4 16k` 与 `proxy_set_header Cookie ""`，降低浏览器大 Cookie 导致 400 的概率。
+- 管理台：`apiRequest()` 支持非 JSON 响应兜底，将 Nginx 500/400 HTML 错误转成可展示的操作结果，避免“LLM 测试无反馈”。
+- 文档：`README.md`、`docs/deployment.md`、`docs/developer-guide/api.md` 增加端口分离、env 文件、Nginx bind 冲突和 Cookie 过大处理说明。
+- 验证：`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 16 项浏览器交互通过；`python -m unittest tests.test_deployment_assets tests.test_demo_site tests.test_admin_console tests.test_core` 66 个测试通过；`python -m unittest discover -s tests` 89 个测试通过。
+- WSL 实测：Ubuntu WSL 26.04 下完成缺配置拦截、`config/config.json` 初始化、user systemd 安装启动、Core `/health`、`/v1/admin/llm/test` mock 连通和 Demo Site 私有端口 `/health` 冒烟；Nginx 未安装，保留为目标服务器验证项。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、26 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 146 个文件且 findings=0。

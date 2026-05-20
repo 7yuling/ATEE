@@ -101,6 +101,8 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("MetricCard", source)
         self.assertIn("RuntimeSummary", source)
         self.assertIn("OperationSummary", source)
+        self.assertIn('response.headers.get("Content-Type")', source)
+        self.assertIn("response.statusText", source)
         self.assertIn("配置已接入", source)
         self.assertIn("原始 JSON", source)
         self.assertIn("Authorization = `Bearer ${adminToken}`", source)

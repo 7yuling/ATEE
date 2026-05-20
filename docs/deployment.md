@@ -105,13 +105,13 @@ sudo bash scripts/linux/install-atee-systemd.sh --system --run-user atee
 sudo systemctl status atee-core.service
 ```
 
-The installer writes a unit file that runs:
+The installer writes a unit file that runs the launcher through `/usr/bin/env sh`, so the service does not depend on the repository preserving executable bits:
 
 ```text
-scripts/linux/start-atee-core.sh
+/usr/bin/env sh scripts/linux/start-atee-core.sh
 ```
 
-That script sets `ATEE_HOST`, `ATEE_PORT`, `PYTHONUNBUFFERED`, runs `services/core-service/check_config.py`, and only then starts `services/core-service/run_server.py`.
+That script sets `ATEE_HOST`, `ATEE_PORT`, `PYTHONUNBUFFERED`, checks whether the bind port is already in use, runs `services/core-service/check_config.py`, and only then starts `services/core-service/run_server.py`.
 
 Default Linux service files:
 
@@ -128,6 +128,13 @@ chmod 600 ~/.config/atee/atee-core.env
 ```
 
 Do not put real API keys or admin tokens in the repository. For production, configure `config/config.json` to reference `llm_api_key_env` and `admin_token_env`, then inject `ATEE_LLM_API_KEY` and `ATEE_ADMIN_TOKEN` through the environment file or a secret manager. Bind to `127.0.0.1` behind Nginx/Caddy unless you have a trusted internal network and firewall policy.
+
+If `check_config.py` reports `llm_api_key_file or llm_api_key_env is required for remote model mode`, either set the configured environment variable in the service env file and restart, or switch `llm_mode` back to `mock` before installing:
+
+```bash
+nano ~/.config/atee/atee-core.env
+systemctl --user restart atee-core.service
+```
 
 ## Admin Token Rotation
 
@@ -151,12 +158,23 @@ ATEE should normally bind to `127.0.0.1` and sit behind a production reverse pro
 
 ```text
 deploy/reverse-proxy/nginx/atee.conf.example
+deploy/reverse-proxy/nginx/atee-demo.conf.example
 deploy/reverse-proxy/caddy/Caddyfile.example
 deploy/reverse-proxy/nginx/atee-sso.conf.example
 deploy/reverse-proxy/caddy/Caddyfile.sso.example
 ```
 
 Both examples proxy to `127.0.0.1:8787`, forward `X-Forwarded-*` and `X-Real-IP`, add basic security headers, and avoid wildcard CORS. If you trust the reverse proxy address, add its CIDR to `trusted_proxy_cidrs` so ATEE can use forwarded client IP metadata. Keep `admin_auth_enabled=true` for any shared or remotely reachable deployment.
+
+For a demo site exposed on public port `8790`, run the private demo process on a different port and proxy to it:
+
+```bash
+ATEE_DEMO_PORT=8791 ATEE_CORE_URL=http://127.0.0.1:8787 python3 apps/demo-site/server.py
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+If Nginx reports `bind() ... failed`, another process already owns that public listen port; stop that process or choose a different `listen` port. If the browser shows `Request Header Or Cookie Too Large`, clear the site cookies or use the Nginx examples with `large_client_header_buffers` and `proxy_set_header Cookie ""`.
 
 For production operator attribution, have the reverse proxy or SSO layer set `X-ATEE-Admin-Id` after authentication, or ask operators to enter a stable id in the React console. ATEE records the sanitized id plus short id/source hashes in the audit ledger, but does not store Admin Tokens or raw client IPs in ledger summaries.
 

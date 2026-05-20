@@ -73,6 +73,8 @@ The optional demo site runs separately on `http://127.0.0.1:8790/` and uses the 
 
 The demo response includes a compact `security` summary plus the raw `core_response` for local verification.
 
+For reverse-proxy deployments, keep the public Nginx port and the private demo process port separate, for example `ATEE_DEMO_PORT=8791` behind a public `listen 8790` proxy. Set `ATEE_CORE_URL` when Core is not on `http://127.0.0.1:8787`.
+
 ## HTTP E2E And Load Smoke
 
 `tests/test_http_e2e.py` starts a temporary Core Service on a random localhost port with the mock LLM gateway. It verifies:

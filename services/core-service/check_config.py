@@ -42,7 +42,9 @@ def _check_remote_llm_config(config, errors: list[str]) -> None:
     if env_name and os.environ.get(env_name):
         return
     if not config.llm_api_key_file:
-        errors.append("llm_api_key_file or llm_api_key_env is required for remote model mode.")
+        env_file = os.environ.get("ATEE_ENV_FILE")
+        hint = f" Set {env_name} in {env_file} or switch llm_mode to mock." if env_name and env_file else ""
+        errors.append(f"llm_api_key_file or llm_api_key_env is required for remote model mode.{hint}")
         return
 
     try:

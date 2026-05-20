@@ -55,6 +55,12 @@ To run the local business demo site in a second terminal:
 python apps\demo-site\server.py
 ```
 
+On Linux behind Nginx, keep the public Nginx port and the private demo process port separate:
+
+```bash
+ATEE_DEMO_PORT=8791 ATEE_CORE_URL=http://127.0.0.1:8787 python3 apps/demo-site/server.py
+```
+
 Then open:
 
 ```text

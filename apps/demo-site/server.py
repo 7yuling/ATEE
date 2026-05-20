@@ -1,4 +1,6 @@
+import errno
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -97,7 +99,7 @@ class DemoBusinessApp:
         }
 
 
-DEMO = DemoBusinessApp(AteeThinAdapter())
+DEMO = DemoBusinessApp(AteeThinAdapter(os.environ.get("ATEE_CORE_URL", "http://127.0.0.1:8787")))
 
 
 class DemoHandler(BaseHTTPRequestHandler):
@@ -125,19 +127,31 @@ class DemoHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         headers = dict(self.headers.items())
         remote_addr = self.client_address[0] if self.client_address else "127.0.0.1"
-        if self.path == "/api/login":
-            self._send_json(DEMO.login(body, headers, remote_addr))
-            return
-        if self.path == "/api/comment":
-            self._send_json(DEMO.comment(body, headers, remote_addr))
-            return
-        if self.path == "/api/upload":
-            self._send_json(DEMO.upload(body, headers, remote_addr))
-            return
-        if self.path == "/api/appeal":
-            result = DEMO.appeal(body)
-            status = int((result.get("appeal") or {}).get("status", 200))
-            self._send_json(result, status=status)
+        try:
+            if self.path == "/api/login":
+                self._send_json(DEMO.login(body, headers, remote_addr))
+                return
+            if self.path == "/api/comment":
+                self._send_json(DEMO.comment(body, headers, remote_addr))
+                return
+            if self.path == "/api/upload":
+                self._send_json(DEMO.upload(body, headers, remote_addr))
+                return
+            if self.path == "/api/appeal":
+                result = DEMO.appeal(body)
+                status = int((result.get("appeal") or {}).get("status", 200))
+                self._send_json(result, status=status)
+                return
+        except Exception as exc:
+            self._send_json(
+                {
+                    "ok": False,
+                    "error": "core_request_failed",
+                    "message_zh": "演示站无法连接 ATEE Core Service，请检查 Core 地址和端口。",
+                    "detail": str(exc)[:200],
+                },
+                status=502,
+            )
             return
         self._send_json({"error": "not_found"}, status=404)
 
@@ -181,5 +195,21 @@ def run(host: str = "127.0.0.1", port: int = 8790) -> None:
     server.serve_forever()
 
 
+def bind_from_env() -> tuple[str, int]:
+    host = os.environ.get("ATEE_DEMO_HOST", "127.0.0.1")
+    try:
+        port = int(os.environ.get("ATEE_DEMO_PORT", "8790"))
+    except ValueError:
+        port = 8790
+    return host, port
+
+
 if __name__ == "__main__":
-    run()
+    demo_host, demo_port = bind_from_env()
+    try:
+        run(demo_host, demo_port)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            print(f"ATEE Demo Site could not bind {demo_host}:{demo_port}; the address is already in use.", file=sys.stderr)
+            sys.exit(98)
+        raise

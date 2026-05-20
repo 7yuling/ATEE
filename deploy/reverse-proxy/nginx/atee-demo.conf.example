@@ -1,0 +1,23 @@
+# ATEE demo-site reverse proxy example for Nginx.
+# Public port 8790 proxies to a private demo process on 127.0.0.1:8791.
+
+server {
+    listen 8790;
+    server_name _;
+
+    client_max_body_size 2m;
+    large_client_header_buffers 4 16k;
+
+    location / {
+        proxy_pass http://127.0.0.1:8791;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie "";
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+}

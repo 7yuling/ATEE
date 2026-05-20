@@ -194,6 +194,8 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("start-atee-core.sh", script)
         self.assertIn("EnvironmentFile=-", script)
         self.assertIn("ExecStart=", script)
+        self.assertIn("ExecStart=/usr/bin/env sh", script)
+        self.assertIn("Environment=ATEE_ENV_FILE=", script)
         self.assertIn("systemd_unit_value", script)
         self.assertIn('value=${value//%/%%}', script)
         self.assertIn('CONFIG_FILE="$PROJECT_ROOT/config/config.json"', script)
@@ -215,6 +217,13 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("--remove-env", script)
         self.assertIn("daemon-reload", script)
 
+    def test_linux_start_script_preflights_port_before_config(self):
+        script = (ROOT / "scripts" / "linux" / "start-atee-core.sh").read_text(encoding="utf-8")
+
+        self.assertIn("ATEE port preflight failed", script)
+        self.assertIn("atee-port-preflight.log", script)
+        self.assertLess(script.index("atee-port-preflight.log"), script.index("check_config.py"))
+
     def test_linux_env_example_uses_placeholders_only(self):
         env_example = (ROOT / "scripts" / "linux" / "atee-core.env.example").read_text(encoding="utf-8")
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -228,6 +237,7 @@ class DeploymentAssetTests(unittest.TestCase):
 
     def test_reverse_proxy_examples_use_local_upstream_and_security_headers(self):
         nginx = (ROOT / "deploy" / "reverse-proxy" / "nginx" / "atee.conf.example").read_text(encoding="utf-8")
+        demo_nginx = (ROOT / "deploy" / "reverse-proxy" / "nginx" / "atee-demo.conf.example").read_text(encoding="utf-8")
         caddy = (ROOT / "deploy" / "reverse-proxy" / "caddy" / "Caddyfile.example").read_text(encoding="utf-8")
 
         for config in (nginx, caddy):
@@ -240,8 +250,15 @@ class DeploymentAssetTests(unittest.TestCase):
             self.assertNotIn("Access-Control-Allow-Origin *", config)
             self.assertNotIn(("api" + ".deepseek" + ".com"), config)
             self.assertNotRegex(config, r"sk-[A-Za-z0-9]")
+        self.assertIn("large_client_header_buffers 4 16k", nginx)
+        self.assertIn('proxy_set_header Cookie ""', nginx)
         self.assertIn("proxy_pass http://127.0.0.1:8787", nginx)
         self.assertIn("reverse_proxy 127.0.0.1:8787", caddy)
+        self.assertIn("listen 8790", demo_nginx)
+        self.assertIn("proxy_pass http://127.0.0.1:8791", demo_nginx)
+        self.assertIn("large_client_header_buffers 4 16k", demo_nginx)
+        self.assertIn('proxy_set_header Cookie ""', demo_nginx)
+        self.assertNotRegex(demo_nginx, r"sk-[A-Za-z0-9]")
 
     def test_sso_reverse_proxy_examples_inject_admin_identity_from_auth_layer(self):
         nginx = (ROOT / "deploy" / "reverse-proxy" / "nginx" / "atee-sso.conf.example").read_text(encoding="utf-8")

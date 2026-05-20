@@ -1,4 +1,6 @@
+import errno
 import os
+import sys
 
 from atee_core.http_server import run
 
@@ -13,4 +15,11 @@ def bind_from_env() -> tuple[str, int]:
 
 
 if __name__ == "__main__":
-    run(*bind_from_env())
+    host, port = bind_from_env()
+    try:
+        run(host, port)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            print(f"ATEE Core Service could not bind {host}:{port}; the address is already in use.", file=sys.stderr)
+            sys.exit(98)
+        raise

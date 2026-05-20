@@ -171,7 +171,14 @@ async function apiRequest(path, options = {}) {
     headers,
     ...options,
   });
-  const data = await response.json();
+  const contentType = response.headers.get("Content-Type") || "";
+  const data = contentType.includes("application/json")
+    ? await response.json()
+    : {
+        ok: false,
+        status: response.status,
+        error: (await response.text()).slice(0, 240) || response.statusText,
+      };
   if (response.status === 401 && path.startsWith("/v1/admin/")) {
     window.dispatchEvent(new CustomEvent("atee-admin-auth-required", { detail: data }));
   }
