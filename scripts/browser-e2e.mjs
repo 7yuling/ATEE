@@ -46,6 +46,38 @@ try {
   await click(page, "#testAppealBtn");
   await expectResult(page, (data) => data.status === 202, "appeal should be accepted");
 
+  const asyncSource = await postJson(page, "/v1/check", {
+    method: "POST",
+    path: "/comment",
+    event_type: "comment_create",
+    body: { text: "browser e2e async review comment" },
+    remote_addr: "198.51.100.10",
+  });
+  if (asyncSource.route?.route !== "async_agent" || asyncSource.llm_gateway?.reason !== "async_review_queued") {
+    throw new Error(`async source request was not queued: ${JSON.stringify(asyncSource)}`);
+  }
+
+  await openTab(page, "异步 AI 审查");
+  await expectText(page, "异步 AI 审查队列");
+  await click(page, "#asyncReviewsBtn");
+  await expectResult(page, (data) => Array.isArray(data.jobs) && data.count >= 1, "async AI review queue should list pending jobs");
+  await click(page, "#runAsyncReviewsBtn");
+  await expectResult(page, (data) => data.ok === true && data.claimed >= 1, "async review run should process due jobs");
+
+  await openTab(page, "Agent 对话");
+  await selectAntD(page, "#siteTypeSelect", "论坛/社区");
+  await selectAntD(page, "#adapterTypeSelect", "HTTP API");
+  await page.locator("#agentChatInput").fill("如何先用观察模式上线？");
+  await click(page, "#agentChatSendBtn");
+  await expectResult(page, (data) => data.reason === "mock_chat", "agent chat should respond in mock mode");
+
+  await openTab(page, "新手引导");
+  await selectAntD(page, "#guideSiteTypeSelect", "API 服务");
+  await selectAntD(page, "#guideAdapterTypeSelect", "反向代理/Nginx");
+  await click(page, "#preflightBtn");
+  await expectResult(page, (data) => Array.isArray(data.checks), "preflight checks should run from guide");
+  await expectText(page, "安全情况处理总流程");
+
   await openTab(page, "申诉处理");
   await expectText(page, "申诉审核");
   await click(page, "#appealsBtn");
@@ -87,7 +119,7 @@ try {
   await openTab(page, "安全账本");
   await page.locator("#ledgerLimitInput").fill("5");
   await click(page, "#ledgerBtn");
-  await expectResult(page, (data) => Array.isArray(data.records), "ledger records should be listed");
+  await expectResult(page, (data) => typeof data.ledger_count === "number", "ledger records should be listed as a summary");
 
   await openTab(page, "网关配置");
   await expectText(page, "运行配置");
@@ -105,7 +137,7 @@ try {
   if (consoleErrors.length) {
     throw new Error(`browser console errors: ${consoleErrors.join("; ")}`);
   }
-  console.log(JSON.stringify({ ok: true, port, checks: 16 }, null, 2));
+  console.log(JSON.stringify({ ok: true, port, checks: 20 }, null, 2));
 } finally {
   if (browser) {
     await browser.close();
@@ -170,6 +202,28 @@ async function click(page, selector) {
 async function confirmPopconfirm(page) {
   const locator = page.locator(".ant-popconfirm-buttons .ant-btn-primary").last();
   await locator.click({ timeout: 5000 });
+}
+
+async function selectAntD(page, selector, label) {
+  await page.locator(selector).click();
+  const option = page.locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option", {
+    hasText: label,
+  }).last();
+  await option.click({ timeout: 5000 });
+}
+
+async function postJson(page, path, payload) {
+  return page.evaluate(
+    async ({ path, payload }) => {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return response.json();
+    },
+    { path, payload },
+  );
 }
 
 async function openTab(page, label) {

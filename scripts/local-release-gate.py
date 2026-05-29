@@ -28,6 +28,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run a sanitized local ATEE release gate.")
     parser.add_argument("--quick", action="store_true", help="Run the fast local gate used by tests.")
     parser.add_argument("--skip-agent-smoke", action="store_true", help="Skip the fake Agent AI full-flow smoke.")
+    parser.add_argument("--skip-async-worker-smoke", action="store_true", help="Skip the fake async AI review worker smoke.")
     parser.add_argument("--report", type=Path, help="Write a sanitized Markdown report.")
     args = parser.parse_args()
 
@@ -55,6 +56,8 @@ class ReleaseGateRunner:
                 "-m",
                 "unittest",
                 "tests.test_agent_ai_full_flow_smoke",
+                "tests.test_async_ai_review_worker_smoke",
+                "tests.test_async_review_worker",
                 "tests.test_deployment_assets",
             ]
         else:
@@ -68,6 +71,16 @@ class ReleaseGateRunner:
                     "scripts/agent-ai-full-flow-smoke.py",
                     "--report",
                     "reports/agent-ai-full-flow-smoke-local-gate.md",
+                ],
+            )
+        if not self.args.skip_async_worker_smoke:
+            self._run_command(
+                "async_ai_review_worker_smoke",
+                [
+                    sys.executable,
+                    "scripts/async-ai-review-worker-smoke.py",
+                    "--report",
+                    "reports/async-ai-review-worker-smoke-local-gate.md",
                 ],
             )
         self.steps.append(_sensitive_scan())
@@ -146,9 +159,13 @@ def _sensitive_patterns() -> list[tuple[str, re.Pattern[str]]]:
     local_drill = "local" + "-drill-[A-Za-z0-9]"
     local_live_batch = "local" + "-live-batch-[A-Za-z0-9]"
     local_agent_flow = "local" + "-agent-flow-[A-Za-z0-9]"
+    async_worker_smoke = "async" + "-worker-key-[A-Za-z0-9]"
     return [
         ("api_key_shape", re.compile(r"(^|[^A-Za-z0-9_])sk-[A-Za-z0-9]{20,}")),
-        ("fake_drill_secret", re.compile("|".join([fake_drill_secret, local_drill, local_live_batch, local_agent_flow]))),
+        (
+            "fake_drill_secret",
+            re.compile("|".join([fake_drill_secret, local_drill, local_live_batch, local_agent_flow, async_worker_smoke])),
+        ),
         ("provider_host", re.compile(re.escape(provider_host))),
         ("proxy_marker", re.compile(re.escape(proxy_marker))),
         ("provider_key_filename", re.compile(re.escape(provider_key_name))),

@@ -108,6 +108,40 @@ class AteeCoreTests(unittest.TestCase):
         self.assertEqual(guide["locale"], "zh-CN")
         self.assertGreaterEqual(len(guide["steps"]), 6)
         self.assertIn("真实 IP", " ".join(step["title_zh"] for step in guide["steps"]))
+        self.assertIn("details_zh", guide["steps"][0])
+        self.assertIn("安全情况处理总流程", " ".join(step["title_zh"] for step in guide["steps"]))
+
+    def test_environment_preflight_reports_actionable_checks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            report = core.environment_preflight()
+            check_ids = {item["id"] for item in report["checks"]}
+
+            self.assertIn("python_runtime", check_ids)
+            self.assertIn("config_file", check_ids)
+            self.assertIn("ledger_writable", check_ids)
+            self.assertIn("llm_gateway_config", check_ids)
+            self.assertEqual(report["summary"]["total"], len(report["checks"]))
+            self.assertNotIn("api_key_value", json.dumps(report, ensure_ascii=False).lower())
+
+    def test_agent_chat_mock_does_not_store_prompt_or_secret(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            result = core.agent_chat(
+                {
+                    "message": "如何配置 AI API 和紧急恢复？",
+                    "site_type": "论坛/社区",
+                    "adapter_type": "HTTP API",
+                },
+                actor={"id": "ops", "id_hash": "sha256:abc", "source_hash": "sha256:def"},
+            )
+            public_text = json.dumps(result, ensure_ascii=False)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["reason"], "mock_chat")
+            self.assertFalse(result["raw_prompt_stored"])
+            self.assertIn("reply_zh", result)
+            self.assertNotIn("sk-", public_text)
 
     def test_tool_gateway_rejects_ip_ban_without_trusted_real_ip(self):
         gateway = ToolGateway()
@@ -402,9 +436,9 @@ class AteeCoreTests(unittest.TestCase):
             core.check(
                 {
                     "method": "POST",
-                    "path": "/comment",
-                    "event_type": "comment_create",
-                    "body": {"text": "normal comment"},
+                    "path": "/login",
+                    "event_type": "login",
+                    "body": {"text": "normal login"},
                 }
             )
 
@@ -413,7 +447,7 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(recent["ok"])
             self.assertEqual(recent["status"]["persisted_records"], 1)
             self.assertEqual(recent["records"][0]["event_type"], "agent_decision")
-            self.assertEqual(recent["records"][0]["endpoint_type"], "comment_create")
+            self.assertEqual(recent["records"][0]["endpoint_type"], "login")
 
     def test_update_config_rebuilds_real_ip_resolver(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -502,18 +536,68 @@ class AteeCoreTests(unittest.TestCase):
         self.assertEqual(result["decision"]["selected_action"], "allow")
 
     def test_mock_llm_gateway_flags_chinese_spam_as_rule_hint(self):
-        core = CoreService()
-        result = core.check(
-            {
-                "method": "POST",
-                "path": "/comment",
-                "event_type": "comment_create",
-                "body": {"text": "广告 刷屏 诈骗"},
-            }
-        )
-        self.assertEqual(result["route"]["route"], "async_agent")
-        self.assertEqual(result["decision"]["selected_action"], "rule_hint")
-        self.assertEqual(result["llm_gateway"]["reason"], "mock_suspicious_content")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            result = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "广告 刷屏 诈骗"},
+                }
+            )
+            self.assertEqual(result["route"]["route"], "async_agent")
+            self.assertEqual(result["decision"]["selected_action"], "allow")
+            self.assertEqual(result["llm_gateway"]["reason"], "async_review_queued")
+            self.assertFalse(result["llm_gateway"]["llm_called"])
+
+            processed = core.run_async_reviews({"limit": 5})
+            completed = core.admin_async_reviews(status="completed")
+
+            self.assertTrue(processed["ok"])
+            self.assertEqual(processed["claimed"], 1)
+            self.assertEqual(processed["processed"][0]["status"], "completed")
+            self.assertEqual(completed["count"], 1)
+            self.assertEqual(completed["jobs"][0]["result"]["decision"]["selected_action"], "rule_hint")
+            self.assertEqual(completed["jobs"][0]["result"]["llm_gateway"]["reason"], "mock_suspicious_content")
+            self.assertNotIn("packet", completed["jobs"][0])
+
+    def test_async_review_retries_then_dead_letters_provider_failures(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_name = "ATEE_MISSING_ASYNC_TEST_KEY"
+            os.environ.pop(env_name, None)
+            core = CoreService(
+                config=AdminConfig(
+                    llm_mode="openai_compatible",
+                    llm_provider="deepseek",
+                    llm_model="test-model",
+                    llm_api_base="https://provider.example/v1",
+                    llm_api_key_env=env_name,
+                ),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            core.async_reviews.retry_backoff_seconds = 0
+            result = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "normal comment"},
+                }
+            )
+
+            first = core.run_async_reviews({"limit": 1})
+            second = core.run_async_reviews({"limit": 1})
+            third = core.run_async_reviews({"limit": 1})
+            dead = core.admin_async_reviews(status="dead_letter")
+
+            self.assertEqual(result["llm_gateway"]["reason"], "async_review_queued")
+            self.assertEqual(first["processed"][0]["status"], "retry")
+            self.assertEqual(second["processed"][0]["status"], "retry")
+            self.assertEqual(third["processed"][0]["status"], "dead_letter")
+            self.assertEqual(dead["count"], 1)
+            self.assertEqual(dead["jobs"][0]["attempts"], 3)
+            self.assertEqual(dead["jobs"][0]["last_error"], "missing_api_key")
 
     def test_openai_compatible_gateway_requires_key_without_leaking_secret(self):
         with tempfile.TemporaryDirectory() as temp_dir:

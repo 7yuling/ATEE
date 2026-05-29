@@ -24,6 +24,9 @@ class AdminConfig:
     llm_daily_budget_cents: int = 0
     ledger_max_bytes: int = 256 * 1024 * 1024
     ledger_sqlite_path: str | None = "data/atee_ledger.sqlite3"
+    async_review_worker_enabled: bool = False
+    async_review_worker_interval_seconds: int = 5
+    async_review_worker_batch_size: int = 5
     auto_ip_ban_enabled: bool = False
     admin_auth_enabled: bool = False
     admin_token_file: str | None = None
@@ -59,6 +62,9 @@ PERSISTED_FIELDS = {
     "llm_daily_budget_cents",
     "ledger_max_bytes",
     "ledger_sqlite_path",
+    "async_review_worker_enabled",
+    "async_review_worker_interval_seconds",
+    "async_review_worker_batch_size",
     "auto_ip_ban_enabled",
     "admin_auth_enabled",
     "admin_token_file",

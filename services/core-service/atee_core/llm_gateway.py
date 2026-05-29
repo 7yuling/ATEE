@@ -72,6 +72,28 @@ class RemoteLLMGateway:
             },
         }
 
+    def chat(self, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        start = perf_counter()
+        self.calls += 1
+        clean_message = str(message or "").strip()[:2000]
+        context = context or {}
+
+        if not clean_message:
+            result = self._chat_fallback("empty_message", "请输入需要 ATEE Agent 协助判断的问题。")
+        elif self.config.llm_mode == "disabled":
+            result = self._chat_fallback("llm_disabled", "当前已关闭远程模型，请先在网关配置中启用模型模式。")
+        elif self.config.llm_mode in {"openai_compatible", "remote"}:
+            result = self._openai_compatible_chat(clean_message, context)
+        else:
+            result = self._mock_chat(clean_message, context)
+
+        result["latency_ms"] = int((perf_counter() - start) * 1000)
+        result["budget"] = self._budget_status()
+        result["circuit"] = self._circuit_status()
+        self.last_result = result
+        self._record_result(result)
+        return result
+
     def status(self) -> dict[str, Any]:
         self._refresh_budget_window()
         return {
@@ -177,6 +199,154 @@ class RemoteLLMGateway:
             "display": {
                 "locale": "zh-CN",
                 "message_zh": "模型网关已完成结构化判断。",
+            },
+        }
+
+    def _openai_compatible_chat(self, message: str, context: dict[str, Any]) -> dict[str, Any]:
+        api_key = self._load_api_key()
+        if not self.config.llm_api_base:
+            return self._chat_fallback("missing_api_base", "缺少 API Base，请在网关配置中填写模型接口根地址。")
+        if self._insecure_remote_api_base():
+            return self._chat_fallback("insecure_api_base_requires_https", "公网 API Base 必须使用 HTTPS。")
+        if not api_key:
+            return self._chat_fallback("missing_api_key", "缺少 API Key，请在控制台保存运行时 Key，或在服务环境变量中注入。")
+        if self._circuit_is_open():
+            return self._chat_fallback("llm_circuit_open", "模型网关熔断窗口仍在生效，请稍后重试或检查供应商连通性。")
+        if not self._reserve_budget():
+            return self._chat_fallback("llm_budget_exhausted", "今日远程模型预算已耗尽，请提高预算或切回人工处理。")
+
+        payload = {
+            "model": self.config.llm_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are the ATEE security operations assistant. Answer in concise Chinese. "
+                        "Help the admin choose onboarding steps, gateway configuration, incident handling, "
+                        "and safe recovery actions. Never ask the user to paste API keys into chat, never "
+                        "echo secrets, and do not claim an action has been executed unless the provided "
+                        "context shows it."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "admin_question": message,
+                            "context": {
+                                "site_type": context.get("site_type"),
+                                "adapter_type": context.get("adapter_type"),
+                                "runtime_mode": context.get("runtime_mode"),
+                                "llm_mode": self.config.llm_mode,
+                                "provider": self.config.llm_provider,
+                            },
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                },
+            ],
+            "temperature": 0.2,
+            "max_tokens": 700,
+        }
+        request = urllib.request.Request(
+            self._chat_completions_url(),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        timeout_seconds = max(1.0, float(self.config.remote_hard_timeout_ms) / 1000.0)
+        request_start = perf_counter()
+        try:
+            with self._open(request, timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except TimeoutError:
+            return self._chat_fallback("provider_timeout", "模型供应商请求超时，请检查网络、代理和超时配置。")
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            return self._chat_fallback("provider_request_failed", "模型供应商返回失败，请检查 API Base、模型名和 Key。")
+        except urllib.error.URLError as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                return self._chat_fallback("provider_timeout", "模型供应商请求超时，请检查网络、代理和超时配置。")
+            return self._chat_fallback("provider_request_failed", "模型供应商请求失败，请检查网络或代理配置。")
+        except (OSError, json.JSONDecodeError):
+            return self._chat_fallback("provider_request_failed", "模型供应商响应不可用，请检查网关配置。")
+
+        content = self._provider_message_content(data)
+        if not content:
+            return self._chat_fallback("provider_request_failed", "模型没有返回可展示的回答，请检查模型兼容性。")
+        return {
+            "ok": True,
+            "provider": self.config.llm_provider,
+            "model": self.config.llm_model,
+            "mode": self.config.llm_mode,
+            "llm_called": True,
+            "reason": "provider_chat",
+            "reply_zh": content[:2000],
+            "raw_prompt_stored": False,
+            "provider_latency_ms": int((perf_counter() - request_start) * 1000),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "Agent 已返回对话建议。",
+            },
+        }
+
+    def _provider_message_content(self, data: dict[str, Any]) -> str:
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return ""
+        message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+        return str((message or {}).get("content") or "").strip()
+
+    def _mock_chat(self, message: str, context: dict[str, Any]) -> dict[str, Any]:
+        site_type = context.get("site_type") or "通用网站"
+        adapter_type = context.get("adapter_type") or "HTTP API"
+        if "api" in message.lower() or "key" in message.lower() or "模型" in message:
+            reply = (
+                "建议先在“网关配置”里确认 API Base、模型名和 API Key 环境变量名；"
+                "测试 Key 只通过“OpenAI API Key（保存为环境变量）”写入当前服务进程，生产环境改用 systemd 环境文件或密钥管理器。"
+            )
+        elif "恢复" in message or "旁路" in message or "紧急" in message:
+            reply = (
+                "紧急恢复应按三步走：切到只读或观察模式，验证 X-ATEE-Bypass 旁路只对管理员路径生效，"
+                "恢复后立即轮换旁路密钥并查看账本记录。"
+            )
+        else:
+            reply = (
+                f"当前按“{site_type} / {adapter_type}”接入思路处理：先运行环境预检，"
+                "再完成真实 IP、模型网关、申诉入口和紧急恢复配置；上线前保持观察模式并复核 24 小时账本。"
+            )
+        return {
+            "ok": True,
+            "provider": self.config.llm_provider,
+            "model": self.config.llm_model,
+            "mode": self.config.llm_mode,
+            "llm_called": False,
+            "reason": "mock_chat",
+            "reply_zh": reply,
+            "raw_prompt_stored": False,
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "当前为 Mock 对话建议；接入远程模型后会调用真实 AI。",
+            },
+        }
+
+    def _chat_fallback(self, reason: str, reply_zh: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "provider": self.config.llm_provider,
+            "model": self.config.llm_model,
+            "mode": self.config.llm_mode,
+            "llm_called": False,
+            "reason": reason,
+            "reply_zh": reply_zh,
+            "raw_prompt_stored": False,
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": reply_zh,
             },
         }
 

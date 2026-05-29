@@ -5,8 +5,10 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   ConfigProvider,
   Descriptions,
+  Divider,
   Form,
   Input,
   InputNumber,
@@ -27,11 +29,14 @@ import {
 import zhCN from "antd/locale/zh_CN";
 import {
   ApiOutlined,
+  BranchesOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   DatabaseOutlined,
+  DeploymentUnitOutlined,
   EyeOutlined,
   FileSearchOutlined,
+  MessageOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -42,380 +47,39 @@ import {
 } from "@ant-design/icons";
 import "antd/dist/reset.css";
 import "./styles.css";
+import {
+  ADAPTER_OPTIONS,
+  GATEWAY_HELP,
+  SECRET_PLACEHOLDER,
+  SECURITY_FLOW_STEPS,
+  SITE_TYPE_OPTIONS,
+  LabelWithHelp,
+  MetricCard,
+  OperationSummary,
+  PreflightSummary,
+  RuntimeSummary,
+  apiRequest,
+  budgetLabel,
+  cspNonce,
+  installStyleNonce,
+  modeLabel,
+  pretty,
+  providerLabel,
+  readAdminId,
+  readAdminToken,
+  splitListInput,
+  tagForBoolean,
+  tagForNullableBoolean,
+  writeAdminId,
+  writeAdminToken,
+} from "./adminSupport.jsx";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
-
-function cspNonce() {
-  return document.querySelector('meta[name="csp-nonce"]')?.getAttribute("content") || undefined;
-}
+const { TextArea } = Input;
 
 const runtimeCspNonce = cspNonce();
-const ADMIN_TOKEN_STORAGE_KEY = "atee.adminToken";
-const ADMIN_ID_STORAGE_KEY = "atee.adminId";
-const SECRET_PLACEHOLDER = "已配置的敏感值不会回显；留空保持当前配置";
-const REDACTED_VALUE = "[已保密]";
-const SECRET_JSON_KEYS = new Set([
-  "api_base",
-  "llm_api_base",
-  "api_key",
-  "openai_api",
-  "openai_api_key",
-  "llm_api_key",
-  "llm_api_key_value",
-  "llm_api_key_file",
-  "llm_proxy_url",
-  "proxy_url",
-  "admin_token",
-  "admin_token_file",
-  "authorization",
-  "bypass_header",
-  "bypass_key",
-]);
-const GATEWAY_HELP = {
-  locale: "控制台与后端展示语言；当前建议使用 zh-CN。",
-  runtime_mode: "observe 只观察，auto 自动执行，degraded 限制高影响动作，read_only 禁止写入。",
-  agent_paused: "暂停后 Agent 不继续自动推进，适合排障或人工接管。",
-  auto_ip_ban_enabled: "开启后工具网关可执行自动 IP 封禁；关闭时只记录或降级动作。",
-  admin_auth_enabled: "开启后 /v1/admin/* 需要 Admin Token，生产环境建议开启。",
-  llm_daily_budget_cents: "0 表示不限制每日模型调用预算；大于 0 时按天扣减远程调用预算。",
-  admin_token_env: "服务端读取 Admin Token 的环境变量名，不是 Token 值。",
-  new_admin_token_file: "仅填写服务端密钥文件路径，保存后不回显；留空保持不变。",
-  local_precheck_ms: "本地规则预检的目标耗时，用于保护同步链路。",
-  remote_soft_timeout_ms: "远程模型软超时，超过后可进入降级判断。",
-  remote_hard_timeout_ms: "远程模型硬超时，超过后强制结束远程调用。",
-  llm_mode: "mock 为本地模拟；openai_compatible/remote 调用兼容网关；disabled 关闭远程模型。",
-  llm_provider: "供应商标识，只用于状态展示与审计，不包含密钥。",
-  llm_model: "远程模型名称，由供应商网关识别。",
-  new_llm_api_base: "模型接口根地址，仅写入不回显；留空保持不变。",
-  llm_api_key_env: "服务端读取 API Key 的环境变量名；控制台输入的 Key 会写入这个变量。",
-  llm_api_key_value: "一次性输入 API Key，后端写入当前服务进程环境变量，不回显、不写入配置文件；生产请用 systemd 环境文件或密钥管理器。",
-  new_llm_api_key_file: "推荐填写加密后的密钥文件路径；保存后不回显，留空保持不变。",
-  new_llm_proxy_url: "服务端访问模型时使用的代理 URL；保存后不回显，留空保持不变。",
-  ledger_sqlite_path: "安全账本 SQLite 文件位置；改动后会重建账本句柄。",
-  ledger_max_bytes: "账本文件上限，超过后会触发轮转。",
-  trusted_proxy_cidrs: "一行一个或用逗号分隔，只信任这些代理转发的真实 IP 头。",
-  appeal_paths: "一行一个或用逗号分隔，用于识别用户申诉入口。",
-  bypass_enabled: "开启紧急旁路校验，仅用于受控排障。",
-  bypass_key_file: "旁路密钥文件路径；不要把密钥明文填入控制台。",
-};
-
-function installStyleNonce(nonce) {
-  if (!nonce || window.__ateeStyleNonceInstalled) {
-    return;
-  }
-  const originalCreateElement = document.createElement.bind(document);
-  document.createElement = (tagName, options) => {
-    const element = originalCreateElement(tagName, options);
-    if (String(tagName).toLowerCase() === "style") {
-      element.nonce = nonce;
-    }
-    return element;
-  };
-  window.__ateeStyleNonceInstalled = true;
-}
-
 installStyleNonce(runtimeCspNonce);
-
-function readAdminToken() {
-  try {
-    return window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function writeAdminToken(token) {
-  try {
-    if (token) {
-      window.sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, token);
-    } else {
-      window.sessionStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
-    }
-  } catch {
-    // Browser storage can be disabled; requests will still work when auth is off.
-  }
-}
-
-function readAdminId() {
-  try {
-    return window.sessionStorage.getItem(ADMIN_ID_STORAGE_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function writeAdminId(adminId) {
-  try {
-    if (adminId) {
-      window.sessionStorage.setItem(ADMIN_ID_STORAGE_KEY, adminId);
-    } else {
-      window.sessionStorage.removeItem(ADMIN_ID_STORAGE_KEY);
-    }
-  } catch {
-    // Browser storage can be disabled; the backend will record the actor as unknown.
-  }
-}
-
-async function apiRequest(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  const adminToken = readAdminToken();
-  const adminId = readAdminId();
-  if (path.startsWith("/v1/admin/") && adminToken && !headers.Authorization) {
-    headers.Authorization = `Bearer ${adminToken}`;
-  }
-  if (path.startsWith("/v1/admin/") && adminId && !headers["X-ATEE-Admin-Id"]) {
-    headers["X-ATEE-Admin-Id"] = adminId;
-  }
-  const response = await fetch(path, {
-    headers,
-    ...options,
-  });
-  const contentType = response.headers.get("Content-Type") || "";
-  const data = contentType.includes("application/json")
-    ? await response.json()
-    : {
-        ok: false,
-        status: response.status,
-        error: (await response.text()).slice(0, 240) || response.statusText,
-      };
-  if (response.status === 401 && path.startsWith("/v1/admin/")) {
-    window.dispatchEvent(new CustomEvent("atee-admin-auth-required", { detail: data }));
-  }
-  return { status: response.status, data };
-}
-
-function isSecretJsonKey(key) {
-  const normalized = String(key || "").toLowerCase();
-  return SECRET_JSON_KEYS.has(normalized);
-}
-
-function redactSecrets(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => redactSecrets(item));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        isSecretJsonKey(key) ? REDACTED_VALUE : redactSecrets(item),
-      ]),
-    );
-  }
-  return value;
-}
-
-function pretty(value) {
-  return JSON.stringify(redactSecrets(value ?? {}), null, 2);
-}
-
-function splitListInput(value) {
-  return String(value || "")
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function tagForBoolean(value, labels = ["正常", "异常"]) {
-  return value ? <Tag color="success">{labels[0]}</Tag> : <Tag color="warning">{labels[1]}</Tag>;
-}
-
-function tagForNullableBoolean(value, labels = ["正常", "异常", "未测试"]) {
-  if (value === null || value === undefined) {
-    return <Tag>{labels[2]}</Tag>;
-  }
-  return value ? <Tag color="success">{labels[0]}</Tag> : <Tag color="warning">{labels[1]}</Tag>;
-}
-
-function providerLabel(provider) {
-  const value = String(provider || "").trim();
-  if (!value) {
-    return "-";
-  }
-  if (value.toLowerCase() === "deepseek") {
-    return "DeepSeek";
-  }
-  if (value.toLowerCase() === "mock") {
-    return "Mock";
-  }
-  return value;
-}
-
-function modeLabel(mode) {
-  const labels = {
-    mock: "Mock",
-    openai_compatible: "OpenAI-compatible",
-    remote: "Remote",
-    disabled: "Disabled",
-  };
-  return labels[mode] || mode || "-";
-}
-
-function reasonLabel(reason) {
-  const labels = {
-    provider_json_decision: "供应商已返回结构化判断",
-    missing_api_base: "缺少 API Base",
-    missing_api_key: "缺少 API Key",
-    insecure_api_base_requires_https: "公网 API Base 必须使用 HTTPS",
-    provider_request_failed: "供应商请求失败",
-    provider_timeout: "供应商请求超时",
-    llm_circuit_open: "熔断窗口中",
-    llm_budget_exhausted: "远程调用预算已耗尽",
-    mock_decision: "本地 Mock 判断",
-    mock_suspicious_content: "本地 Mock 命中可疑内容",
-  };
-  return labels[reason] || reason || "-";
-}
-
-function budgetLabel(budget = {}) {
-  if (budget.daily_remaining_cents === null) {
-    return "不限";
-  }
-  if (budget.daily_remaining_cents === undefined) {
-    return "-";
-  }
-  return `${budget.daily_remaining_cents} cent`;
-}
-
-function resultKind(result = {}) {
-  if (result.llm_gateway_test) {
-    return "配置保存并检测";
-  }
-  if ("api_base_configured" in result || "api_key_configured" in result) {
-    return "模型网关检测";
-  }
-  if (result.request) {
-    return "安全请求检测";
-  }
-  if (result.changed) {
-    return "配置保存";
-  }
-  if (Array.isArray(result.appeals)) {
-    return "申诉列表";
-  }
-  if (Array.isArray(result.actions)) {
-    return "动作列表";
-  }
-  if (Array.isArray(result.records)) {
-    return "账本查询";
-  }
-  if ("valid_for_request" in result) {
-    return "紧急旁路检测";
-  }
-  if ("admin_token_saved" in result) {
-    return "管理会话";
-  }
-  return Object.keys(result || {}).length ? "管理操作" : "等待操作";
-}
-
-function resultMessage(result = {}) {
-  if (result.llm_gateway_test?.display?.message_zh) {
-    return result.llm_gateway_test.display.message_zh;
-  }
-  if (result.display?.message_zh) {
-    return result.display.message_zh;
-  }
-  if (result.error) {
-    return String(result.error);
-  }
-  if ("api_base_configured" in result || "api_key_configured" in result) {
-    return result.ok ? "模型网关连接正常。" : "模型网关当前不可用，请检查供应商、模型名、网络和密钥配置。";
-  }
-  if (result.ok === true) {
-    return "操作已完成。";
-  }
-  if (result.ok === false) {
-    return "操作未完成，请查看摘要原因。";
-  }
-  return "选择一个操作后，这里会显示摘要结果。";
-}
-
-function operationStatus(result = {}) {
-  if (!Object.keys(result || {}).length) {
-    return <Tag>未执行</Tag>;
-  }
-  if (typeof result.ok === "boolean") {
-    return tagForBoolean(result.ok, ["成功", "失败"]);
-  }
-  if (typeof result.status === "number") {
-    return result.status >= 200 && result.status < 400 ? <Tag color="success">{result.status}</Tag> : <Tag color="warning">{result.status}</Tag>;
-  }
-  return <Tag color="success">已返回</Tag>;
-}
-
-function MetricCard({ id, title, value, icon, children }) {
-  return (
-    <Card className="metric-card">
-      <div className="metric-title">{title}</div>
-      <div id={id} className="metric-value">
-        {icon}
-        <span>{value}</span>
-      </div>
-      {children ? <div className="metric-extra">{children}</div> : null}
-    </Card>
-  );
-}
-
-function RuntimeSummary({ status }) {
-  const gateway = status?.llm_gateway || {};
-  const display = status?.display || {};
-  const budget = gateway.budget || {};
-  const circuit = gateway.circuit || {};
-  return (
-    <div id="outputSummary" className="summary-block">
-      <Descriptions size="small" column={1}>
-        <Descriptions.Item label="服务状态">{status ? <Tag color="success">已连接</Tag> : <Tag>连接中</Tag>}</Descriptions.Item>
-        <Descriptions.Item label="运行模式">{display.runtime_mode_zh || status?.runtime_mode || "-"}</Descriptions.Item>
-        <Descriptions.Item label="Agent">{display.agent_paused_zh || "-"}</Descriptions.Item>
-        <Descriptions.Item label="账本记录">{status?.ledger?.persisted_records ?? status?.ledger?.records ?? 0}</Descriptions.Item>
-        <Descriptions.Item label="待处理申诉">{status?.pending_appeals ?? 0}</Descriptions.Item>
-        <Descriptions.Item label="模型配置">{`${providerLabel(gateway.provider)} / ${modeLabel(gateway.mode)}`}</Descriptions.Item>
-        <Descriptions.Item label="最近连通">{tagForNullableBoolean(gateway.last_ok, ["最近成功", "最近失败", "未测试"])}</Descriptions.Item>
-        <Descriptions.Item label="API Key">{tagForBoolean(Boolean(gateway.api_key_configured), ["已配置", "未配置"])}</Descriptions.Item>
-        <Descriptions.Item label="代理">{tagForBoolean(Boolean(gateway.proxy_configured), ["已配置", "未配置"])}</Descriptions.Item>
-        <Descriptions.Item label="熔断">{circuit.open ? <Tag color="warning">已熔断</Tag> : <Tag color="success">正常</Tag>}</Descriptions.Item>
-        <Descriptions.Item label="预算余额">{budgetLabel(budget)}</Descriptions.Item>
-      </Descriptions>
-    </div>
-  );
-}
-
-function OperationSummary({ result }) {
-  const connectionResult = result?.llm_gateway_test || result;
-  const gatewayResult = connectionResult?.llm_gateway || {};
-  const budget = connectionResult?.budget || gatewayResult.budget || {};
-  const circuit = connectionResult?.circuit || gatewayResult.circuit || {};
-  const reason = connectionResult?.reason || gatewayResult.reason;
-  const route = result?.route?.route;
-  const action = result?.tool_gateway?.effective_action || result?.decision?.selected_action || result?.action_result?.record?.action;
-  const modelText = connectionResult?.provider || gatewayResult.provider
-    ? `${providerLabel(connectionResult?.provider || gatewayResult.provider)} / ${modeLabel(connectionResult?.mode || gatewayResult.mode)}`
-    : "-";
-  return (
-    <div id="resultSummary" className="summary-block">
-      <Alert
-        className="result-message"
-        type={result?.ok === false ? "warning" : result?.error ? "error" : "info"}
-        showIcon
-        message={resultMessage(result)}
-      />
-      <Descriptions size="small" column={1}>
-        <Descriptions.Item label="操作类型">{resultKind(result)}</Descriptions.Item>
-        <Descriptions.Item label="结果">{operationStatus(result)}</Descriptions.Item>
-        <Descriptions.Item label="模型">{modelText}</Descriptions.Item>
-        <Descriptions.Item label="原因">{reasonLabel(reason)}</Descriptions.Item>
-        <Descriptions.Item label="路由">{route || "-"}</Descriptions.Item>
-        <Descriptions.Item label="动作">{action || "-"}</Descriptions.Item>
-        <Descriptions.Item label="延迟">{connectionResult?.latency_ms ?? gatewayResult.latency_ms ?? "-"} ms</Descriptions.Item>
-        <Descriptions.Item label="API Base">{tagForNullableBoolean(connectionResult?.api_base_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
-        <Descriptions.Item label="API Key">{tagForNullableBoolean(connectionResult?.api_key_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
-        <Descriptions.Item label="代理">{tagForNullableBoolean(connectionResult?.proxy_configured, ["已配置", "未配置", "未返回"])}</Descriptions.Item>
-        <Descriptions.Item label="熔断">{circuit.open ? <Tag color="warning">已熔断</Tag> : <Tag color="success">正常</Tag>}</Descriptions.Item>
-        <Descriptions.Item label="预算余额">{budgetLabel(budget)}</Descriptions.Item>
-      </Descriptions>
-    </div>
-  );
-}
 
 function App() {
   const [activeMenu, setActiveMenu] = useState("dashboard");
@@ -427,12 +91,24 @@ function App() {
   const [appeals, setAppeals] = useState([]);
   const [actions, setActions] = useState([]);
   const [ledgerRecords, setLedgerRecords] = useState([]);
+  const [asyncReviews, setAsyncReviews] = useState([]);
   const [appealStatus, setAppealStatus] = useState("pending");
   const [actionStatus, setActionStatus] = useState("active");
+  const [asyncReviewStatus, setAsyncReviewStatus] = useState("pending");
   const [ledgerLimit, setLedgerLimit] = useState(10);
   const [adminToken, setAdminToken] = useState(readAdminToken());
   const [adminId, setAdminId] = useState(readAdminId());
   const [authRequired, setAuthRequired] = useState(false);
+  const [siteType, setSiteType] = useState("通用网站");
+  const [adapterType, setAdapterType] = useState("HTTP API");
+  const [preflightReport, setPreflightReport] = useState(null);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatMessages, setChatMessages] = useState([
+    {
+      role: "assistant",
+      content: "我是 ATEE Agent 助手。你可以问我如何接入网站、配置模型网关、处理攻击、申诉或紧急恢复。",
+    },
+  ]);
   const [appealForm] = Form.useForm();
   const [actionForm] = Form.useForm();
   const [configForm] = Form.useForm();
@@ -459,6 +135,9 @@ function App() {
       locale: config.locale || "zh-CN",
       runtime_mode: config.runtime_mode || "observe",
       agent_paused: Boolean(config.agent_paused),
+      async_review_worker_enabled: Boolean(config.async_review_worker_enabled),
+      async_review_worker_interval_seconds: Number(config.async_review_worker_interval_seconds ?? 5),
+      async_review_worker_batch_size: Number(config.async_review_worker_batch_size ?? 5),
       trusted_proxy_cidrs: (config.trusted_proxy_cidrs || []).join("\n"),
       auto_ip_ban_enabled: Boolean(config.auto_ip_ban_enabled),
       local_precheck_ms: Number(config.local_precheck_ms ?? 100),
@@ -583,6 +262,57 @@ function App() {
     });
   }
 
+  async function runPreflight() {
+    await run("environment-preflight", async () => {
+      const { data } = await apiRequest("/v1/admin/preflight");
+      setPreflightReport(data);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function sendAgentChat() {
+    const message = String(chatDraft || "").trim();
+    if (!message) {
+      return;
+    }
+    setChatDraft("");
+    setChatMessages((items) => [...items, { role: "user", content: message }]);
+    await run("agent-chat", async () => {
+      const { data } = await apiRequest("/v1/admin/agent/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          site_type: siteType,
+          adapter_type: adapterType,
+        }),
+      });
+      setChatMessages((items) => [
+        ...items,
+        {
+          role: "assistant",
+          content: data.reply_zh || data.display?.message_zh || "Agent 当前没有返回可展示内容。",
+        },
+      ]);
+      await refresh();
+      return data;
+    });
+  }
+
+  function runGuideAction(stepId) {
+    if (stepId === "environment") {
+      runPreflight();
+    } else if (stepId === "site_type" || stepId === "adapter") {
+      setActiveMenu("guide");
+    } else if (stepId === "trusted_proxy" || stepId === "ai_api" || stepId === "break_glass") {
+      setActiveMenu("config");
+    } else if (stepId === "appeal") {
+      setActiveMenu("appeals");
+    } else {
+      setActiveMenu("dashboard");
+    }
+  }
+
   async function showConfig() {
     await run("config", async () => {
       const { data } = await apiRequest("/v1/admin/config");
@@ -610,7 +340,12 @@ function App() {
       const { data } = await apiRequest(`/v1/admin/ledger/recent?limit=${limit}`);
       setLedgerRecords(data.records || []);
       await refresh();
-      return data;
+      return {
+        ok: data.ok,
+        ledger_count: (data.records || []).length,
+        status: data.status,
+        display: data.display,
+      };
     });
   }
 
@@ -648,6 +383,28 @@ function App() {
     });
   }
 
+  async function showAsyncReviews(statusFilter = asyncReviewStatus) {
+    await run("async-reviews", async () => {
+      const { data } = await apiRequest(`/v1/admin/async-reviews?status=${encodeURIComponent(statusFilter)}`);
+      setAsyncReviews(data.jobs || []);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function runAsyncReviews() {
+    await run("run-async-reviews", async () => {
+      const { data } = await apiRequest("/v1/admin/async-reviews/run", {
+        method: "POST",
+        body: JSON.stringify({ limit: 10 }),
+      });
+      const { data: listData } = await apiRequest(`/v1/admin/async-reviews?status=${encodeURIComponent(asyncReviewStatus)}`);
+      setAsyncReviews(listData.jobs || []);
+      await refresh();
+      return data;
+    });
+  }
+
   async function revokeAction() {
     await run("revoke-action", async () => {
       const values = actionForm.getFieldsValue();
@@ -678,6 +435,9 @@ function App() {
         locale: values.locale || "zh-CN",
         runtime_mode: values.runtime_mode,
         agent_paused: Boolean(values.agent_paused),
+        async_review_worker_enabled: Boolean(values.async_review_worker_enabled),
+        async_review_worker_interval_seconds: Number(values.async_review_worker_interval_seconds),
+        async_review_worker_batch_size: Number(values.async_review_worker_batch_size),
         trusted_proxy_cidrs: splitListInput(values.trusted_proxy_cidrs),
         auto_ip_ban_enabled: Boolean(values.auto_ip_ban_enabled),
         local_precheck_ms: Number(values.local_precheck_ms),
@@ -773,14 +533,17 @@ function App() {
   const menuItems = useMemo(
     () => [
       { key: "dashboard", icon: <DatabaseOutlined />, label: "仪表盘" },
+      { key: "agent", icon: <MessageOutlined />, label: "Agent 对话" },
+      { key: "guide", icon: <CheckCircleOutlined />, label: "新手引导" },
       { key: "appeals", icon: <FileSearchOutlined />, label: "申诉处理" },
+      { key: "asyncReviews", icon: <BranchesOutlined />, label: "异步 AI 审查" },
       { key: "actions", icon: <ToolOutlined />, label: "动作管理" },
       { key: "ledger", icon: <SafetyCertificateOutlined />, label: "安全账本" },
       { key: "config", icon: <ApiOutlined />, label: "网关配置" },
-      { key: "guide", icon: <CheckCircleOutlined />, label: "新手引导" },
     ],
     [],
   );
+  const activeMenuLabel = menuItems.find((item) => item.key === activeMenu)?.label || "仪表盘";
 
   const appealColumns = [
     { title: "处罚编号", dataIndex: "punishment_id", key: "punishment_id" },
@@ -797,17 +560,26 @@ function App() {
     { title: "过期时间", dataIndex: "expires_at", key: "expires_at" },
   ];
 
+  const asyncReviewColumns = [
+    { title: "ID", dataIndex: "id", key: "id", width: 80 },
+    { title: "状态", dataIndex: "status", key: "status", render: (value) => <Tag>{value}</Tag> },
+    { title: "尝试", key: "attempts", render: (_, record) => `${record.attempts}/${record.max_attempts}` },
+    { title: "事件", dataIndex: "event_type", key: "event_type" },
+    { title: "最近错误", dataIndex: "last_error", key: "last_error", ellipsis: true },
+    { title: "更新时间", dataIndex: "updated_at", key: "updated_at" },
+  ];
+
   const ledgerColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 80 },
+    { title: "时间", dataIndex: "created_at", key: "created_at" },
     { title: "事件", dataIndex: "event_type", key: "event_type" },
     { title: "等级", dataIndex: "severity", key: "severity", render: (value) => <Tag>{value}</Tag> },
     { title: "动作", dataIndex: "action", key: "action" },
-    { title: "摘要", dataIndex: "summary", key: "summary", ellipsis: true },
   ];
 
   return (
     <Layout className="atee-shell">
-      <Sider width={248} className="atee-sider">
+      <Sider width={216} className="atee-sider">
         <div className="brand-block">
           <Title level={3}>ATEE</Title>
           <Text>管理控制台</Text>
@@ -819,7 +591,7 @@ function App() {
           <div>
             <Title level={2}>ATEE 管理控制台</Title>
             <Text id="statusText" type={status ? "success" : "secondary"}>
-              {status ? "Core Service 已连接" : "正在连接"}
+              {status ? `Core Service 已连接 · 当前页面：${activeMenuLabel}` : "正在连接"}
             </Text>
           </div>
           <Space wrap>
@@ -858,6 +630,10 @@ function App() {
             showIcon
             message="所有用户输入、Agent 输出和申诉理由都按纯文本渲染；管理台不保存原始 Prompt 或原始请求体。"
           />
+          <div className="workspace-heading">
+            <Title level={4}>{activeMenuLabel}</Title>
+            <Text type="secondary">左侧菜单和下方工作区同步切换，当前只显示该模块需要的操作。</Text>
+          </div>
           <Card className="auth-panel" size="small">
             <Space wrap>
               <Text strong>管理令牌</Text>
@@ -919,7 +695,8 @@ function App() {
             />
           ) : null}
 
-          <Row gutter={[16, 16]}>
+          {activeMenu === "dashboard" ? (
+          <Row gutter={[12, 12]}>
             <Col xs={24} md={12} xl={6}>
               <MetricCard id="runtime" title="当前模式" value={display.runtime_mode_zh || status?.runtime_mode || "-"} icon={<EyeOutlined />} />
             </Col>
@@ -931,6 +708,9 @@ function App() {
             </Col>
             <Col xs={24} md={12} xl={6}>
               <MetricCard id="appeals" title="待处理申诉" value={status?.pending_appeals ?? 0} icon={<FileSearchOutlined />} />
+            </Col>
+            <Col xs={24} md={12} xl={6}>
+              <MetricCard id="asyncReviewQueue" title="异步 AI 审查队列" value={status?.async_review?.queued ?? 0} icon={<BranchesOutlined />} />
             </Col>
             <Col xs={24} md={12} xl={6}>
               <MetricCard id="llmState" title="模型网关配置" value={providerLabel(gateway.provider)} icon={<ApiOutlined />}>
@@ -951,6 +731,7 @@ function App() {
               <MetricCard id="activeActions" title="活跃动作" value={status?.active_actions ?? 0} icon={<ToolOutlined />} />
             </Col>
           </Row>
+          ) : null}
 
           <Tabs
             className="workspace-tabs"
@@ -980,6 +761,135 @@ function App() {
                           <Descriptions.Item label="API Key">{tagForBoolean(Boolean(gateway.api_key_configured), ["已配置", "未配置"])}</Descriptions.Item>
                           <Descriptions.Item label="代理">{tagForBoolean(Boolean(gateway.proxy_configured), ["已配置", "未配置"])}</Descriptions.Item>
                         </Descriptions>
+                      </Card>
+                    </Col>
+                  </Row>
+                ),
+              },
+              {
+                key: "agent",
+                label: "Agent 对话",
+                children: (
+                  <Row gutter={[16, 16]}>
+                    <Col xs={24} xl={9}>
+                      <Card title="对话上下文">
+                        <Form layout="vertical">
+                          <Form.Item label="网站类型">
+                            <Select
+                              id="siteTypeSelect"
+                              value={siteType}
+                              onChange={setSiteType}
+                              options={SITE_TYPE_OPTIONS}
+                            />
+                          </Form.Item>
+                          <Form.Item label="接入方式">
+                            <Select
+                              id="adapterTypeSelect"
+                              value={adapterType}
+                              onChange={setAdapterType}
+                              options={ADAPTER_OPTIONS}
+                            />
+                          </Form.Item>
+                          <Alert
+                            type="info"
+                            showIcon
+                            message="Agent 会结合网站类型和接入方式给出建议；不要在对话中粘贴 API Key、Admin Token 或旁路密钥。"
+                          />
+                        </Form>
+                      </Card>
+                    </Col>
+                    <Col xs={24} xl={15}>
+                      <Card title="AI 安全助手">
+                        <div id="agentChatWindow" className="chat-window">
+                          {chatMessages.map((message, index) => (
+                            <div key={`${message.role}-${index}`} className={`chat-bubble ${message.role}`}>
+                              <Text strong>{message.role === "user" ? "你" : "ATEE Agent"}</Text>
+                              <div>{message.content}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <Space.Compact className="chat-input">
+                          <TextArea
+                            id="agentChatInput"
+                            value={chatDraft}
+                            onChange={(event) => setChatDraft(event.target.value)}
+                            autoSize={{ minRows: 2, maxRows: 5 }}
+                            placeholder="例如：我的网站接入了 Nginx 和 DeepSeek，怎样先做观察模式上线？"
+                          />
+                          <Button id="agentChatSendBtn" type="primary" icon={<MessageOutlined />} onClick={sendAgentChat} loading={loading}>
+                            发送
+                          </Button>
+                        </Space.Compact>
+                      </Card>
+                    </Col>
+                  </Row>
+                ),
+              },
+              {
+                key: "guide",
+                label: "新手引导",
+                children: (
+                  <Row gutter={[16, 16]}>
+                    <Col xs={24} xl={8}>
+                      <Card title="基础选择">
+                        <Form layout="vertical">
+                          <Form.Item label="网站类型">
+                            <Select
+                              id="guideSiteTypeSelect"
+                              value={siteType}
+                              onChange={setSiteType}
+                              options={SITE_TYPE_OPTIONS}
+                            />
+                          </Form.Item>
+                          <Form.Item label="接入方式">
+                            <Select
+                              id="guideAdapterTypeSelect"
+                              value={adapterType}
+                              onChange={setAdapterType}
+                              options={ADAPTER_OPTIONS}
+                            />
+                          </Form.Item>
+                          <Button id="preflightBtn" icon={<DeploymentUnitOutlined />} onClick={runPreflight} loading={loading}>
+                            运行环境预检
+                          </Button>
+                        </Form>
+                        <Divider />
+                        <PreflightSummary report={preflightReport} />
+                      </Card>
+                    </Col>
+                    <Col xs={24} xl={16}>
+                      <Card title="可操作引导">
+                        <Collapse
+                          id="guideList"
+                          accordion
+                          items={guideSteps.map((item) => ({
+                            key: item.id,
+                            label: item.title_zh,
+                            children: (
+                              <Space direction="vertical" size="small" className="guide-detail">
+                                <Text>{item.plain_text_zh}</Text>
+                                <Text type="secondary">推荐：{item.recommended_default_zh}</Text>
+                                <Text type="secondary">风险：{item.risk_zh}</Text>
+                                <List
+                                  size="small"
+                                  dataSource={item.details_zh || []}
+                                  renderItem={(detail) => <List.Item>{detail}</List.Item>}
+                                />
+                                <Button size="small" icon={<BranchesOutlined />} onClick={() => runGuideAction(item.id)}>
+                                  {item.next_action_zh || "进入对应功能"}
+                                </Button>
+                              </Space>
+                            ),
+                          }))}
+                        />
+                      </Card>
+                      <Card title="安全情况处理总流程" className="flow-card">
+                        <List
+                          id="securityFlowList"
+                          size="small"
+                          dataSource={SECURITY_FLOW_STEPS}
+                          renderItem={(item) => <List.Item>{item}</List.Item>}
+                        />
                       </Card>
                     </Col>
                   </Row>
@@ -1120,6 +1030,51 @@ function App() {
                 ),
               },
               {
+                key: "asyncReviews",
+                label: "异步 AI 审查",
+                children: (
+                  <Card title="异步 AI 审查队列">
+                    <Alert
+                      className="guard-alert"
+                      type="info"
+                      showIcon
+                      message="内容类请求会先通过 Fast-Path，再进入可恢复的异步 AI 审查队列；处理时会调用配置的模型网关，失败会重试，超过次数进入 dead_letter。"
+                    />
+                    <Space className="table-actions" wrap>
+                      <Select
+                        id="asyncReviewStatusSelect"
+                        value={asyncReviewStatus}
+                        onChange={(value) => {
+                          setAsyncReviewStatus(value);
+                          showAsyncReviews(value);
+                        }}
+                        options={[
+                          { value: "pending", label: "待处理" },
+                          { value: "retry", label: "待重试" },
+                          { value: "processing", label: "处理中" },
+                          { value: "completed", label: "已完成" },
+                          { value: "dead_letter", label: "死信" },
+                          { value: "all", label: "全部" },
+                        ]}
+                        style={{ width: 128 }}
+                      />
+                      <Button id="asyncReviewsBtn" icon={<ReloadOutlined />} onClick={() => showAsyncReviews(asyncReviewStatus)}>
+                        刷新队列
+                      </Button>
+                      <Button id="runAsyncReviewsBtn" type="primary" icon={<BranchesOutlined />} onClick={runAsyncReviews}>
+                        处理到期任务
+                      </Button>
+                    </Space>
+                    <Table
+                      rowKey="id"
+                      columns={asyncReviewColumns}
+                      dataSource={asyncReviews}
+                      pagination={{ pageSize: 5 }}
+                    />
+                  </Card>
+                ),
+              },
+              {
                 key: "ledger",
                 label: "安全账本",
                 children: (
@@ -1168,6 +1123,21 @@ function App() {
                             <Col xs={24} md={8}>
                               <Form.Item label="Agent 暂停" name="agent_paused" valuePropName="checked" extra={GATEWAY_HELP.agent_paused}>
                                 <Switch id="agentPausedSwitch" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} md={8}>
+                              <Form.Item label="异步 AI 审查 worker" name="async_review_worker_enabled" valuePropName="checked" extra={GATEWAY_HELP.async_review_worker_enabled}>
+                                <Switch id="asyncReviewWorkerSwitch" />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} md={8}>
+                              <Form.Item label="AI 审查间隔秒" name="async_review_worker_interval_seconds" extra={GATEWAY_HELP.async_review_worker_interval_seconds}>
+                                <InputNumber id="asyncReviewWorkerIntervalInput" min={1} max={3600} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} md={8}>
+                              <Form.Item label="AI 审查批量" name="async_review_worker_batch_size" extra={GATEWAY_HELP.async_review_worker_batch_size}>
+                                <InputNumber id="asyncReviewWorkerBatchInput" min={1} max={100} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
@@ -1234,17 +1204,17 @@ function App() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="新 API Base（留空不变）" name="new_llm_api_base" extra={GATEWAY_HELP.new_llm_api_base}>
+                              <Form.Item label={<LabelWithHelp text="新 API Base（留空不变）" help={GATEWAY_HELP.new_llm_api_base} />} name="new_llm_api_base" extra={GATEWAY_HELP.new_llm_api_base}>
                                 <Input.Password id="llmApiBaseInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="API Key 环境变量" name="llm_api_key_env" extra={GATEWAY_HELP.llm_api_key_env}>
+                              <Form.Item label={<LabelWithHelp text="API Key 环境变量" help={GATEWAY_HELP.llm_api_key_env} />} name="llm_api_key_env" extra={GATEWAY_HELP.llm_api_key_env}>
                                 <Input id="llmApiKeyEnvInput" autoComplete="off" />
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="OpenAI API Key（保存为环境变量）" name="llm_api_key_value" extra={GATEWAY_HELP.llm_api_key_value}>
+                              <Form.Item label={<LabelWithHelp text="OpenAI API Key（保存为环境变量）" help={GATEWAY_HELP.llm_api_key_value} />} name="llm_api_key_value" extra={GATEWAY_HELP.llm_api_key_value}>
                                 <Input.Password id="llmApiKeyValueInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
@@ -1254,7 +1224,7 @@ function App() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={12}>
-                              <Form.Item label="新代理 URL（留空不变）" name="new_llm_proxy_url" extra={GATEWAY_HELP.new_llm_proxy_url}>
+                              <Form.Item label={<LabelWithHelp text="新代理 URL（留空不变）" help={GATEWAY_HELP.new_llm_proxy_url} />} name="new_llm_proxy_url" extra={GATEWAY_HELP.new_llm_proxy_url}>
                                 <Input.Password id="llmProxyUrlInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
                               </Form.Item>
                             </Col>
@@ -1269,7 +1239,7 @@ function App() {
                               </Form.Item>
                             </Col>
                             <Col xs={24}>
-                              <Form.Item label="可信代理 CIDR" name="trusted_proxy_cidrs" extra={GATEWAY_HELP.trusted_proxy_cidrs}>
+                              <Form.Item label={<LabelWithHelp text="可信代理 CIDR" help={GATEWAY_HELP.trusted_proxy_cidrs} />} name="trusted_proxy_cidrs" extra={GATEWAY_HELP.trusted_proxy_cidrs}>
                                 <Input.TextArea id="trustedProxyInput" autoSize={{ minRows: 2, maxRows: 5 }} />
                               </Form.Item>
                             </Col>
@@ -1279,7 +1249,7 @@ function App() {
                               </Form.Item>
                             </Col>
                             <Col xs={24} md={8}>
-                              <Form.Item label="紧急旁路启用" name="bypass_enabled" valuePropName="checked" extra={GATEWAY_HELP.bypass_enabled}>
+                              <Form.Item label={<LabelWithHelp text="紧急旁路启用" help={GATEWAY_HELP.bypass_enabled} />} name="bypass_enabled" valuePropName="checked" extra={GATEWAY_HELP.bypass_enabled}>
                                 <Switch id="bypassEnabledSwitch" />
                               </Form.Item>
                             </Col>
@@ -1325,28 +1295,6 @@ function App() {
                       </Card>
                     </Col>
                   </Row>
-                ),
-              },
-              {
-                key: "guide",
-                label: "新手引导",
-                children: (
-                  <Card title="新手引导">
-                    <List
-                      id="guideList"
-                      grid={{ gutter: 16, xs: 1, sm: 1, md: 2, xl: 3 }}
-                      dataSource={guideSteps}
-                      renderItem={(item) => (
-                        <List.Item>
-                          <Card size="small" title={item.title_zh}>
-                            <Text>{item.plain_text_zh}</Text>
-                            <div className="guide-meta">推荐：{item.recommended_default_zh}</div>
-                            <div className="guide-meta">风险：{item.risk_zh}</div>
-                          </Card>
-                        </List.Item>
-                      )}
-                    />
-                  </Card>
                 ),
               },
             ]}

@@ -25,6 +25,11 @@ body {
   border-right: 1px solid #d9dee7;
 }
 
+.atee-sider .ant-menu-item {
+  height: 42px;
+  line-height: 42px;
+}
+
 .brand-block {
   min-height: 96px;
   padding: 20px;
@@ -52,11 +57,23 @@ body {
 }
 
 .atee-content {
-  padding: 20px 24px 32px;
+  padding: 16px 20px 28px;
 }
 
 .top-alert {
   margin-bottom: 16px;
+}
+
+.workspace-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.workspace-heading h4 {
+  margin: 0;
 }
 
 .auth-panel {
@@ -68,7 +85,7 @@ body {
 }
 
 .workspace-tabs {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .atee-content .ant-card-body {
@@ -76,7 +93,7 @@ body {
 }
 
 .metric-card .ant-card-body {
-  min-height: 132px;
+  min-height: 104px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -95,7 +112,7 @@ body {
   align-items: flex-start;
   gap: 8px;
   color: #111827;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 600;
   line-height: 1.2;
 }
@@ -147,6 +164,75 @@ body {
   color: #667085;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.guide-detail {
+  width: 100%;
+}
+
+.flow-card {
+  margin-top: 16px;
+}
+
+.help-icon {
+  color: #667085;
+  cursor: help;
+}
+
+.ok-icon {
+  color: #138a48;
+  font-size: 18px;
+}
+
+.bad-icon {
+  color: #c2410c;
+  font-size: 18px;
+}
+
+.chat-window {
+  min-height: 300px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #d9dee7;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.chat-bubble {
+  max-width: 88%;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.chat-bubble.assistant {
+  margin-right: auto;
+  background: #ffffff;
+  border: 1px solid #d9dee7;
+}
+
+.chat-bubble.user {
+  margin-left: auto;
+  background: #e8f1ff;
+  border: 1px solid #bfd7ff;
+}
+
+.chat-input {
+  width: 100%;
+  margin-top: 12px;
+  align-items: stretch;
+}
+
+.chat-input textarea {
+  resize: none;
+}
+
+.chat-input .ant-btn {
+  height: auto;
 }
 
 .json-row {

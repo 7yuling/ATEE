@@ -1,12 +1,15 @@
 import hashlib
 import hmac
 import os
+import platform
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from .actions import ActionExecutor
 from .appeals import AppealService
+from .async_review import AsyncReviewQueue
 from .config import DEFAULT_CONFIG, AdminConfig, ConfigStore, config_to_dict
 from .decision_engine import AgentDecisionEngine
 from .fast_path import FastPathRuleGate
@@ -46,6 +49,7 @@ class CoreService:
         self.executor = ActionExecutor(state_sqlite_path)
         self.ledger = SecurityLedgerLite(self.config.ledger_max_bytes, state_sqlite_path)
         self.appeals = AppealService(state_sqlite_path)
+        self.async_reviews = AsyncReviewQueue(state_sqlite_path) if state_sqlite_path else None
         self.runtime = RuntimeController(self.config)
 
     def check(self, payload: dict[str, Any], remote_addr: str = "127.0.0.1") -> dict[str, Any]:
@@ -100,6 +104,9 @@ class CoreService:
             return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record, None)
 
         packet = self.packet_compiler.compile(ctx, real_ip, fast_path, route)
+        if route["route"] == "async_agent":
+            return self._enqueue_async_review(ctx, real_ip, fast_path, route, packet)
+
         llm_result = self.llm_gateway.review(packet, route)
         agent_decision = payload.get("agent_decision") or llm_result.get("agent_decision")
         decision = self.decision_engine.decide(packet, route, agent_decision)
@@ -149,6 +156,8 @@ class CoreService:
             "actions_executed": len(self.executor.actions),
             "active_actions": len(self.executor.list_actions(status="active")),
             "pending_appeals": sum(1 for appeal in self.appeals.appeals.values() if appeal["status"] == "pending"),
+            "async_review": self.async_reviews.status() if self.async_reviews else {"sqlite_enabled": False},
+            "async_review_worker": self.async_review_worker_status(),
             "llm_gateway": self.llm_gateway.status(),
             "admin_auth": self.admin_auth_status(),
             "config": self.config_store.public_payload(self.config) if self.config_store else config_to_dict(self.config),
@@ -205,6 +214,9 @@ class CoreService:
             "remote_hard_timeout_ms",
             "ledger_max_bytes",
             "ledger_sqlite_path",
+            "async_review_worker_enabled",
+            "async_review_worker_interval_seconds",
+            "async_review_worker_batch_size",
             "admin_auth_enabled",
             "admin_token_file",
             "admin_token_env",
@@ -235,9 +247,14 @@ class CoreService:
                 value = str(value)
                 if value not in VALID_MODES:
                     continue
-            elif key.endswith("_ms") or key in {"ledger_max_bytes", "llm_daily_budget_cents"}:
+            elif key.endswith("_ms") or key in {
+                "ledger_max_bytes",
+                "llm_daily_budget_cents",
+                "async_review_worker_interval_seconds",
+                "async_review_worker_batch_size",
+            }:
                 value = int(value)
-            elif key in {"agent_paused", "auto_ip_ban_enabled", "bypass_enabled", "admin_auth_enabled"}:
+            elif key in {"agent_paused", "auto_ip_ban_enabled", "bypass_enabled", "admin_auth_enabled", "async_review_worker_enabled"}:
                 value = bool(value)
             elif value is not None:
                 value = str(value)
@@ -260,6 +277,7 @@ class CoreService:
                 if "ledger_sqlite_path" in changed:
                     self.executor = ActionExecutor(state_sqlite_path)
                     self.appeals = AppealService(state_sqlite_path)
+                    self.async_reviews = AsyncReviewQueue(state_sqlite_path) if state_sqlite_path else None
             self._save_config()
             public_changed = self._public_changed(changed)
             self._record_admin_audit(
@@ -281,8 +299,248 @@ class CoreService:
     def onboarding_steps(self) -> dict[str, Any]:
         return get_onboarding_steps()
 
+    def environment_preflight(self) -> dict[str, Any]:
+        checks: list[dict[str, Any]] = []
+
+        def add_check(check_id: str, title: str, ok: bool, detail: str, next_action: str = "") -> None:
+            checks.append(
+                {
+                    "id": check_id,
+                    "title_zh": title,
+                    "ok": bool(ok),
+                    "detail_zh": detail,
+                    "next_action_zh": next_action,
+                }
+            )
+
+        config_path = self.config_store.path if self.config_store else None
+        add_check(
+            "python_runtime",
+            "Python 运行环境",
+            sys.version_info >= (3, 10),
+            f"当前 Python {platform.python_version()}，建议使用 3.10 或更高版本。",
+            "低版本请先升级 Python，再启动 Core Service。",
+        )
+        add_check(
+            "config_file",
+            "配置文件",
+            bool(config_path and config_path.exists()),
+            "已找到 config/config.json。" if config_path and config_path.exists() else "未找到 config/config.json。",
+            "首次部署请执行 cp config/config.example.json config/config.json。",
+        )
+
+        admin_dir = self.project_root / "apps" / "admin-console"
+        admin_assets_ok = all((admin_dir / name).is_file() for name in ["index.html", "styles.css", "admin.js"])
+        add_check(
+            "admin_console_assets",
+            "管理台静态资源",
+            admin_assets_ok,
+            "管理台构建产物可由 Core Service 托管。" if admin_assets_ok else "管理台构建产物缺失。",
+            "运行 npm run build:admin 重新生成管理台资源。",
+        )
+
+        ledger_path = self._resolve_project_path(self.config.ledger_sqlite_path)
+        ledger_writable = False
+        if ledger_path:
+            try:
+                ledger_path.parent.mkdir(parents=True, exist_ok=True)
+                probe = ledger_path.parent / ".atee-write-test"
+                probe.write_text("ok", encoding="utf-8")
+                probe.unlink(missing_ok=True)
+                ledger_writable = True
+            except OSError:
+                ledger_writable = False
+        add_check(
+            "ledger_writable",
+            "账本目录",
+            ledger_writable,
+            "SQLite 账本目录可写。" if ledger_writable else "SQLite 账本目录不可写或未配置。",
+            "为服务用户授予 data/ 目录写入权限。",
+        )
+
+        remote_mode = self.config.llm_mode in {"openai_compatible", "remote"}
+        api_key_ready = bool(self.llm_gateway.status().get("api_key_configured"))
+        llm_ok = not remote_mode or (bool(self.config.llm_api_base) and api_key_ready)
+        add_check(
+            "llm_gateway_config",
+            "模型网关配置",
+            llm_ok,
+            "当前模型模式可启动。" if llm_ok else "远程模型模式缺少 API Base 或 API Key。",
+            "在网关配置中填写 API Base，并通过环境变量或密钥文件注入 API Key。",
+        )
+
+        proxy_ok = bool(self.config.trusted_proxy_cidrs) or not self.config.auto_ip_ban_enabled
+        add_check(
+            "trusted_proxy",
+            "真实 IP 与代理",
+            proxy_ok,
+            "自动 IP 封禁边界安全。" if proxy_ok else "已开启自动 IP 封禁，但未配置 trusted_proxy_cidrs。",
+            "先关闭自动 IP 封禁，或填写可信反向代理 CIDR。",
+        )
+
+        bypass_ok = not self.config.bypass_enabled or bool(self.config.bypass_key_file)
+        add_check(
+            "break_glass",
+            "紧急恢复旁路",
+            bypass_ok,
+            "紧急旁路未启用或已有密钥文件。" if bypass_ok else "紧急旁路已启用，但未配置密钥文件。",
+            "配置旁路密钥文件，使用后立即轮换。",
+        )
+
+        ok = all(item["ok"] for item in checks)
+        return {
+            "ok": ok,
+            "checks": checks,
+            "summary": {
+                "passed": sum(1 for item in checks if item["ok"]),
+                "total": len(checks),
+                "system": platform.system() or "unknown",
+                "python": platform.python_version(),
+            },
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "环境预检通过。" if ok else "环境预检发现需要处理的项目。",
+            },
+        }
+
+    def agent_chat(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        message = str(payload.get("message") or "").strip()
+        context = {
+            "site_type": str(payload.get("site_type") or "通用网站")[:80],
+            "adapter_type": str(payload.get("adapter_type") or "HTTP API")[:80],
+            "runtime_mode": self.config.runtime_mode,
+        }
+        if not message:
+            return {
+                "ok": False,
+                "status": 400,
+                "reason": "message_required",
+                "reply_zh": "请输入需要 Agent 协助判断的问题。",
+            }
+        result = self.llm_gateway.chat(message, context)
+        self._record_admin_audit(
+            "admin_agent_chat",
+            "agent_chat",
+            f"site_type={context['site_type']} adapter_type={context['adapter_type']} reason={result.get('reason')}",
+            actor,
+        )
+        return {
+            **result,
+            "context": context,
+            "display": result.get("display")
+            or {
+                "locale": "zh-CN",
+                "message_zh": "Agent 对话已返回。",
+            },
+        }
+
     def test_llm_gateway(self) -> dict[str, Any]:
         return self.llm_gateway.test_connection()
+
+    def async_review_worker_status(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self.config.async_review_worker_enabled),
+            "interval_seconds": int(self.config.async_review_worker_interval_seconds),
+            "batch_size": int(self.config.async_review_worker_batch_size),
+        }
+
+    def admin_async_reviews(self, status: str = "pending", limit: int = 50) -> dict[str, Any]:
+        if not self.async_reviews:
+            return {
+                "ok": False,
+                "status": 503,
+                "reason": "async_review_queue_unavailable",
+                "jobs": [],
+                "queue": {"sqlite_enabled": False},
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "异步 AI 审查队列不可用，请先配置 ledger_sqlite_path。",
+                },
+            }
+        jobs = self.async_reviews.list(status=status, limit=limit)
+        return {
+            "ok": True,
+            "jobs": jobs,
+            "count": len(jobs),
+            "queue": self.async_reviews.status(),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "异步 AI 审查队列已返回；列表只包含脱敏后的队列摘要。",
+            },
+        }
+
+    def process_async_reviews(self, limit: int = 10) -> dict[str, Any]:
+        if not self.async_reviews:
+            return {
+                "ok": False,
+                "status": 503,
+                "reason": "async_review_queue_unavailable",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "异步 AI 审查队列不可用，请先配置 ledger_sqlite_path。",
+                },
+            }
+        try:
+            limit = int(limit or 10)
+        except (TypeError, ValueError):
+            limit = 10
+        jobs = self.async_reviews.claim_due(limit=limit)
+        processed: list[dict[str, Any]] = []
+        for job in jobs:
+            try:
+                review_result = self._process_async_review_job(job)
+            except Exception as error:
+                updated = self.async_reviews.fail(job["id"], str(error))
+                status = (updated or {}).get("status", "retry")
+                self.ledger.record(
+                    {
+                        "severity": "high" if status == "dead_letter" else "medium",
+                        "event_type": "async_review_dead_letter" if status == "dead_letter" else "async_review_retry",
+                        "ip_hash": job.get("ip_hash"),
+                        "rule_id": job.get("rule_id"),
+                        "endpoint_type": job.get("event_type"),
+                        "action": status,
+                        "summary": f"async_review_job id={job['id']} failed reason={str(error)[:160]}",
+                    }
+                )
+                processed.append({"id": job["id"], "status": status, "error": str(error)[:160]})
+                continue
+            completed = self.async_reviews.complete(job["id"], review_result)
+            processed.append(
+                {
+                    "id": job["id"],
+                    "status": (completed or {}).get("status", "completed"),
+                    "effective_action": (review_result.get("tool_gateway") or {}).get("effective_action"),
+                    "reason": (review_result.get("llm_gateway") or {}).get("reason"),
+                }
+            )
+
+        return {
+            "ok": True,
+            "claimed": len(jobs),
+            "processed": processed,
+            "queue": self.async_reviews.status(),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": f"异步 AI 审查已处理 {len(processed)} 条。",
+            },
+        }
+
+    def run_async_reviews(self, payload: dict[str, Any] | None = None, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        try:
+            limit = int(payload.get("limit") or 10)
+        except (TypeError, ValueError):
+            limit = 10
+        result = self.process_async_reviews(limit=limit)
+        if result.get("ok"):
+            self._record_admin_audit(
+                "admin_async_review_run",
+                "run_async_reviews",
+                f"claimed={result.get('claimed')} processed={len(result.get('processed') or [])}",
+                actor,
+            )
+        return result
 
     def ledger_recent(self, limit: int = 20) -> dict[str, Any]:
         return {
@@ -388,6 +646,104 @@ class CoreService:
                 "locale": "zh-CN",
                 "message_zh": f"已标记 {changed} 条过期动作。",
             },
+        }
+
+    def _enqueue_async_review(
+        self,
+        ctx: RequestContext,
+        real_ip: dict[str, Any],
+        fast_path: dict[str, Any],
+        route: dict[str, Any],
+        packet: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.async_reviews:
+            decision = self.decision_engine.decide(packet, route, None)
+            ledger_record = self.ledger.record(
+                {
+                    "severity": "medium",
+                    "event_type": "async_review_queue_unavailable",
+                    "ip_hash": packet.get("ip_hash"),
+                    "rule_id": fast_path.get("rule_id"),
+                    "endpoint_type": route.get("event_type"),
+                    "action": "review_not_queued",
+                    "summary": "async AI review queue unavailable; request allowed pending manual inspection",
+                }
+            )
+            llm_result = {
+                "ok": False,
+                "llm_called": False,
+                "reason": "async_review_queue_unavailable",
+            }
+            return self._response(ctx, real_ip, fast_path, route, decision, None, ledger_record, None, llm_result)
+
+        job = self.async_reviews.enqueue(packet, route)
+        decision = {
+            "selected_action": "allow",
+            "scores": {
+                "evidence_score": 0.0,
+                "behavior_score": 0.0,
+                "reputation_score": 0.0,
+                "ai_confidence": 0.0,
+                "final_confidence": 0.0,
+            },
+            "reason_codes": ["route:async_agent", "async_review:queued"],
+            "admin_explanation": "Queued for async AI review; request is allowed while the worker reviews sanitized evidence with the configured model gateway.",
+            "duration_seconds": 0,
+            "target_scope": {"type": "request"},
+        }
+        ledger_record = self.ledger.record(
+            {
+                "severity": "medium",
+                "event_type": "async_review_queued",
+                "ip_hash": packet.get("ip_hash"),
+                "rule_id": fast_path.get("rule_id"),
+                "endpoint_type": route.get("event_type"),
+                "action": "queued",
+                "summary": f"async_review_job id={job.get('id')} queued",
+            }
+        )
+        llm_result = {
+            "ok": True,
+            "llm_called": False,
+            "reason": "async_review_queued",
+            "job_id": job.get("id"),
+            "status": job.get("status"),
+        }
+        response = self._response(ctx, real_ip, fast_path, route, decision, None, ledger_record, None, llm_result)
+        response["async_review_job"] = job
+        return response
+
+    def _process_async_review_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        packet = job.get("packet") or {}
+        route = job.get("route_detail") or {"route": "async_agent", "event_type": job.get("event_type")}
+        llm_result = self.llm_gateway.review(packet, route)
+        if not llm_result.get("ok"):
+            raise RuntimeError(str(llm_result.get("reason") or "llm_review_failed"))
+        decision = self.decision_engine.decide(packet, route, llm_result.get("agent_decision"))
+        gateway = self.tool_gateway.validate(decision, {"can_ip_ban": False}, self.config)
+        action_record = self.executor.execute(decision, gateway)
+        ledger_record = self.ledger.record(
+            {
+                "severity": "medium" if decision["selected_action"] in {"allow", "rule_hint"} else "high",
+                "event_type": "async_review_decision",
+                "ip_hash": packet.get("ip_hash"),
+                "rule_id": (packet.get("fast_path_signal") or {}).get("rule_id"),
+                "endpoint_type": route.get("event_type"),
+                "action": gateway.get("effective_action"),
+                "summary": (
+                    f"async_review_job id={job.get('id')} "
+                    f"decision={decision.get('selected_action')} reason={llm_result.get('reason')}"
+                ),
+            }
+        )
+        return {
+            "llm_gateway": llm_result,
+            "decision": decision,
+            "tool_gateway": gateway,
+            "action_result": action_record,
+            "ledger_record": ledger_record,
+            "raw_prompt_stored": False,
+            "raw_request_body_stored": False,
         }
 
     def _save_config(self) -> None:

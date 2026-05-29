@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from .core import CoreService
+from .async_review_worker import AsyncReviewWorker
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -52,6 +53,9 @@ class AteeHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/admin/config":
             self._send_json(CORE.config_status())
             return
+        if self.path == "/v1/admin/preflight":
+            self._send_json(CORE.environment_preflight())
+            return
         if self.path == "/v1/admin/llm/test":
             self._send_json(CORE.test_llm_gateway())
             return
@@ -63,6 +67,14 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/v1/admin/actions"):
             self._send_json(CORE.admin_actions(self._query_value("status", "active")))
+            return
+        if self.path.startswith("/v1/admin/async-reviews"):
+            self._send_json(
+                CORE.admin_async_reviews(
+                    self._query_value("status", "pending"),
+                    self._query_limit(default=50),
+                )
+            )
             return
         if self.path == "/v1/onboarding/steps":
             self._send_json(CORE.onboarding_steps())
@@ -93,6 +105,13 @@ class AteeHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/admin/config":
             self._send_json(CORE.update_config(payload, actor=self._admin_actor()))
             return
+        if self.path == "/v1/admin/preflight":
+            self._send_json(CORE.environment_preflight())
+            return
+        if self.path == "/v1/admin/agent/chat":
+            result = CORE.agent_chat(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
         if self.path == "/v1/admin/llm/test":
             self._send_json(CORE.test_llm_gateway())
             return
@@ -109,6 +128,9 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/admin/actions/cleanup-expired":
             self._send_json(CORE.cleanup_expired_actions(actor=self._admin_actor()))
+            return
+        if self.path == "/v1/admin/async-reviews/run":
+            self._send_json(CORE.run_async_reviews(payload, actor=self._admin_actor()))
             return
         self._send_json({"error": "not_found"}, status=404)
 
@@ -230,5 +252,18 @@ class AteeHandler(BaseHTTPRequestHandler):
 
 def run(host: str = "127.0.0.1", port: int = 8787) -> None:
     server = ThreadingHTTPServer((host, port), AteeHandler)
+    worker = None
+    if CORE.config.async_review_worker_enabled:
+        worker = AsyncReviewWorker(
+            CORE,
+            interval_seconds=CORE.config.async_review_worker_interval_seconds,
+            batch_size=CORE.config.async_review_worker_batch_size,
+        )
+        worker.start()
     print(f"ATEE Core Service running at http://{host}:{port}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        if worker:
+            worker.stop()
+        server.server_close()

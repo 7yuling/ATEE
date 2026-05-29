@@ -16,7 +16,7 @@ ROUTE_ZH = {
     "skip": "跳过 Agent",
     "fast_path_block": "快速规则拦截",
     "sync_agent": "同步高危路径",
-    "async_agent": "异步审查路径",
+    "async_agent": "异步 AI 审查路径",
 }
 
 MODE_ZH = {
@@ -92,4 +92,3 @@ def response_display(route: dict, decision: dict, gateway: dict | None, runtime:
         "runtime_mode_zh": zh_label("mode", runtime.get("runtime_mode")),
         "untrusted_text_policy_zh": "所有用户输入、Agent 输出和申诉理由都按纯文本渲染。",
     }
-

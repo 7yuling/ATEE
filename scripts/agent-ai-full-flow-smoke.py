@@ -272,21 +272,24 @@ def _markdown_report(summary: dict) -> str:
         f"- Overall OK: {bool(summary.get('ok'))}",
         f"- Mode: {summary.get('mode')}",
         f"- Live used: {bool(summary.get('live_used'))}",
+        f"- One-sentence summary: {_overall_sentence(summary)}",
         f"- Daily spend cents: {budget.get('daily_spend_cents')}",
         f"- Circuit open: {bool(circuit.get('open'))}",
         f"- Provider calls observed: {final.get('provider_calls')}",
         "",
         "## Steps",
         "",
+        "| Module | One-sentence response | Code response status | Key response |",
+        "| --- | --- | --- | --- |",
     ]
     for step in summary.get("steps") or []:
-        state = "OK" if step.get("ok") else "FAIL"
-        detail = ""
-        if step.get("llm_reason"):
-            detail = f" reason={step.get('llm_reason')}"
-        elif step.get("route"):
-            detail = f" route={step.get('route')}"
-        lines.append(f"- {step.get('name')}: {state}{detail}")
+        lines.append(
+            "| "
+            f"{step.get('name')} | "
+            f"{_step_sentence(step)} | "
+            f"{_step_code_status(step)} | "
+            f"{_step_key_response(step)} |"
+        )
     lines.extend(
         [
             "",
@@ -299,6 +302,68 @@ def _markdown_report(summary: dict) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _overall_sentence(summary: dict) -> str:
+    if summary.get("ok") and summary.get("live_used"):
+        return "真实模型链路、Fast-Path、申诉、管理员审核和账本摘要均在临时沙箱中闭环通过。"
+    if summary.get("ok"):
+        return "本地假供应商沙箱链路已闭环通过，未触达真实模型供应商。"
+    return "全流程演练存在失败步骤，请先查看 Steps 表格中的 FAIL 项。"
+
+
+def _step_sentence(step: dict) -> str:
+    name = step.get("name")
+    if name == "runtime_status":
+        return "运行状态可读取，模型配置、预算和熔断摘要可见。"
+    if name == "low_risk_read_skip":
+        return "低风险静态请求被本地规则跳过，没有调用 AI。"
+    if name == "sync_agent_ai_review":
+        return "登录类风险请求进入同步 Agent 审核，并返回结构化判断。"
+    if name == "fast_path_attack_block":
+        return "XSS 样例被 Fast-Path 直接拦截，没有继续发送给模型。"
+    if name == "appeal_submit":
+        return "用户申诉被接收并进入待处理队列。"
+    if name == "admin_appeal_review":
+        return "管理员审核申诉成功，审核行为写入账本摘要。"
+    if name == "ledger_recent":
+        return "安全账本可读取近期摘要，包含管理员操作者哈希。"
+    return "模块返回了可解析响应。"
+
+
+def _step_code_status(step: dict) -> str:
+    state = "OK" if step.get("ok") else "FAIL"
+    name = step.get("name")
+    if name == "appeal_submit":
+        return f"{state}; http_status={step.get('status')}"
+    if step.get("llm_reason"):
+        return f"{state}; reason={step.get('llm_reason')}"
+    if step.get("route"):
+        return f"{state}; route={step.get('route')}"
+    return state
+
+
+def _step_key_response(step: dict) -> str:
+    safe_keys = [
+        "runtime_mode",
+        "agent_paused",
+        "api_base_configured",
+        "api_key_configured",
+        "proxy_configured",
+        "circuit_open",
+        "fast_path_rule",
+        "llm_called",
+        "llm_latency_ms",
+        "selected_action",
+        "tool_effective_action",
+        "tool_executed",
+        "ledger_written",
+        "appeal_status",
+        "record_count",
+        "has_admin_actor_hash",
+    ]
+    parts = [f"{key}={step.get(key)}" for key in safe_keys if key in step]
+    return "; ".join(parts) or "-"
 
 
 def _utc_now() -> str:

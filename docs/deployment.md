@@ -52,6 +52,14 @@ python scripts/local-release-gate.py --report reports/local-release-gate.md
 
 It runs configuration preflight, Python compile checks, unit tests, the default fake Agent AI full-flow smoke, and a workspace sensitive scan. The report omits raw command output and secret-bearing values.
 
+To rehearse async AI review worker behavior without calling the configured live provider:
+
+```bash
+python scripts/async-ai-review-worker-smoke.py --report reports/async-ai-review-worker-smoke.md
+```
+
+The default worker smoke uses local fake providers to verify background processing, budget exhaustion, and circuit breaker behavior. Use `--include-live` only when one live configured-provider worker call is intentional.
+
 ## Bind Address
 
 `services/core-service/run_server.py` reads:
@@ -128,6 +136,8 @@ chmod 600 ~/.config/atee/atee-core.env
 ```
 
 Do not put real API keys or admin tokens in the repository. For production, configure `config/config.json` to reference `llm_api_key_env` and `admin_token_env`, then inject `ATEE_LLM_API_KEY` and `ATEE_ADMIN_TOKEN` through the environment file or a secret manager. Bind to `127.0.0.1` behind Nginx/Caddy unless you have a trusted internal network and firewall policy.
+
+For asynchronous AI review in production, keep `async_review_worker_enabled=false` until the model gateway, budget, and circuit-breaker settings are verified. After that, enable it and tune `async_review_worker_interval_seconds` and `async_review_worker_batch_size` to control background model-call frequency.
 
 If `check_config.py` reports `llm_api_key_file or llm_api_key_env is required for remote model mode`, either set the configured environment variable in the service env file and restart, or switch `llm_mode` back to `mock` before installing:
 

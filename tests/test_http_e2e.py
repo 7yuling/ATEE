@@ -62,6 +62,19 @@ class AteeHttpE2ETests(unittest.TestCase):
                 "body": {"text": "<script>alert(1)</script>"},
             },
         )
+        async_check = self._json(
+            "POST",
+            "/v1/check",
+            {
+                "method": "POST",
+                "path": "/comment",
+                "event_type": "comment_create",
+                "body": {"text": "normal comment"},
+            },
+        )
+        async_pending = self._json("GET", "/v1/admin/async-reviews?status=pending")
+        async_run = self._json("POST", "/v1/admin/async-reviews/run", {"limit": 2})
+        async_completed = self._json("GET", "/v1/admin/async-reviews?status=completed")
         appeal = self._json("POST", "/v1/appeal", {"punishment_id": "http-e2e-p1", "reason": "please review"})
         pending = self._json("GET", "/v1/admin/appeals?status=pending")
         reviewed = self._json(
@@ -93,6 +106,11 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertEqual(status["display"]["locale"], "zh-CN")
         self.assertEqual(safe["route"]["route"], "skip")
         self.assertEqual(attack["route"]["route"], "fast_path_block")
+        self.assertEqual(async_check["route"]["route"], "async_agent")
+        self.assertEqual(async_check["llm_gateway"]["reason"], "async_review_queued")
+        self.assertEqual(async_pending["count"], 1)
+        self.assertEqual(async_run["claimed"], 1)
+        self.assertEqual(async_completed["count"], 1)
         self.assertEqual(appeal["status"], 202)
         self.assertEqual(pending["count"], 1)
         self.assertTrue(reviewed["ok"])

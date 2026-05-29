@@ -37,6 +37,7 @@
 - `/v1/admin/llm/test` 可验证模型网关；当前 DeepSeek 已通过本地代理连通。
 - `/v1/admin/ledger/recent` 可查看 SQLite 最近账本摘要。
 - `/v1/admin/appeals` 与 `/v1/admin/actions` 可处理申诉和 ATEE 动作记录。
+- `/v1/admin/async-reviews` 与 `/v1/admin/async-reviews/run` 可查看并处理异步 AI 审查队列，支持重试和死信状态。
 - `/v1/onboarding/steps` 返回中文新手引导。
 - `apps/demo-site` 已验证登录、评论、上传、申诉通过 Python Thin Adapter 接入 Core。
 - XSS 样例会被 Fast-Path 拦截，且 `llm_called=false`。
@@ -60,7 +61,7 @@
 | 异步路径前也必须过 Fast-Path | 已对齐 | `event()` 复用 `check()` 流程。 |
 | Sync Path 不硬等 1.5 秒 LLM | 已对齐 | 已保留 3s/5s 策略配置，真实供应商失败会受控 fallback。 |
 | Local Precheck 100ms，Remote 3s/5s | 部分对齐 | 配置、远程 hard timeout、fallback、预算和熔断已实现；当前 DeepSeek 实测配置为 10s/20s。 |
-| Security Ledger Lite 默认 256MB | 部分对齐 | SQLite 摘要持久化已实现，仍缺完整异步队列与恢复策略。 |
+| Security Ledger Lite 默认 256MB | 部分对齐 | SQLite 摘要持久化已实现，异步 AI 审查队列已有重试/死信基础版；Ledger 自身异步写入队列仍未做。 |
 | 低危事件聚合 | 已对齐 | 低危请求按 60 秒内存聚合，不在请求链路高频写 SQLite。 |
 | 不保存 Prompt Packet 原文和原始请求体 | 已对齐 | 只保存摘要和哈希。 |
 | 不允许 AI 生成可执行 regex | 已对齐 | 当前只支持本地固定规则和 `rule_hint`。 |
@@ -83,13 +84,13 @@
 | 04 Fast-Path Rule Gate | Skip/Block/Rate limit/Report | 部分完成 |
 | 05 Request Router | skip/block/sync/async | 已完成基础版 |
 | 06 Sync Critical Path | 100ms/3s/5s 与 fallback | 部分完成，缺真实 LLM/fallback 细化 |
-| 07 Async Review Path | 队列、重试、死信 | 未完成，仅有路由入口 |
+| 07 Async Review Path | 队列、重试、死信 | 已完成基础版，支持 SQLite 异步 AI 审查队列、管理端触发处理、重试与死信 |
 | 08 Prompt Packet Compiler | 脱敏、哈希、allowed/forbidden | 已完成基础版 |
 | 09 Remote LLM Gateway | OpenAI-compatible、预算、心跳 | 部分完成，已实现 OpenAI-compatible 调用、配置化代理、预算保护、失败熔断和可重复 Agent AI 全流程冒烟脚本 |
 | 10 Agent Decision + final_confidence | JSON 校验、公式、阈值 | 已完成基础版 |
 | 11 Tool Gateway | 动作边界与模式约束 | 已完成基础版 |
 | 12 Action Executor | 可撤销、有期限、幂等 | 部分完成，执行记录已支持 SQLite 恢复、撤销和过期清理 |
-| 13 Security Ledger Lite | 256MB、聚合、异步落盘 | 部分完成，已支持 SQLite 摘要持久化 |
+| 13 Security Ledger Lite | 256MB、聚合、异步落盘 | 部分完成，已支持 SQLite 摘要持久化；异步 AI 审查队列已落盘，Ledger 写入队列仍未做 |
 | 14 Appeal + Fast-Path Lock | 白名单与限流 | 部分完成，pending 申诉、审核结果已支持 SQLite 恢复，限流窗口仍为内存态 |
 | 15 Break-Glass Bypass | Header、日志、轮换提示 | 部分完成 |
 | 16 Admin Console | React + Ant Design 管理台 | 已完成 P0 最终形态：React + Ant Design + Vite，保留 CSP nonce、中文界面、申诉/动作/账本/网关入口 |
@@ -218,7 +219,7 @@ P0 生产部署：未通过
 - 新增 SQLite Ledger 单元测试，覆盖中/高风险记录落库、低风险 skip 不高频写库、Core 重启后读取最近账本。
 - 修复 Windows 下 SQLite 文件句柄未释放的问题：所有连接改为显式关闭，并在写入/建表后显式 `commit()`。
 - 更新 README、开发 API 文档和项目进度报告，补充 `/v1/admin/ledger/recent`、`ledger_sqlite_path` 和 `data/atee_ledger.sqlite3` 说明。
-- 对齐矩阵更新：Security Ledger Lite 从“内存版”推进为“SQLite 摘要持久化已完成，异步队列/恢复策略未完成”。
+- 对齐矩阵更新：Security Ledger Lite 从“内存版”推进为“SQLite 摘要持久化已完成，异步 AI 审查队列/恢复策略未完成”。
 - 当前验证：`tests.test_core` 19 个测试通过；全量测试结果见 Step 5。
 
 ### 2026-05-13 Step 5：全量测试与静态编译验证
@@ -843,3 +844,99 @@ P0 生产部署：未通过
 - 验证：`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 16 项浏览器交互通过；`python -m unittest tests.test_deployment_assets tests.test_demo_site tests.test_admin_console tests.test_core` 66 个测试通过；`python -m unittest discover -s tests` 89 个测试通过。
 - WSL 实测：Ubuntu WSL 26.04 下完成缺配置拦截、`config/config.json` 初始化、user systemd 安装启动、Core `/health`、`/v1/admin/llm/test` mock 连通和 Demo Site 私有端口 `/health` 冒烟；Nginx 未安装，保留为目标服务器验证项。
 - 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、26 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 146 个文件且 findings=0。
+
+### 2026-05-24 Step 65：控制台可操作引导与 Agent 对话闭环
+
+- 问题一句话：控制台此前把新手引导当静态说明展示，缺少可点击检测、网站类型/接入方式选择、Agent 对话入口和清晰的页面切换反馈，导致用户无法按界面完成接入。
+- 最小解决方案：不扩展业务执行面，只补两个后端只读/低风险接口和前端工作区，让“问 Agent、跑预检、选类型、看流程、进配置”形成最小闭环。
+- 后端：新增 `/v1/admin/preflight`，返回 Python、配置文件、管理台资源、账本目录、模型网关、可信代理和紧急旁路的可操作检查结果。
+- 后端：新增 `/v1/admin/agent/chat`，复用现有模型网关；mock 模式给本地建议，远程模式调用 OpenAI-compatible 网关，不保存原始对话、不回显密钥。
+- 新手引导：改为可展开步骤，增加环境预检按钮、网站类型选择、接入方式选择、真实 IP、AI API、申诉、紧急恢复和“安全情况处理总流程”模块。
+- 管理台：新增 Agent 对话页；网关配置的 API Base、API Key 环境变量、代理 URL、可信代理 CIDR 和紧急旁路字段增加可悬浮解释。
+- 账本：控制台账本页仅展示记录摘要列，不再把管理员行为详情展开到操作结果 JSON；读取账本后只返回数量和状态摘要。
+- UI：非仪表盘页隐藏大指标卡，顶部显示当前页面名称，侧栏宽度与卡片高度收紧，让菜单切换有明确视觉变化。
+- 文档：README 与开发 API 文档补充 `/v1/admin/preflight` 和 `/v1/admin/agent/chat`。
+- 验证：`python -m py_compile services\core-service\atee_core\core.py services\core-service\atee_core\http_server.py services\core-service\atee_core\llm_gateway.py services\core-service\atee_core\onboarding.py` 通过。
+- 验证：`python -m unittest tests.test_core tests.test_admin_console` 40 个测试通过；`npm.cmd run build:admin` 通过；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run e2e:browser` 18 项浏览器交互通过。
+- 全量回归：`python -m unittest discover -s tests` 91 个测试通过。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，配置预检、Python 编译、26 个聚焦测试、默认 fake Agent AI 全流程冒烟和敏感扫描全部通过，扫描 147 个文件且 findings=0。
+
+### 2026-05-24 Step 66：沙箱攻击防御全流程与 DeepSeek live 演练
+
+- 问题一句话：控制台功能补齐后仍需要确认真实攻击防御链路能在临时沙箱中闭环，并验证配置的 DeepSeek/OpenAI-compatible 网关可真实返回结构化判断。
+- 最小解决方案：复用 `scripts/agent-ai-full-flow-smoke.py`，增强 Markdown 报告输出，每个模块记录一句话响应、代码响应状态和脱敏关键响应。
+- 文件检查：本轮编辑文件通过 UTF-8 内容检查、`git diff --check`、Python 编译和 Node 语法检查；PowerShell 终端显示乱码属于终端编码渲染问题，文件内容本体正常。
+- 沙箱 fake 演练：低风险静态请求走 `skip` 且不调用 AI；登录风险请求进入同步 Agent；XSS 样例命中 `FP_XSS_001`；申诉提交、管理员审核和账本摘要均通过。
+- DeepSeek live 演练：当前配置显示远程模式、API Base、API Key 文件和代理均已配置；`--include-live` 全流程通过，`sync_agent_ai_review` 返回 `provider_json_decision`，熔断保持关闭。
+- 报告产物：`reports\sandbox-attack-defense-full-log.md` 已生成，包含模块响应表；报告不包含 API key、API base 明文、代理 URL、Authorization header、密钥文件路径、原始 Prompt、原始请求体或临时账本路径。
+- 清理：本轮测试产生的 6 个 `__pycache__` 目录已删除，复查数量为 0；保留用户要求的 Markdown 日志产物。
+- 验证：`python -m unittest tests.test_agent_ai_full_flow_smoke tests.test_core tests.test_admin_console` 42 个测试通过；`npm.cmd run build:admin` 通过；`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，敏感扫描 150 个文件且 findings=0。
+
+### 2026-05-25 Step 67：管理台小范围拆分收口
+
+- 问题一句话：`apps/admin-console-src/src/main.jsx` 已膨胀到 1700 行以上，继续在单文件里追加控制台能力会降低定位效率并增加误改风险。
+- 最小解决方案：先只抽离无状态支持代码，不重构页面状态、不引入路由、不拆复杂组件，避免在前端拆分上偏离 P0 主线。
+- 拆分范围：新增 `apps/admin-console-src/src/adminSupport.jsx`，承载 CSP nonce、Admin Token 会话读写、API 请求封装、敏感 JSON 脱敏、固定选项、帮助文案、运行摘要和操作摘要等纯支持能力。
+- 保留范围：`main.jsx` 继续保留页面状态、业务动作、表格列和 Tabs 布局；本轮不继续做页面级组件拆分。
+- 管理台入口：异步 AI 审查队列的菜单、状态筛选、刷新和“处理到期任务”按钮已接入源码，并纳入前端源码断言。
+- 卡点规则：后续单点问题超过 10 分钟未解决时，记录问题、尝试路径和降级方案；优先保证项目可运行，再继续拆分或优化。
+- 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过。
+
+### 2026-05-25 Step 68：异步 AI 审查管理台浏览器验收
+
+- 问题一句话：异步 AI 审查队列虽已有后端测试，但还缺管理台按钮真实触发后端队列刷新和处理任务的浏览器验收。
+- 最小解决方案：不新增业务按钮，只在浏览器 E2E 中用普通评论请求制造一条 `async_agent` 队列任务，再进入“异步 AI 审查”页点击刷新队列和处理到期任务。
+- 覆盖链路：`POST /v1/check` 普通评论进入 `async_review_queued`；管理台 `#asyncReviewsBtn` 调用 `/v1/admin/async-reviews`；`#runAsyncReviewsBtn` 调用 `/v1/admin/async-reviews/run` 并处理至少一条到期任务。
+- 验证：`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`python -m unittest tests.test_admin_console tests.test_core tests.test_http_e2e` 45 个测试通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过。
+
+### 2026-05-25 Step 69：全量回归与本地发布闸门
+
+- 问题一句话：异步 AI 审查、管理台拆分和浏览器验收完成后，需要确认全项目没有出现跨模块回归。
+- 最小解决方案：不继续新增功能，先跑全量 Python 测试和 quick 发布闸门，确认配置预检、编译、聚焦测试、默认 Agent AI 冒烟和敏感扫描仍然通过。
+- 全量回归：`python -m unittest discover -s tests` 通过，92 个测试 OK。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过；配置预检、Python 编译、26 个聚焦测试、默认 Agent AI 全流程冒烟均通过。
+- 保密扫描：发布闸门扫描 152 个文件，`findings_count=0`；报告继续省略原始命令输出和敏感值。
+
+### 2026-05-25 Step 70：生产冒烟脚本真实 Core 本地复验
+
+- 问题一句话：生产冒烟脚本此前主要验证脚本自身和模拟服务，还缺一次真实 `AteeHandler + CoreService` 的本地闭环复验。
+- 最小解决方案：在 `tests/test_production_smoke_check.py` 增加独立真实 Core 冒烟测试，启动临时 Core HTTP 服务、开启 Admin Token 鉴权，再用 `scripts/production-smoke-check.py` 验证管理台资源、运行状态、管理鉴权和审计操作者归因。
+- 保密边界：测试令牌、临时 base URL 和操作者标识均断言不会出现在脚本 stdout 或 Markdown 报告中；测试配置和账本写入临时目录，结束后清理。
+- 已覆盖：本地 HTTP 演练覆盖 Core 服务、管理台静态资源、`/v1/runtime/status`、`/v1/admin/config` 鉴权、`/v1/admin/break-glass/status` 审计探针和 `/v1/admin/ledger/recent` 归因读取。
+- 未覆盖边界：真实服务器上的 HTTPS 证书、Nginx/Caddy 反向代理、systemd user service 生命周期和公网域名仍需目标机执行 `scripts/production-smoke-check.py` 复验。
+- 验证：`python -m unittest tests.test_production_smoke_check` 2 个测试通过；`python -m unittest tests.test_deployment_assets tests.test_production_smoke_check tests.test_admin_token_rotation_smoke` 27 个测试通过。
+- 全量回归：`python -m unittest discover -s tests` 通过，93 个测试 OK。
+
+### 2026-05-26 Step 71：异步队列语义校正为异步 AI 审查
+
+- 问题一句话：`async_review` 不是普通后台队列，而是延后调用模型网关的 AI 审查队列，界面和报告需要避免误解。
+- 最小解决方案：保持接口路径与内部字段不变，只把用户可见文案、中文运行消息、浏览器验收描述和开发文档统一为“异步 AI 审查队列”。
+- 语义边界：内容类请求先走 Fast-Path；进入该队列后由配置的 LLM/模型网关处理脱敏证据，失败重试，超过次数进入 `dead_letter`。
+- 验证：`node --check scripts\browser-e2e.mjs` 通过；`python -m unittest tests.test_admin_console tests.test_core tests.test_http_e2e` 45 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项检查通过。
+- 术语复核：已扫描 `README.md`、`docs`、`apps/admin-console-src`、`scripts`、`services`、`tests`，不再保留“异步队列/异步审查队列”等易混淆说法。
+
+### 2026-05-26 Step 72：异步 AI 审查后台 worker
+
+- 问题一句话：异步 AI 审查队列此前只能通过管理台手动处理，生产运行时缺少可控后台处理能力。
+- 最小解决方案：新增 `AsyncReviewWorker`，由 Core Service 启动时按配置可选启动；默认关闭以避免未验收模型网关前自动产生远程调用费用。
+- 配置项：新增 `async_review_worker_enabled`、`async_review_worker_interval_seconds`、`async_review_worker_batch_size`，管理台可控制开关、轮询间隔和每轮处理量。
+- 后端边界：抽出 `process_async_reviews()` 供 worker 复用，保留 `/v1/admin/async-reviews/run` 的人工触发与审计记录；worker 自动处理不写入管理员操作审计，但仍写入 AI 审查决策、重试或死信账本摘要。
+- 部署说明：README 与部署文档补充生产建议，先验证模型网关、预算和熔断，再开启 worker 并调小/调大间隔和批量。
+- 验证：`python -m py_compile services\core-service\atee_core\async_review_worker.py services\core-service\atee_core\core.py services\core-service\atee_core\http_server.py services\core-service\atee_core\config.py` 通过；`python -m unittest tests.test_async_review_worker tests.test_core tests.test_http_e2e tests.test_admin_console` 46 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项检查通过；`python -m unittest discover -s tests` 94 个测试通过；`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，敏感扫描 154 个文件且 findings=0。
+
+### 2026-05-26 Step 73：异步 AI 审查 worker 冒烟与发布闸门接入
+
+- 问题一句话：worker 已能自动处理队列，但还需要一个不依赖真实密钥、可重复验证预算和熔断联动的交付前冒烟入口。
+- 最小解决方案：新增 `scripts/async-ai-review-worker-smoke.py`，默认启动本地 fake OpenAI-compatible provider，只有显式 `--include-live` 才调用当前配置的真实供应商。
+- 覆盖场景：预算场景中 2 条异步 AI 审查任务只有 1 次 provider 调用，第一条完成，第二条因预算耗尽重试后进入 `dead_letter`；故障场景中 fake provider 连续失败 3 次后熔断打开。
+- 发布闸门：`scripts/local-release-gate.py --quick` 已新增 `async_ai_review_worker_smoke` 步骤，敏感扫描也识别 worker 冒烟临时 key 形状。
+- 报告产物：`reports\async-ai-review-worker-smoke.md` 由默认 fake 演练生成；报告不包含 API key、API base、代理 URL、密钥文件路径、Authorization header、原始 Prompt、原始请求体、fake provider 地址或临时 SQLite 路径。
+- 验证：`python scripts\async-ai-review-worker-smoke.py --report reports\async-ai-review-worker-smoke.md` 通过；`python -m unittest tests.test_async_ai_review_worker_smoke tests.test_async_review_worker` 3 个测试通过；`python -m unittest tests.test_local_release_gate tests.test_async_ai_review_worker_smoke` 3 个测试通过；`python -m unittest discover -s tests` 96 个测试通过；`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，29 个 quick 单测、worker 冒烟和敏感扫描均通过，扫描 158 个文件且 findings=0。
+
+### 2026-05-26 Step 74：异步 AI 审查 worker 真实供应商单次验收
+
+- 问题一句话：默认 fake 冒烟证明了 worker 逻辑，但仍需确认当前真实模型网关配置下，worker 能完成一次受控异步 AI 审查。
+- 最小解决方案：使用 `scripts/async-ai-review-worker-smoke.py --include-live` 只排入 1 条任务，worker 处理完成即停止，不进行批量 live 调用。
+- 验收结果：`live_worker_single_review` 通过，1 条任务完成，`dead_letter=0`，队列清空，熔断 `open=false`，连续失败数为 0。
+- 报告产物：`reports\async-ai-review-worker-smoke-live.md` 已生成；报告不包含 API key、API base、代理 URL、密钥文件路径、Authorization header、原始 Prompt、原始请求体或临时 SQLite 路径。
+- 验证：`python scripts\async-ai-review-worker-smoke.py --include-live --report reports\async-ai-review-worker-smoke-live.md` 通过。

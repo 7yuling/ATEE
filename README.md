@@ -9,7 +9,7 @@ This version focuses on the production safety boundaries from the workflow:
 - Core logic lives in `services/core-service`.
 - Thin adapters only extract request context and call the Core Service.
 - Every request goes through Trusted Real IP Resolver and Fast-Path Rule Gate.
-- Async events still pass Fast-Path before review.
+- Async events still pass Fast-Path before queued AI review; optional background worker processing is controlled by `async_review_worker_enabled`.
 - Prompt packets are minimized and redacted; raw request bodies are not stored.
 - Tool Gateway enforces action, confidence, runtime mode, and real IP constraints.
 - Security Ledger Lite aggregates low-risk/high-frequency events.
@@ -131,7 +131,7 @@ For the local release gate before packaging or handoff:
 python scripts\local-release-gate.py --report reports\local-release-gate.md
 ```
 
-The gate runs configuration preflight, Python compile checks, unit tests, the default fake Agent AI full-flow smoke, and a workspace sensitive scan without printing raw command output.
+The gate runs configuration preflight, Python compile checks, unit tests, the default fake Agent AI full-flow smoke, the async AI review worker smoke, and a workspace sensitive scan without printing raw command output.
 
 HTTP E2E and basic load smoke coverage are included in `tests\test_http_e2e.py`; they start a temporary local Core Service on a random localhost port and do not use the real DeepSeek key.
 
@@ -165,6 +165,14 @@ For a local provider budget drill that verifies budget exhaustion stops further 
 python scripts\provider-budget-drill.py --attempts 6 --budget-cents 2 --report reports\provider-budget-drill.md
 ```
 
+For an async AI review worker rehearsal that verifies background processing, budget exhaustion, and circuit breaker behavior with local fake providers:
+
+```powershell
+python scripts\async-ai-review-worker-smoke.py --report reports\async-ai-review-worker-smoke.md
+```
+
+Add `--include-live` only when you intentionally want the worker to call the configured live provider once.
+
 For a small-batch provider rehearsal, defaulting to a local fake provider:
 
 ```powershell
@@ -190,6 +198,9 @@ The browser script starts a temporary mock Core Service on a random localhost po
 - `GET /v1/runtime/status`
 - `GET /v1/admin/config`
 - `POST /v1/admin/config`
+- `GET /v1/admin/preflight`
+- `POST /v1/admin/preflight`
+- `POST /v1/admin/agent/chat`
 - `GET /v1/admin/llm/test`
 - `POST /v1/admin/llm/test`
 - `GET /v1/admin/ledger/recent`

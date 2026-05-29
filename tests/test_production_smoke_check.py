@@ -10,6 +10,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "services" / "core-service"))
+
+from atee_core import http_server  # noqa: E402
+from atee_core.config import AdminConfig  # noqa: E402
+from atee_core.core import CoreService  # noqa: E402
 
 
 class ProductionSmokeHandler(BaseHTTPRequestHandler):
@@ -157,6 +162,85 @@ class ProductionSmokeCheckTests(unittest.TestCase):
             self.assertNotIn(self.base_url, report)
             self.assertNotIn("browser-spoofed@example.com", report)
             self.assertNotIn(ProductionSmokeHandler.sso_actor, report)
+
+
+class ProductionSmokeCheckRealCoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.previous_core = http_server.CORE
+        self.env_name = "ATEE_REAL_CORE_SMOKE_ADMIN_TOKEN"
+        self.token = "prod-real-core-admin-token"
+        os.environ[self.env_name] = self.token
+        http_server.CORE = CoreService(
+            config=AdminConfig(
+                admin_auth_enabled=True,
+                admin_token_env=self.env_name,
+                llm_mode="mock",
+                llm_provider="mock",
+                llm_model="atee-local-mock-v1",
+            ),
+            config_path=Path(self.temp_dir.name) / "config" / "config.json",
+        )
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), http_server.AteeHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        self.base_url = f"http://{host}:{port}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+        http_server.CORE = self.previous_core
+        os.environ.pop(self.env_name, None)
+        self.temp_dir.cleanup()
+
+    def test_production_smoke_check_runs_against_real_core_service(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "real-core-production-smoke.md"
+            actor_id = "ops.real-core@example.com"
+            env = os.environ.copy()
+            env[self.env_name] = self.token
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "production-smoke-check.py"),
+                    "--base-url",
+                    self.base_url,
+                    "--allow-http",
+                    "--expect-admin-auth",
+                    "--admin-token-env",
+                    self.env_name,
+                    "--verify-audit-actor",
+                    "--audit-actor-id",
+                    actor_id,
+                    "--report",
+                    str(report_path),
+                ],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+            payload = json.loads(completed.stdout)
+            report = report_path.read_text(encoding="utf-8")
+            checks = {check["name"]: check for check in payload["checks"]}
+
+            self.assertTrue(payload["ok"])
+            self.assertTrue(checks["admin_assets"]["ok"])
+            self.assertTrue(checks["runtime_status"]["ok"])
+            self.assertTrue(checks["admin_auth_required"]["ok"])
+            self.assertTrue(checks["admin_auth_with_token"]["ok"])
+            self.assertTrue(checks["audit_actor"]["ok"])
+            self.assertNotIn(self.token, completed.stdout)
+            self.assertNotIn(self.base_url, completed.stdout)
+            self.assertNotIn(actor_id, completed.stdout)
+            self.assertNotIn(self.token, report)
+            self.assertNotIn(self.base_url, report)
+            self.assertNotIn(actor_id, report)
 
 
 if __name__ == "__main__":

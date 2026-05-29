@@ -39,12 +39,18 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/appeals?status=", js)
         self.assertIn("/v1/admin/actions?status=", js)
         self.assertIn("/v1/admin/actions/revoke", js)
+        self.assertIn("/v1/admin/async-reviews?status=", js)
+        self.assertIn("/v1/admin/async-reviews/run", js)
         self.assertIn("/v1/admin/config", js)
+        self.assertIn("/v1/admin/preflight", js)
+        self.assertIn("/v1/admin/agent/chat", js)
         self.assertIn("<script>alert(1)<\\/script>", js)
         self.assertIn("ATEE 管理控制台", js)
 
     def test_react_source_keeps_e2e_ids_and_plain_text_rendering(self):
-        source = (self.source_dir / "src" / "main.jsx").read_text(encoding="utf-8")
+        main_source = (self.source_dir / "src" / "main.jsx").read_text(encoding="utf-8")
+        support_source = (self.source_dir / "src" / "adminSupport.jsx").read_text(encoding="utf-8")
+        source = main_source + "\n" + support_source
 
         for element_id in [
             "appealIdInput",
@@ -76,6 +82,9 @@ class AdminConsoleTests(unittest.TestCase):
             "localeSelect",
             "configModeSelect",
             "agentPausedSwitch",
+            "asyncReviewWorkerSwitch",
+            "asyncReviewWorkerIntervalInput",
+            "asyncReviewWorkerBatchInput",
             "trustedProxyInput",
             "appealPathsInput",
             "llmApiBaseInput",
@@ -84,8 +93,24 @@ class AdminConsoleTests(unittest.TestCase):
             "bypassKeyFileInput",
             "breakGlassHeaderInput",
             "guideList",
+            "agentChatWindow",
+            "agentChatInput",
+            "agentChatSendBtn",
+            "siteTypeSelect",
+            "adapterTypeSelect",
+            "guideSiteTypeSelect",
+            "guideAdapterTypeSelect",
+            "preflightBtn",
+            "preflightChecks",
+            "securityFlowList",
+            "asyncReviewQueue",
+            "asyncReviewStatusSelect",
+            "asyncReviewsBtn",
+            "runAsyncReviewsBtn",
         ]:
             self.assertIn(element_id, source)
+        self.assertIn('from "./adminSupport.jsx"', main_source)
+        self.assertLess(len(main_source.splitlines()), 1500)
         self.assertIn("SECRET_JSON_KEYS", source)
         self.assertIn("REDACTED_VALUE", source)
         self.assertIn("new_llm_api_base", source)
@@ -96,11 +121,15 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("visibilityToggle={false}", source)
         self.assertNotIn('name="llm_api_base"', source)
         self.assertIn("async function saveConfig()", source)
+        self.assertIn("async_review_worker_enabled", source)
         self.assertIn("Popconfirm", source)
         self.assertIn("writeLocked", source)
         self.assertIn("MetricCard", source)
         self.assertIn("RuntimeSummary", source)
         self.assertIn("OperationSummary", source)
+        self.assertIn("PreflightSummary", source)
+        self.assertIn("LabelWithHelp", source)
+        self.assertIn("SECURITY_FLOW_STEPS", source)
         self.assertIn('response.headers.get("Content-Type")', source)
         self.assertIn("response.statusText", source)
         self.assertIn("配置已接入", source)

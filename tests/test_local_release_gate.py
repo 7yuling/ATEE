@@ -40,6 +40,7 @@ class LocalReleaseGateTests(unittest.TestCase):
                 "python_compile",
                 "unit_tests",
                 "agent_ai_full_flow_smoke",
+                "async_ai_review_worker_smoke",
                 "sensitive_scan",
             ):
                 self.assertIn(name, steps)
@@ -49,6 +50,7 @@ class LocalReleaseGateTests(unittest.TestCase):
             self.assertIn("ATEE Local Release Gate Report", report)
             for leaked in [
                 ("local" + "-agent-flow-"),
+                ("async" + "-worker-key-"),
                 ("budget" + "-drill-secret"),
                 ("local" + "-live-batch-"),
                 ("127" + ".0.0.1:" + "10808"),
