@@ -4,23 +4,13 @@ import {
   Alert,
   Button,
   Card,
-  Col,
-  Collapse,
   ConfigProvider,
-  Descriptions,
-  Divider,
   Form,
   Input,
-  InputNumber,
   Layout,
-  List,
   Menu,
   Popconfirm,
-  Row,
-  Select,
   Space,
-  Switch,
-  Table,
   Tabs,
   Tag,
   Typography,
@@ -31,9 +21,7 @@ import {
   ApiOutlined,
   BranchesOutlined,
   CheckCircleOutlined,
-  ClockCircleOutlined,
   DatabaseOutlined,
-  DeploymentUnitOutlined,
   EyeOutlined,
   FileSearchOutlined,
   MessageOutlined,
@@ -48,35 +36,36 @@ import {
 import "antd/dist/reset.css";
 import "./styles.css";
 import {
-  ADAPTER_OPTIONS,
-  GATEWAY_HELP,
-  SECRET_PLACEHOLDER,
-  SECURITY_FLOW_STEPS,
-  SITE_TYPE_OPTIONS,
-  LabelWithHelp,
-  MetricCard,
-  OperationSummary,
-  PreflightSummary,
-  RuntimeSummary,
+  AgentTab,
+  GuideTab,
+} from "./adminAgentGuide.jsx";
+import {
+  DashboardMetrics,
+  DashboardTab,
+  JsonSummaryRow,
+} from "./adminDashboard.jsx";
+import {
+  GatewayConfigTab,
+  LedgerTab,
+} from "./adminLedgerConfig.jsx";
+import {
+  ActionsTab,
+  AppealsTab,
+  AsyncReviewsTab,
+} from "./adminReviewQueues.jsx";
+import {
   apiRequest,
-  budgetLabel,
   cspNonce,
   installStyleNonce,
-  modeLabel,
-  pretty,
-  providerLabel,
   readAdminId,
   readAdminToken,
   splitListInput,
-  tagForBoolean,
-  tagForNullableBoolean,
   writeAdminId,
   writeAdminToken,
 } from "./adminSupport.jsx";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
-const { TextArea } = Input;
 
 const runtimeCspNonce = cspNonce();
 installStyleNonce(runtimeCspNonce);
@@ -588,17 +577,17 @@ function App() {
       </Sider>
       <Layout>
         <Header className="atee-header">
-          <div>
+          <div className="header-title">
             <Title level={2}>ATEE 管理控制台</Title>
             <Text id="statusText" type={status ? "success" : "secondary"}>
               {status ? `Core Service 已连接 · 当前页面：${activeMenuLabel}` : "正在连接"}
             </Text>
           </div>
-          <Space wrap>
-            <Button id="refreshBtn" icon={<ReloadOutlined />} onClick={() => run("refresh", refresh)} loading={loading}>
+          <Space className="header-actions" wrap size={[8, 8]}>
+            <Button id="refreshBtn" size="small" icon={<ReloadOutlined />} onClick={() => run("refresh", refresh)} loading={loading}>
               刷新
             </Button>
-            <Button id="observeBtn" icon={<EyeOutlined />} onClick={() => setMode("observe")}>
+            <Button id="observeBtn" size="small" icon={<EyeOutlined />} onClick={() => setMode("observe")}>
               观察模式
             </Button>
             <Popconfirm
@@ -608,17 +597,17 @@ function App() {
               cancelText="取消"
               onConfirm={() => setMode("auto")}
             >
-              <Button id="autoBtn" type="primary" icon={<ThunderboltOutlined />}>
+              <Button id="autoBtn" size="small" type="primary" icon={<ThunderboltOutlined />}>
                 自动模式
               </Button>
             </Popconfirm>
-            <Button id="degradedBtn" icon={<StopOutlined />} onClick={() => setMode("degraded")}>
+            <Button id="degradedBtn" size="small" icon={<StopOutlined />} onClick={() => setMode("degraded")}>
               降级模式
             </Button>
-            <Button id="readOnlyBtn" icon={<SafetyCertificateOutlined />} onClick={() => setMode("read_only")}>
+            <Button id="readOnlyBtn" size="small" icon={<SafetyCertificateOutlined />} onClick={() => setMode("read_only")}>
               只读模式
             </Button>
-            <Button id="pauseBtn" icon={status?.agent_paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />} onClick={pauseResume}>
+            <Button id="pauseBtn" size="small" icon={status?.agent_paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />} onClick={pauseResume}>
               {status?.agent_paused ? "恢复 Agent" : "暂停 Agent"}
             </Button>
           </Space>
@@ -696,41 +685,14 @@ function App() {
           ) : null}
 
           {activeMenu === "dashboard" ? (
-          <Row gutter={[12, 12]}>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="runtime" title="当前模式" value={display.runtime_mode_zh || status?.runtime_mode || "-"} icon={<EyeOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="paused" title="Agent 状态" value={display.agent_paused_zh || "-"} icon={<PauseCircleOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="ledger" title="账本记录" value={status?.ledger?.persisted_records ?? status?.ledger?.records ?? 0} icon={<DatabaseOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="appeals" title="待处理申诉" value={status?.pending_appeals ?? 0} icon={<FileSearchOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="asyncReviewQueue" title="异步 AI 审查队列" value={status?.async_review?.queued ?? 0} icon={<BranchesOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="llmState" title="模型网关配置" value={providerLabel(gateway.provider)} icon={<ApiOutlined />}>
-                <Space wrap size={[4, 4]}>
-                  <Tag>{modeLabel(gateway.mode)}</Tag>
-                  {gatewayConfigured ? <Tag color="success">配置已接入</Tag> : <Tag color="warning">配置未完整</Tag>}
-                  {tagForNullableBoolean(gateway.last_ok, ["最近成功", "最近失败", "未测试"])}
-                </Space>
-              </MetricCard>
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="circuitState" title="熔断状态" value={circuit.open ? "已熔断" : "正常"} icon={circuit.open ? <StopOutlined /> : <CheckCircleOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="budgetState" title="预算余额" value={budgetLabel(budget)} icon={<ClockCircleOutlined />} />
-            </Col>
-            <Col xs={24} md={12} xl={6}>
-              <MetricCard id="activeActions" title="活跃动作" value={status?.active_actions ?? 0} icon={<ToolOutlined />} />
-            </Col>
-          </Row>
+            <DashboardMetrics
+              status={status}
+              display={display}
+              gateway={gateway}
+              gatewayConfigured={gatewayConfigured}
+              circuit={circuit}
+              budget={budget}
+            />
           ) : null}
 
           <Tabs
@@ -742,584 +704,130 @@ function App() {
                 key: "dashboard",
                 label: "操作台",
                 children: (
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} xl={12}>
-                      <Card title="安全演练">
-                        <Space wrap>
-                          <Button id="testSafeBtn" icon={<CheckCircleOutlined />} onClick={testSafe}>测试安全请求</Button>
-                          <Button id="testAttackBtn" danger icon={<StopOutlined />} onClick={testAttack}>测试快速拦截</Button>
-                          <Button id="testAppealBtn" icon={<FileSearchOutlined />} onClick={testAppeal}>测试申诉</Button>
-                          <Button id="testLlmBtn" icon={<ApiOutlined />} onClick={testLlmGateway}>测试模型网关</Button>
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col xs={24} xl={12}>
-                      <Card title="运行摘要">
-                        <Descriptions size="small" column={1}>
-                          <Descriptions.Item label="可信代理">{display.trusted_proxy_zh || "-"}</Descriptions.Item>
-                          <Descriptions.Item label="自动 IP 封禁">{display.auto_ip_ban_zh || "-"}</Descriptions.Item>
-                          <Descriptions.Item label="API Key">{tagForBoolean(Boolean(gateway.api_key_configured), ["已配置", "未配置"])}</Descriptions.Item>
-                          <Descriptions.Item label="代理">{tagForBoolean(Boolean(gateway.proxy_configured), ["已配置", "未配置"])}</Descriptions.Item>
-                        </Descriptions>
-                      </Card>
-                    </Col>
-                  </Row>
+                  <DashboardTab
+                    display={display}
+                    gateway={gateway}
+                    testSafe={testSafe}
+                    testAttack={testAttack}
+                    testAppeal={testAppeal}
+                    testLlmGateway={testLlmGateway}
+                  />
                 ),
               },
               {
                 key: "agent",
                 label: "Agent 对话",
                 children: (
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} xl={9}>
-                      <Card title="对话上下文">
-                        <Form layout="vertical">
-                          <Form.Item label="网站类型">
-                            <Select
-                              id="siteTypeSelect"
-                              value={siteType}
-                              onChange={setSiteType}
-                              options={SITE_TYPE_OPTIONS}
-                            />
-                          </Form.Item>
-                          <Form.Item label="接入方式">
-                            <Select
-                              id="adapterTypeSelect"
-                              value={adapterType}
-                              onChange={setAdapterType}
-                              options={ADAPTER_OPTIONS}
-                            />
-                          </Form.Item>
-                          <Alert
-                            type="info"
-                            showIcon
-                            message="Agent 会结合网站类型和接入方式给出建议；不要在对话中粘贴 API Key、Admin Token 或旁路密钥。"
-                          />
-                        </Form>
-                      </Card>
-                    </Col>
-                    <Col xs={24} xl={15}>
-                      <Card title="AI 安全助手">
-                        <div id="agentChatWindow" className="chat-window">
-                          {chatMessages.map((message, index) => (
-                            <div key={`${message.role}-${index}`} className={`chat-bubble ${message.role}`}>
-                              <Text strong>{message.role === "user" ? "你" : "ATEE Agent"}</Text>
-                              <div>{message.content}</div>
-                            </div>
-                          ))}
-                        </div>
-                        <Space.Compact className="chat-input">
-                          <TextArea
-                            id="agentChatInput"
-                            value={chatDraft}
-                            onChange={(event) => setChatDraft(event.target.value)}
-                            autoSize={{ minRows: 2, maxRows: 5 }}
-                            placeholder="例如：我的网站接入了 Nginx 和 DeepSeek，怎样先做观察模式上线？"
-                          />
-                          <Button id="agentChatSendBtn" type="primary" icon={<MessageOutlined />} onClick={sendAgentChat} loading={loading}>
-                            发送
-                          </Button>
-                        </Space.Compact>
-                      </Card>
-                    </Col>
-                  </Row>
+                  <AgentTab
+                    siteType={siteType}
+                    setSiteType={setSiteType}
+                    adapterType={adapterType}
+                    setAdapterType={setAdapterType}
+                    chatMessages={chatMessages}
+                    chatDraft={chatDraft}
+                    setChatDraft={setChatDraft}
+                    sendAgentChat={sendAgentChat}
+                    loading={loading}
+                  />
                 ),
               },
               {
                 key: "guide",
                 label: "新手引导",
                 children: (
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} xl={8}>
-                      <Card title="基础选择">
-                        <Form layout="vertical">
-                          <Form.Item label="网站类型">
-                            <Select
-                              id="guideSiteTypeSelect"
-                              value={siteType}
-                              onChange={setSiteType}
-                              options={SITE_TYPE_OPTIONS}
-                            />
-                          </Form.Item>
-                          <Form.Item label="接入方式">
-                            <Select
-                              id="guideAdapterTypeSelect"
-                              value={adapterType}
-                              onChange={setAdapterType}
-                              options={ADAPTER_OPTIONS}
-                            />
-                          </Form.Item>
-                          <Button id="preflightBtn" icon={<DeploymentUnitOutlined />} onClick={runPreflight} loading={loading}>
-                            运行环境预检
-                          </Button>
-                        </Form>
-                        <Divider />
-                        <PreflightSummary report={preflightReport} />
-                      </Card>
-                    </Col>
-                    <Col xs={24} xl={16}>
-                      <Card title="可操作引导">
-                        <Collapse
-                          id="guideList"
-                          accordion
-                          items={guideSteps.map((item) => ({
-                            key: item.id,
-                            label: item.title_zh,
-                            children: (
-                              <Space direction="vertical" size="small" className="guide-detail">
-                                <Text>{item.plain_text_zh}</Text>
-                                <Text type="secondary">推荐：{item.recommended_default_zh}</Text>
-                                <Text type="secondary">风险：{item.risk_zh}</Text>
-                                <List
-                                  size="small"
-                                  dataSource={item.details_zh || []}
-                                  renderItem={(detail) => <List.Item>{detail}</List.Item>}
-                                />
-                                <Button size="small" icon={<BranchesOutlined />} onClick={() => runGuideAction(item.id)}>
-                                  {item.next_action_zh || "进入对应功能"}
-                                </Button>
-                              </Space>
-                            ),
-                          }))}
-                        />
-                      </Card>
-                      <Card title="安全情况处理总流程" className="flow-card">
-                        <List
-                          id="securityFlowList"
-                          size="small"
-                          dataSource={SECURITY_FLOW_STEPS}
-                          renderItem={(item) => <List.Item>{item}</List.Item>}
-                        />
-                      </Card>
-                    </Col>
-                  </Row>
+                  <GuideTab
+                    siteType={siteType}
+                    setSiteType={setSiteType}
+                    adapterType={adapterType}
+                    setAdapterType={setAdapterType}
+                    runPreflight={runPreflight}
+                    preflightReport={preflightReport}
+                    guideSteps={guideSteps}
+                    runGuideAction={runGuideAction}
+                    loading={loading}
+                  />
                 ),
               },
               {
                 key: "appeals",
                 label: "申诉处理",
                 children: (
-                  <Card title="申诉审核">
-                    <Space className="table-actions" wrap>
-                      <Select
-                        id="appealStatusSelect"
-                        value={appealStatus}
-                        onChange={(value) => {
-                          setAppealStatus(value);
-                          showAppeals(value);
-                        }}
-                        options={[
-                          { value: "pending", label: "待处理" },
-                          { value: "approved", label: "已通过" },
-                          { value: "rejected", label: "已驳回" },
-                          { value: "all", label: "全部" },
-                        ]}
-                        style={{ width: 128 }}
-                      />
-                      <Button id="appealsBtn" icon={<ReloadOutlined />} onClick={() => showAppeals(appealStatus)}>刷新申诉</Button>
-                    </Space>
-                    <Table
-                      rowKey="punishment_id"
-                      columns={appealColumns}
-                      dataSource={appeals}
-                      pagination={{ pageSize: 5 }}
-                      onRow={(record) => ({
-                        className: "clickable-row",
-                        onClick: () => appealForm.setFieldsValue({ punishment_id: record.punishment_id }),
-                      })}
-                    />
-                    <Form form={appealForm} layout="inline" className="review-form">
-                      <Form.Item label="处罚编号" name="punishment_id">
-                        <Input id="appealIdInput" autoComplete="off" />
-                      </Form.Item>
-                      <Form.Item label="审核备注" name="admin_note">
-                        <Input id="appealNoteInput" autoComplete="off" />
-                      </Form.Item>
-                      <Form.Item>
-                        <Space>
-                          <Popconfirm
-                            title="确认通过申诉"
-                            description="通过后该申诉会写入审核结果，并从待处理队列移除。"
-                            okText="确认通过"
-                            cancelText="取消"
-                            onConfirm={() => reviewAppeal("approved")}
-                            disabled={writeLocked}
-                          >
-                            <Button id="approveAppealBtn" type="primary" disabled={writeLocked}>通过</Button>
-                          </Popconfirm>
-                          <Popconfirm
-                            title="确认驳回申诉"
-                            description="驳回后该申诉会写入审核结果，并从待处理队列移除。"
-                            okText="确认驳回"
-                            cancelText="取消"
-                            onConfirm={() => reviewAppeal("rejected")}
-                            disabled={writeLocked}
-                          >
-                            <Button id="rejectAppealBtn" danger disabled={writeLocked}>驳回</Button>
-                          </Popconfirm>
-                        </Space>
-                      </Form.Item>
-                    </Form>
-                  </Card>
+                  <AppealsTab
+                    appealStatus={appealStatus}
+                    setAppealStatus={setAppealStatus}
+                    showAppeals={showAppeals}
+                    appealColumns={appealColumns}
+                    appeals={appeals}
+                    appealForm={appealForm}
+                    reviewAppeal={reviewAppeal}
+                    writeLocked={writeLocked}
+                  />
                 ),
               },
               {
                 key: "actions",
                 label: "动作管理",
                 children: (
-                  <Card title="动作撤销">
-                    <Space className="table-actions" wrap>
-                      <Select
-                        id="actionStatusSelect"
-                        value={actionStatus}
-                        onChange={(value) => {
-                          setActionStatus(value);
-                          showActions(value);
-                        }}
-                        options={[
-                          { value: "active", label: "活跃" },
-                          { value: "revoked", label: "已撤销" },
-                          { value: "expired", label: "已过期" },
-                          { value: "all", label: "全部" },
-                        ]}
-                        style={{ width: 128 }}
-                      />
-                      <Button id="actionsBtn" icon={<ReloadOutlined />} onClick={() => showActions(actionStatus)}>刷新动作</Button>
-                      <Popconfirm
-                        title="确认清理过期动作"
-                        description="清理只更新 ATEE 动作记录状态，不修改业务数据库。"
-                        okText="确认清理"
-                        cancelText="取消"
-                        onConfirm={cleanupActions}
-                        disabled={writeLocked}
-                      >
-                        <Button id="cleanupActionsBtn" icon={<ToolOutlined />} disabled={writeLocked}>清理过期动作</Button>
-                      </Popconfirm>
-                    </Space>
-                    <Table
-                      rowKey="id"
-                      columns={actionColumns}
-                      dataSource={actions}
-                      pagination={{ pageSize: 5 }}
-                      onRow={(record) => ({
-                        className: "clickable-row",
-                        onClick: () => actionForm.setFieldsValue({ action_id: record.id }),
-                      })}
-                    />
-                    <Form form={actionForm} layout="inline" className="review-form">
-                      <Form.Item label="动作编号" name="action_id">
-                        <Input id="actionIdInput" inputMode="numeric" autoComplete="off" />
-                      </Form.Item>
-                      <Form.Item label="撤销原因" name="reason">
-                        <Input id="revokeReasonInput" autoComplete="off" />
-                      </Form.Item>
-                      <Form.Item>
-                        <Popconfirm
-                          title="确认撤销动作"
-                          description="撤销只更新 ATEE 动作记录，不直接回滚业务系统数据。"
-                          okText="确认撤销"
-                          cancelText="取消"
-                          onConfirm={revokeAction}
-                          disabled={writeLocked}
-                        >
-                          <Button id="revokeActionBtn" danger disabled={writeLocked}>撤销</Button>
-                        </Popconfirm>
-                      </Form.Item>
-                    </Form>
-                  </Card>
+                  <ActionsTab
+                    actionStatus={actionStatus}
+                    setActionStatus={setActionStatus}
+                    showActions={showActions}
+                    actionColumns={actionColumns}
+                    actions={actions}
+                    actionForm={actionForm}
+                    cleanupActions={cleanupActions}
+                    revokeAction={revokeAction}
+                    writeLocked={writeLocked}
+                  />
                 ),
               },
               {
                 key: "asyncReviews",
                 label: "异步 AI 审查",
                 children: (
-                  <Card title="异步 AI 审查队列">
-                    <Alert
-                      className="guard-alert"
-                      type="info"
-                      showIcon
-                      message="内容类请求会先通过 Fast-Path，再进入可恢复的异步 AI 审查队列；处理时会调用配置的模型网关，失败会重试，超过次数进入 dead_letter。"
-                    />
-                    <Space className="table-actions" wrap>
-                      <Select
-                        id="asyncReviewStatusSelect"
-                        value={asyncReviewStatus}
-                        onChange={(value) => {
-                          setAsyncReviewStatus(value);
-                          showAsyncReviews(value);
-                        }}
-                        options={[
-                          { value: "pending", label: "待处理" },
-                          { value: "retry", label: "待重试" },
-                          { value: "processing", label: "处理中" },
-                          { value: "completed", label: "已完成" },
-                          { value: "dead_letter", label: "死信" },
-                          { value: "all", label: "全部" },
-                        ]}
-                        style={{ width: 128 }}
-                      />
-                      <Button id="asyncReviewsBtn" icon={<ReloadOutlined />} onClick={() => showAsyncReviews(asyncReviewStatus)}>
-                        刷新队列
-                      </Button>
-                      <Button id="runAsyncReviewsBtn" type="primary" icon={<BranchesOutlined />} onClick={runAsyncReviews}>
-                        处理到期任务
-                      </Button>
-                    </Space>
-                    <Table
-                      rowKey="id"
-                      columns={asyncReviewColumns}
-                      dataSource={asyncReviews}
-                      pagination={{ pageSize: 5 }}
-                    />
-                  </Card>
+                  <AsyncReviewsTab
+                    asyncReviewStatus={asyncReviewStatus}
+                    setAsyncReviewStatus={setAsyncReviewStatus}
+                    showAsyncReviews={showAsyncReviews}
+                    asyncReviewColumns={asyncReviewColumns}
+                    asyncReviews={asyncReviews}
+                    runAsyncReviews={runAsyncReviews}
+                  />
                 ),
               },
               {
                 key: "ledger",
                 label: "安全账本",
                 children: (
-                  <Card title="最近账本">
-                    <Space className="table-actions" wrap>
-                      <InputNumber id="ledgerLimitInput" min={1} max={100} value={ledgerLimit} onChange={(value) => setLedgerLimit(value || 10)} />
-                      <Button id="ledgerBtn" icon={<DatabaseOutlined />} onClick={showLedger}>读取账本</Button>
-                    </Space>
-                    <Table rowKey="id" columns={ledgerColumns} dataSource={ledgerRecords} pagination={{ pageSize: 5 }} />
-                  </Card>
+                  <LedgerTab
+                    ledgerLimit={ledgerLimit}
+                    setLedgerLimit={setLedgerLimit}
+                    showLedger={showLedger}
+                    ledgerColumns={ledgerColumns}
+                    ledgerRecords={ledgerRecords}
+                  />
                 ),
               },
               {
                 key: "config",
                 label: "网关配置",
                 children: (
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} xl={16}>
-                      <Card title="运行配置">
-                        <Form form={configForm} layout="vertical">
-                          <Row gutter={12}>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="显示语言" name="locale" extra={GATEWAY_HELP.locale}>
-                                <Select
-                                  id="localeSelect"
-                                  options={[
-                                    { value: "zh-CN", label: "中文（简体）" },
-                                    { value: "en-US", label: "English" },
-                                  ]}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="运行模式" name="runtime_mode" extra={GATEWAY_HELP.runtime_mode}>
-                                <Select
-                                  id="configModeSelect"
-                                  options={[
-                                    { value: "observe", label: "观察模式" },
-                                    { value: "auto", label: "自动模式" },
-                                    { value: "degraded", label: "降级模式" },
-                                    { value: "read_only", label: "只读模式" },
-                                  ]}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="Agent 暂停" name="agent_paused" valuePropName="checked" extra={GATEWAY_HELP.agent_paused}>
-                                <Switch id="agentPausedSwitch" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="异步 AI 审查 worker" name="async_review_worker_enabled" valuePropName="checked" extra={GATEWAY_HELP.async_review_worker_enabled}>
-                                <Switch id="asyncReviewWorkerSwitch" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="AI 审查间隔秒" name="async_review_worker_interval_seconds" extra={GATEWAY_HELP.async_review_worker_interval_seconds}>
-                                <InputNumber id="asyncReviewWorkerIntervalInput" min={1} max={3600} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="AI 审查批量" name="async_review_worker_batch_size" extra={GATEWAY_HELP.async_review_worker_batch_size}>
-                                <InputNumber id="asyncReviewWorkerBatchInput" min={1} max={100} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="自动 IP 封禁" name="auto_ip_ban_enabled" valuePropName="checked" extra={GATEWAY_HELP.auto_ip_ban_enabled}>
-                                <Switch id="autoIpBanSwitch" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="管理接口认证" name="admin_auth_enabled" valuePropName="checked" extra={GATEWAY_HELP.admin_auth_enabled}>
-                                <Switch id="adminAuthSwitch" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="每日预算（cent，0 不限）" name="llm_daily_budget_cents" extra={GATEWAY_HELP.llm_daily_budget_cents}>
-                                <InputNumber id="dailyBudgetInput" min={0} max={1000000} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label="Admin Token 环境变量" name="admin_token_env" extra={GATEWAY_HELP.admin_token_env}>
-                                <Input id="adminTokenEnvInput" autoComplete="off" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label="新 Admin Token 文件路径（留空不变）" name="new_admin_token_file" extra={GATEWAY_HELP.new_admin_token_file}>
-                                <Input.Password id="adminTokenFileInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="本地预检 ms" name="local_precheck_ms" extra={GATEWAY_HELP.local_precheck_ms}>
-                                <InputNumber id="localPrecheckInput" min={1} max={60000} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="远程软超时 ms" name="remote_soft_timeout_ms" extra={GATEWAY_HELP.remote_soft_timeout_ms}>
-                                <InputNumber id="softTimeoutInput" min={1} max={120000} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="远程硬超时 ms" name="remote_hard_timeout_ms" extra={GATEWAY_HELP.remote_hard_timeout_ms}>
-                                <InputNumber id="hardTimeoutInput" min={1} max={120000} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="模型模式" name="llm_mode" extra={GATEWAY_HELP.llm_mode}>
-                                <Select
-                                  id="llmModeSelect"
-                                  options={[
-                                    { value: "mock", label: "Mock" },
-                                    { value: "openai_compatible", label: "OpenAI-compatible" },
-                                    { value: "remote", label: "Remote" },
-                                    { value: "disabled", label: "Disabled" },
-                                  ]}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="供应商" name="llm_provider" extra={GATEWAY_HELP.llm_provider}>
-                                <Input id="llmProviderInput" autoComplete="off" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label="模型名" name="llm_model" extra={GATEWAY_HELP.llm_model}>
-                                <Input id="llmModelInput" autoComplete="off" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label={<LabelWithHelp text="新 API Base（留空不变）" help={GATEWAY_HELP.new_llm_api_base} />} name="new_llm_api_base" extra={GATEWAY_HELP.new_llm_api_base}>
-                                <Input.Password id="llmApiBaseInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label={<LabelWithHelp text="API Key 环境变量" help={GATEWAY_HELP.llm_api_key_env} />} name="llm_api_key_env" extra={GATEWAY_HELP.llm_api_key_env}>
-                                <Input id="llmApiKeyEnvInput" autoComplete="off" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label={<LabelWithHelp text="OpenAI API Key（保存为环境变量）" help={GATEWAY_HELP.llm_api_key_value} />} name="llm_api_key_value" extra={GATEWAY_HELP.llm_api_key_value}>
-                                <Input.Password id="llmApiKeyValueInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label="新密钥文件路径（留空不变）" name="new_llm_api_key_file" extra={GATEWAY_HELP.new_llm_api_key_file}>
-                                <Input.Password id="llmApiKeyFileInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label={<LabelWithHelp text="新代理 URL（留空不变）" help={GATEWAY_HELP.new_llm_proxy_url} />} name="new_llm_proxy_url" extra={GATEWAY_HELP.new_llm_proxy_url}>
-                                <Input.Password id="llmProxyUrlInput" autoComplete="off" visibilityToggle={false} placeholder={SECRET_PLACEHOLDER} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label="SQLite 路径" name="ledger_sqlite_path" extra={GATEWAY_HELP.ledger_sqlite_path}>
-                                <Input id="ledgerPathInput" autoComplete="off" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={12}>
-                              <Form.Item label="账本上限 bytes" name="ledger_max_bytes" extra={GATEWAY_HELP.ledger_max_bytes}>
-                                <InputNumber id="ledgerMaxBytesInput" min={1048576} max={1073741824} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24}>
-                              <Form.Item label={<LabelWithHelp text="可信代理 CIDR" help={GATEWAY_HELP.trusted_proxy_cidrs} />} name="trusted_proxy_cidrs" extra={GATEWAY_HELP.trusted_proxy_cidrs}>
-                                <Input.TextArea id="trustedProxyInput" autoSize={{ minRows: 2, maxRows: 5 }} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24}>
-                              <Form.Item label="申诉入口路径" name="appeal_paths" extra={GATEWAY_HELP.appeal_paths}>
-                                <Input.TextArea id="appealPathsInput" autoSize={{ minRows: 2, maxRows: 5 }} />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={8}>
-                              <Form.Item label={<LabelWithHelp text="紧急旁路启用" help={GATEWAY_HELP.bypass_enabled} />} name="bypass_enabled" valuePropName="checked" extra={GATEWAY_HELP.bypass_enabled}>
-                                <Switch id="bypassEnabledSwitch" />
-                              </Form.Item>
-                            </Col>
-                            <Col xs={24} md={16}>
-                              <Form.Item label="旁路密钥文件" name="bypass_key_file" extra={GATEWAY_HELP.bypass_key_file}>
-                                <Input.Password id="bypassKeyFileInput" autoComplete="off" visibilityToggle={false} />
-                              </Form.Item>
-                            </Col>
-                          </Row>
-                          <Space wrap>
-                            <Button id="configBtn" icon={<ApiOutlined />} onClick={showConfig}>读取配置</Button>
-                            <Popconfirm
-                              title="确认保存运行配置"
-                              description="保存后会立即影响 Core Service 的运行模式、模型网关或预算等配置。"
-                              okText="确认保存"
-                              cancelText="取消"
-                              onConfirm={saveConfig}
-                              disabled={writeLocked}
-                            >
-                              <Button id="configSaveBtn" type="primary" icon={<CheckCircleOutlined />} disabled={writeLocked}>保存配置</Button>
-                            </Popconfirm>
-                            <Button id="testLlmConfigBtn" icon={<ApiOutlined />} onClick={testLlmGateway}>测试模型网关</Button>
-                          </Space>
-                        </Form>
-                      </Card>
-                    </Col>
-                    <Col xs={24} xl={8}>
-                      <Card title="紧急旁路">
-                        <Descriptions size="small" column={1}>
-                          <Descriptions.Item label="API Base">{tagForBoolean(Boolean(status?.config?.llm_api_base_configured), ["已配置", "未配置"])}</Descriptions.Item>
-                          <Descriptions.Item label="API Key 环境变量">{tagForBoolean(Boolean(status?.config?.llm_api_key_env_configured), ["已写入", "未写入"])}</Descriptions.Item>
-                          <Descriptions.Item label="API Key 文件">{tagForBoolean(Boolean(status?.config?.llm_api_key_file_configured), ["已配置", "未配置"])}</Descriptions.Item>
-                          <Descriptions.Item label="模型代理">{tagForBoolean(Boolean(status?.config?.llm_proxy_configured), ["已配置", "未配置"])}</Descriptions.Item>
-                          <Descriptions.Item label="旁路启用">{tagForBoolean(Boolean(status?.config?.bypass_enabled), ["已启用", "未启用"])}</Descriptions.Item>
-                          <Descriptions.Item label="密钥文件">{tagForBoolean(Boolean(status?.config?.bypass_key_file), ["已配置", "未配置"])}</Descriptions.Item>
-                        </Descriptions>
-                        <Form form={breakGlassForm} layout="vertical" className="review-form">
-                          <Form.Item label="X-ATEE-Bypass Header" name="bypass_header">
-                            <Input.Password id="breakGlassHeaderInput" autoComplete="off" visibilityToggle={false} />
-                          </Form.Item>
-                          <Button id="breakGlassBtn" icon={<SafetyCertificateOutlined />} onClick={breakGlass}>验证旁路状态</Button>
-                        </Form>
-                      </Card>
-                    </Col>
-                  </Row>
+                  <GatewayConfigTab
+                    configForm={configForm}
+                    showConfig={showConfig}
+                    saveConfig={saveConfig}
+                    testLlmGateway={testLlmGateway}
+                    writeLocked={writeLocked}
+                    status={status}
+                    breakGlassForm={breakGlassForm}
+                    breakGlass={breakGlass}
+                  />
                 ),
               },
             ]}
           />
 
-          <Row gutter={[16, 16]} className="json-row">
-            <Col xs={24} xl={12}>
-              <Card title="运行状态摘要" className="summary-card">
-                <RuntimeSummary status={status} />
-                <details className="json-details">
-                  <summary>原始 JSON</summary>
-                  <pre id="output" aria-live="polite">{pretty(output)}</pre>
-                </details>
-              </Card>
-            </Col>
-            <Col xs={24} xl={12}>
-              <Card title="操作结果摘要" className="summary-card">
-                <OperationSummary result={result} />
-                <details className="json-details">
-                  <summary>原始 JSON</summary>
-                  <pre id="result" aria-live="polite">{pretty(result)}</pre>
-                </details>
-              </Card>
-            </Col>
-          </Row>
+          <JsonSummaryRow status={status} output={output} result={result} />
         </Content>
       </Layout>
     </Layout>

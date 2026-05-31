@@ -18,21 +18,33 @@ body {
 
 .atee-shell {
   min-height: 100vh;
+  background: #f5f7fb;
 }
 
 .atee-sider {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: auto;
   background: #ffffff !important;
   border-right: 1px solid #d9dee7;
 }
 
+.atee-sider .ant-menu {
+  border-inline-end: 0 !important;
+  padding: 8px;
+}
+
 .atee-sider .ant-menu-item {
-  height: 42px;
-  line-height: 42px;
+  height: 36px;
+  line-height: 36px;
+  margin: 4px 0;
+  border-radius: 6px;
 }
 
 .brand-block {
-  min-height: 96px;
-  padding: 20px;
+  min-height: 72px;
+  padding: 16px 18px;
   border-bottom: 1px solid #d9dee7;
 }
 
@@ -41,27 +53,41 @@ body {
 }
 
 .atee-header {
-  min-height: 88px;
+  min-height: 64px;
   height: auto;
-  padding: 16px 24px;
+  padding: 12px 20px;
   background: #ffffff;
   border-bottom: 1px solid #d9dee7;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
 
 .atee-header h2 {
   margin: 0 0 4px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.header-title {
+  min-width: 220px;
+}
+
+.header-actions {
+  max-width: 780px;
+  justify-content: flex-end;
 }
 
 .atee-content {
-  padding: 16px 20px 28px;
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 14px 18px 24px;
 }
 
 .top-alert {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .workspace-heading {
@@ -77,15 +103,31 @@ body {
 }
 
 .auth-panel {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.auth-panel .ant-card-body {
+  padding: 10px 12px;
+}
+
+.auth-panel .ant-space-item {
+  max-width: 100%;
 }
 
 .guard-alert {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .workspace-tabs {
-  margin-top: 12px;
+  margin-top: 10px;
+}
+
+.workspace-tabs > .ant-tabs-nav {
+  display: none;
+}
+
+.workspace-tabs .ant-tabs-content-holder {
+  border-top: 0;
 }
 
 .atee-content .ant-card-body {
@@ -93,7 +135,8 @@ body {
 }
 
 .metric-card .ant-card-body {
-  min-height: 104px;
+  min-height: 92px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -101,7 +144,7 @@ body {
 
 .metric-title {
   color: #667085;
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
@@ -112,7 +155,7 @@ body {
   align-items: flex-start;
   gap: 8px;
   color: #111827;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   line-height: 1.2;
 }
@@ -240,6 +283,7 @@ body {
 }
 
 .summary-card .ant-card-body {
+  padding: 14px 16px;
   min-width: 0;
 }
 
@@ -293,7 +337,29 @@ pre {
   border-radius: 6px;
 }
 
+.ant-card .ant-card-head {
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.ant-card .ant-card-body {
+  padding: 16px;
+}
+
+.auth-panel.ant-card .ant-card-body {
+  padding: 10px 12px;
+}
+
+.summary-card.ant-card .ant-card-body {
+  padding: 14px 16px;
+}
+
+.ant-table-wrapper .ant-table {
+  font-size: 13px;
+}
+
 .ant-table-cell {
+  padding: 10px 12px !important;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -304,6 +370,8 @@ pre {
   }
 
   .atee-sider {
+    position: static;
+    height: auto;
     width: 100% !important;
     max-width: none !important;
     min-width: 0 !important;
@@ -315,10 +383,34 @@ pre {
   }
 
   .atee-content {
-    padding: 16px;
+    padding: 12px;
   }
 
   .metric-value {
-    font-size: 24px;
+    font-size: 22px;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .atee-header h2 {
+    font-size: 22px;
+  }
+
+  .header-title {
+    min-width: 0;
+  }
+
+  .auth-panel .ant-input,
+  .auth-panel .ant-input-affix-wrapper {
+    width: 100% !important;
+  }
+
+  .header-actions .ant-btn {
+    flex: 1 1 auto;
   }
 }

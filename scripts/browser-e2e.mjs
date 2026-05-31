@@ -227,10 +227,35 @@ async function postJson(page, path, payload) {
 }
 
 async function openTab(page, label) {
+  const menuLocator = page.locator(".ant-menu-item", { hasText: label });
+  const menuCount = await menuLocator.count();
+  if (menuCount === 1) {
+    await menuLocator.click();
+    return;
+  }
+
   const locator = page.locator(".ant-tabs-tab", { hasText: label });
   const count = await locator.count();
   if (count !== 1) {
     throw new Error(`${label} tab resolved to ${count} elements`);
+  }
+  const key = await locator.getAttribute("data-node-key");
+  if (key) {
+    const clickedMenuItem = await page.evaluate((tabKey) => {
+      const menuItems = Array.from(document.querySelectorAll(".ant-menu-item"));
+      const target = menuItems.find((element) => {
+        const menuId = element.getAttribute("data-menu-id") || "";
+        return menuId === tabKey || menuId.endsWith(`-${tabKey}`);
+      });
+      if (!target) {
+        return false;
+      }
+      target.click();
+      return true;
+    }, key);
+    if (clickedMenuItem) {
+      return;
+    }
   }
   await locator.click();
 }

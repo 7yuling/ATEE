@@ -940,3 +940,55 @@ P0 生产部署：未通过
 - 验收结果：`live_worker_single_review` 通过，1 条任务完成，`dead_letter=0`，队列清空，熔断 `open=false`，连续失败数为 0。
 - 报告产物：`reports\async-ai-review-worker-smoke-live.md` 已生成；报告不包含 API key、API base、代理 URL、密钥文件路径、Authorization header、原始 Prompt、原始请求体或临时 SQLite 路径。
 - 验证：`python scripts\async-ai-review-worker-smoke.py --include-live --report reports\async-ai-review-worker-smoke-live.md` 通过。
+
+### 2026-05-31 Step 75：管理台布局压缩与菜单切换收口
+
+- 问题一句话：控制台顶部按钮、右侧重复 Tabs 和大卡片间距让页面显得过重，侧边菜单切换后的工作区变化不够清晰。
+- 最小解决方案：不改业务接口，只压缩 Header、导航、卡片和表格间距，固定桌面端左侧导航，并隐藏右侧重复 Tabs 导航，使左侧菜单成为唯一主要切换入口。
+- 前端调整：`apps/admin-console-src/src/main.jsx` 给 Header 标题区、操作区和仪表盘指标区补充布局类，顶部运行模式按钮改为小尺寸；`apps/admin-console-src/src/styles.css` 收紧品牌区、Header、鉴权条、指标卡、卡片和表格密度，并补充移动端宽度兜底。
+- 测试适配：`scripts/browser-e2e.mjs` 的页面切换改为优先点击左侧菜单；当测试文案和菜单文案不完全一致时，按隐藏 Tabs 的 `data-node-key` 回查对应菜单项，避免再点击不可见 Tabs。
+- 构建产物：已重新生成 `apps/admin-console` 静态管理台文件，保持可直接由 Core Service 提供。
+- 验证：`git diff --check` 通过；`node --check scripts\browser-e2e.mjs` 通过；`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过。
+
+### 2026-05-31 Step 76：管理台仪表盘组件拆分
+
+- 问题一句话：`main.jsx` 仍承担大量页面展示 JSX，后续继续在单文件编辑容易卡顿，也不利于定位控制台布局问题。
+- 最小解决方案：只抽离无状态仪表盘展示，不移动请求函数、不改接口、不改状态流；新增 `apps/admin-console-src/src/adminDashboard.jsx` 承载指标卡、操作台卡片和底部 JSON 摘要。
+- 拆分结果：`main.jsx` 从约 1347 行降到约 1283 行；`adminDashboard.jsx` 约 138 行，集中管理 `DashboardMetrics`、`DashboardTab` 和 `JsonSummaryRow`。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminDashboard.jsx`，继续检查 e2e ID、敏感 JSON 脱敏和纯文本渲染边界。
+- 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
+
+### 2026-05-31 Step 77：管理台 Agent 与新手引导组件拆分
+
+- 问题一句话：`main.jsx` 仍包含 Agent 对话和新手引导的大块 JSX，继续迭代这些模块时容易再次出现单文件编辑卡顿。
+- 最小解决方案：只抽离展示组件，不移动 `sendAgentChat()`、`runPreflight()`、`runGuideAction()` 等业务动作；新增 `apps/admin-console-src/src/adminAgentGuide.jsx` 承载 `AgentTab` 和 `GuideTab`。
+- 拆分结果：`main.jsx` 从约 1283 行降到约 1184 行；`adminAgentGuide.jsx` 约 175 行，集中管理 Agent 对话窗口、网站类型/接入方式选择、环境预检、新手引导折叠面板和安全情况处理总流程。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminAgentGuide.jsx`，继续覆盖 Agent/Guide 的 e2e ID、纯文本渲染和新手引导流程标识。
+- 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
+
+### 2026-05-31 Step 78：管理台列表模块拆分与测试摘要重整
+
+- 问题一句话：申诉、动作和异步 AI 审查仍在 `main.jsx` 内形成大块列表/表单 JSX，同时用户需要重新理解当前测试到底覆盖了哪些项目。
+- 最小解决方案：只抽离列表展示组件，不移动表格列定义、状态和业务动作；新增 `apps/admin-console-src/src/adminReviewQueues.jsx` 承载 `AppealsTab`、`ActionsTab` 和 `AsyncReviewsTab`，并新增 `docs/test-summary.md` 汇总测试项目与详细覆盖内容。
+- 拆分结果：`main.jsx` 从约 1184 行降到约 1057 行；`adminReviewQueues.jsx` 约 218 行，集中管理申诉审核、动作撤销、异步 AI 审查队列三个列表面板。
+- 测试摘要：`docs/test-summary.md` 记录本轮已执行的管理台单测、Vite 构建、浏览器 20 项端到端检查、diff 检查、quick 发布闸门覆盖范围和全部 Python 测试模块地图。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminReviewQueues.jsx`，继续覆盖申诉、动作和异步 AI 审查的 e2e ID 与安全渲染边界。
+- 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
+
+### 2026-05-31 Step 79：管理台账本与网关配置组件拆分
+
+- 问题一句话：`main.jsx` 剩余最大块来自安全账本和网关配置表单，继续放在主文件会影响后续定位配置问题和界面迭代速度。
+- 最小解决方案：只抽离账本与配置展示组件，不移动 `showLedger()`、`showConfig()`、`saveConfig()`、`testLlmGateway()`、`breakGlass()` 等业务动作；新增 `apps/admin-console-src/src/adminLedgerConfig.jsx` 承载 `LedgerTab` 和 `GatewayConfigTab`。
+- 拆分结果：`main.jsx` 从约 1057 行降到约 856 行；`adminLedgerConfig.jsx` 约 263 行，集中管理账本读取、运行配置表单、模型网关配置、密钥/环境变量输入、可信代理、申诉入口、紧急旁路状态和旁路验证。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminLedgerConfig.jsx`，继续覆盖账本、网关配置、LLM 测试、紧急旁路和敏感字段不回显等 e2e ID 与安全边界。
+- 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
+
+### 2026-05-31 Step 80：管理台拆分后全量回归与发布闸门
+
+- 问题一句话：管理台多文件拆分完成后，需要确认前端重构没有影响 Core、部署脚本、供应商故障演练、生产冒烟和敏感信息边界。
+- 最小解决方案：不再追加新功能，先运行全量 Python 单测和 quick 发布闸门，再清理测试缓存并把结果同步到测试摘要。
+- 全量回归：`python -m unittest discover -s tests` 通过，96 个测试 OK，覆盖 Core、HTTP、管理台、部署资产、演示站、供应商故障/预算/熔断、备份恢复、压力脚本、生产冒烟和发布闸门等模块。
+- 发布闸门：`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过；配置预检、Python 编译、29 个聚焦单测、Agent AI 全流程 fake 冒烟、异步 AI 审查 worker fake 冒烟和敏感扫描全部通过。
+- 敏感扫描：本次扫描 164 个文件，`findings_count=0`；报告继续不输出 API Key、Authorization、真实供应商地址、代理地址、密钥文件路径、原始 Prompt 或原始请求体。
+- 清理：测试生成的 6 个 `__pycache__` 目录已按工作区路径校验后删除。
+- 文档：`docs/test-summary.md` 已补充全量单测和 quick 发布闸门的最新执行结果。

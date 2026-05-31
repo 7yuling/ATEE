@@ -49,8 +49,24 @@ class AdminConsoleTests(unittest.TestCase):
 
     def test_react_source_keeps_e2e_ids_and_plain_text_rendering(self):
         main_source = (self.source_dir / "src" / "main.jsx").read_text(encoding="utf-8")
+        agent_guide_source = (self.source_dir / "src" / "adminAgentGuide.jsx").read_text(encoding="utf-8")
+        dashboard_source = (self.source_dir / "src" / "adminDashboard.jsx").read_text(encoding="utf-8")
+        ledger_config_source = (self.source_dir / "src" / "adminLedgerConfig.jsx").read_text(encoding="utf-8")
+        review_source = (self.source_dir / "src" / "adminReviewQueues.jsx").read_text(encoding="utf-8")
         support_source = (self.source_dir / "src" / "adminSupport.jsx").read_text(encoding="utf-8")
-        source = main_source + "\n" + support_source
+        source = (
+            main_source
+            + "\n"
+            + agent_guide_source
+            + "\n"
+            + dashboard_source
+            + "\n"
+            + ledger_config_source
+            + "\n"
+            + review_source
+            + "\n"
+            + support_source
+        )
 
         for element_id in [
             "appealIdInput",
