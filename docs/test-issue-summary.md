@@ -46,3 +46,9 @@
 | P1 | 可访问性专项 | 引入 axe-core、键盘遍历、ARIA 与颜色对比度检查。 |
 | P1 | Git Hook 启用 | 本地执行 `git config core.hooksPath .githooks` 后启用 pre-push hook。 |
 | P2 | Windows/WSL 依赖隔离 | 不在同一个工作区交替运行两个系统的 `npm ci`；必要时使用独立 clone 或容器。 |
+
+## CI 首次运行复盘
+
+| 分类 | 问题 | 影响 | 状态 | 修改 |
+|---|---|---|---|---|
+| CI/CD | Windows quick gate 在构建后执行 `git diff --check` | 构建产物或换行差异可能让远端 CI 误判失败 | 已修复 | GitHub Actions 改用 `git show --check --format=short HEAD` 检查当前提交；本地 pre-push 保留 `git diff --check`。 |

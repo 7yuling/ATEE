@@ -43,8 +43,8 @@ jobs:
       - name: Local release gate
         run: python scripts/local-release-gate.py --quick --report reports/ci-local-release-gate.md
 
-      - name: Diff check
-        run: git diff --check
+      - name: Commit whitespace check
+        run: git show --check --format=short HEAD
 
   browser-e2e-windows:
     name: Browser E2E (Windows)

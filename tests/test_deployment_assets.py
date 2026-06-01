@@ -264,10 +264,11 @@ class DeploymentAssetTests(unittest.TestCase):
         for text in (workflow, hook):
             self.assertIn("unittest", text)
             self.assertIn("build:admin", text)
-            self.assertIn("git diff --check", text)
             self.assertNotRegex(text, r"sk-[A-Za-z0-9]")
             self.assertNotIn(("api" + ".deepseek" + ".com"), text)
         self.assertIn("local-release-gate.py --quick", workflow)
+        self.assertIn("git show --check --format=short HEAD", workflow)
+        self.assertIn("git diff --check", hook)
         self.assertIn("node-version: \"22.12.0\"", workflow)
         self.assertIn("python-version: \"3.12\"", workflow)
         self.assertIn("Browser E2E", workflow)

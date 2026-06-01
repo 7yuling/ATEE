@@ -1029,3 +1029,10 @@ P0 生产部署：未通过
 - 最小解决方案：新增 `docs/test-issue-summary.md`，按功能、适配、部署运维、CI/CD、性能、安全和可访问性归类问题；将 `check_config.py` 的密钥解密失败提示改为 OS/user context；新增 GitHub Actions quick gate 与可选 pre-push hook。
 - 代码修改：新增 `.github/workflows/ci.yml` 覆盖 Python 全量、管理台构建、quick release gate、diff check 和 Windows 浏览器 E2E；新增 `.githooks/pre-push` 执行部署资产/灾备/release gate 关键单测、管理台构建和 diff check。
 - 验证：`python -m py_compile services\core-service\check_config.py scripts\backup-restore-drill.py tests\test_deployment_assets.py tests\test_backup_restore_drill.py tests\test_local_release_gate.py` 通过；`python -m unittest tests.test_deployment_assets tests.test_backup_restore_drill tests.test_local_release_gate` 通过，31 个测试 OK；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，20 项检查 OK；`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，32 个聚焦测试，敏感扫描 184 个文件且 findings=0。
+
+### 2026-06-01 Step 86：GitHub Actions Windows 闸门修正
+
+- 问题一句话：首次远端 CI 中 Ubuntu quick gate 和 Windows 浏览器 E2E 通过，但 Windows quick gate 在构建后执行 `git diff --check`，容易被构建产物或换行差异误判为失败。
+- 最小解决方案：CI 改为 `git show --check --format=short HEAD` 检查当前提交本身的空白问题；本地 pre-push 继续保留 `git diff --check` 检查开发者工作区。
+- 代码修改：更新 `.github/workflows/ci.yml` 的 Windows/Ubuntu quick gate 空白检查命令，并同步调整 `tests/test_deployment_assets.py` 对 CI 与 hook 的断言边界。
+- 验证：`python -m unittest tests.test_deployment_assets` 通过，27 个测试 OK；`git diff --check` 通过，仅保留 Windows LF/CRLF 提示。
