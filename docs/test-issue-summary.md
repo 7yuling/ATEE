@@ -52,3 +52,4 @@
 | 分类 | 问题 | 影响 | 状态 | 修改 |
 |---|---|---|---|---|
 | CI/CD | Windows quick gate 在构建后执行 `git diff --check` | 构建产物或换行差异可能让远端 CI 误判失败 | 已修复 | GitHub Actions 改用 `scripts/ci-whitespace-check.py` 读取 `HEAD` 中的提交内容；本地 pre-push 保留 `git diff --check`。 |
+| CI/CD | Windows runner 较慢时，嵌套 release gate 测试可能超过 90 秒 | 文档或小改动也可能让 Windows quick gate 偶发失败 | 已修复 | 将 `tests/test_local_release_gate.py` 的子进程超时提高到 240 秒。 |

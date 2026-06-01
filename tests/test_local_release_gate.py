@@ -27,7 +27,7 @@ class LocalReleaseGateTests(unittest.TestCase):
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
-                timeout=90,
+                timeout=240,
                 check=False,
                 env=env,
             )

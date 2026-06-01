@@ -1042,3 +1042,9 @@ P0 生产部署：未通过
 - 问题一句话：修正 CI 检查逻辑后，需要确认 GitHub 远端 runner 上的真实结果，而不是只看本地回归。
 - 最小解决方案：推送 `ea5cfdf` 后通过 GitHub Actions API 查询 run `26760080565` 和每个 job 的完成状态。
 - 验证：远端 Actions `26760080565` 通过；`Quick gate (ubuntu-latest)`、`Quick gate (windows-latest)`、`Browser E2E (Windows)` 均为 `success`。
+
+### 2026-06-01 Step 88：Windows CI 慢 runner 超时修正
+
+- 问题一句话：报告提交 `db451bc` 触发的 Windows quick gate 在 Python tests 阶段失败，失败时长接近嵌套 release gate 测试的 90 秒超时边界，本地全量测试通过，判断为 Windows runner 慢导致的误杀。
+- 最小解决方案：不改产品逻辑，只将 `tests/test_local_release_gate.py` 中 release gate 子进程测试超时从 90 秒提高到 240 秒，给 Windows CI 留出稳定余量。
+- 验证：`python -m py_compile tests\test_local_release_gate.py` 通过；`python -m unittest tests.test_local_release_gate` 通过；`python -m unittest discover -s tests` 通过，100 个测试 OK。
