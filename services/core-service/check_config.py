@@ -50,7 +50,10 @@ def _check_remote_llm_config(config, errors: list[str]) -> None:
     try:
         secret = load_secret_file(_resolve_project_path(config.llm_api_key_file))
     except SecretStoreError:
-        errors.append("llm_api_key_file cannot be decrypted in this Windows user context.")
+        errors.append(
+            "llm_api_key_file cannot be decrypted in this OS/user context. "
+            "On Linux, use llm_api_key_env from the service environment or secret manager."
+        )
         return
     except OSError:
         errors.append("llm_api_key_file is not readable from the project root.")
@@ -69,7 +72,10 @@ def _check_admin_auth_config(config, errors: list[str]) -> None:
     try:
         secret = load_secret_file(_resolve_project_path(config.admin_token_file))
     except SecretStoreError:
-        errors.append("admin_token_file cannot be decrypted in this Windows user context.")
+        errors.append(
+            "admin_token_file cannot be decrypted in this OS/user context. "
+            "On Linux, use admin_token_env from the service environment or secret manager."
+        )
         return
     except OSError:
         errors.append("admin_token_file is not readable from the project root.")

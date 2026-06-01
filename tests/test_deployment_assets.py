@@ -235,6 +235,43 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("*.env", gitignore)
         self.assertIn("!*.env.example", gitignore)
 
+    def test_config_preflight_secret_errors_are_cross_platform(self):
+        script = (ROOT / "services" / "core-service" / "check_config.py").read_text(encoding="utf-8")
+
+        self.assertIn("OS/user context", script)
+        self.assertIn("llm_api_key_env from the service environment or secret manager", script)
+        self.assertIn("admin_token_env from the service environment or secret manager", script)
+        self.assertNotIn("cannot be decrypted in this Windows user context", script)
+
+    def test_wsl_systemd_nginx_smoke_installs_tests_and_cleans_up(self):
+        script = (ROOT / "scripts" / "linux" / "wsl-systemd-nginx-smoke.sh").read_text(encoding="utf-8")
+
+        self.assertIn("install-atee-systemd.sh", script)
+        self.assertIn("systemctl --user start", script)
+        self.assertIn("production-smoke-check.py", script)
+        self.assertIn("nginx -t", script)
+        self.assertIn("proxy_pass http://127.0.0.1:${CORE_PORT}", script)
+        self.assertIn("trap cleanup EXIT", script)
+        self.assertIn("systemctl --user stop", script)
+        self.assertIn("rm -f \"$NGINX_CONF\"", script)
+        self.assertIn("rm -f \"${XDG_CONFIG_HOME:-$HOME/.config}/atee/${SERVICE_NAME}.env\"", script)
+        self.assertNotRegex(script, r"sk-[A-Za-z0-9]")
+
+    def test_ci_and_git_hook_quality_gates_exist(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")
+
+        for text in (workflow, hook):
+            self.assertIn("unittest", text)
+            self.assertIn("build:admin", text)
+            self.assertIn("git diff --check", text)
+            self.assertNotRegex(text, r"sk-[A-Za-z0-9]")
+            self.assertNotIn(("api" + ".deepseek" + ".com"), text)
+        self.assertIn("local-release-gate.py --quick", workflow)
+        self.assertIn("node-version: \"22.12.0\"", workflow)
+        self.assertIn("python-version: \"3.12\"", workflow)
+        self.assertIn("Browser E2E", workflow)
+
     def test_reverse_proxy_examples_use_local_upstream_and_security_headers(self):
         nginx = (ROOT / "deploy" / "reverse-proxy" / "nginx" / "atee.conf.example").read_text(encoding="utf-8")
         demo_nginx = (ROOT / "deploy" / "reverse-proxy" / "nginx" / "atee-demo.conf.example").read_text(encoding="utf-8")

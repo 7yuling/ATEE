@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,28 @@ class BackupRestoreDrillScriptTests(unittest.TestCase):
             self.assertNotIn(str(Path(temp_dir)), report)
             self.assertNotIn("source-install", report)
             self.assertNotIn("target-install", report)
+
+    def test_backup_restore_drill_has_python_fallback_for_linux(self):
+        env = os.environ.copy()
+        env["PATH"] = ""
+        completed = subprocess.run(
+            [sys.executable, "scripts/backup-restore-drill.py"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            env=env,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["archive"]["contains_config"])
+        self.assertTrue(payload["archive"]["contains_sqlite"])
+        self.assertTrue(payload["archive"]["contains_logs"])
+        self.assertFalse(payload["archive"]["contains_secrets"])
+        self.assertTrue(payload["restore"]["target_placeholder_secret_preserved"])
 
 
 if __name__ == "__main__":

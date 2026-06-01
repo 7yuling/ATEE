@@ -16,7 +16,7 @@
 | 管理台生产构建 | `npm.cmd run build:admin` | 通过 | 使用 Vite 构建 `apps/admin-console`，验证 JSX 导入、Ant Design 组件、CSS 和静态管理台产物可生成。 |
 | 浏览器端到端检查 | `npm.cmd run e2e:browser` | 20 项通过 | 启动临时 Core Service，打开管理台，使用 Playwright/Chromium 点击真实按钮并校验接口返回。 |
 | 全量 Python 单测 | `python -m unittest discover -s tests` | 96 个测试通过 | 覆盖 Core、HTTP、管理台、部署资产、演示站、供应商故障/预算/熔断、备份恢复、压力脚本、生产冒烟和发布闸门等 Python 测试模块。 |
-| Quick 发布闸门 | `python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` | 通过 | 执行配置预检、Python 编译、29 个聚焦单测、Agent AI 全流程 fake 冒烟、异步 AI 审查 worker fake 冒烟和敏感扫描；本次敏感扫描 164 个文件，findings=0。 |
+| Quick 发布闸门 | `python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` | 通过 | 执行配置预检、Python 编译、32 个聚焦单测、Agent AI 全流程 fake 冒烟、异步 AI 审查 worker fake 冒烟和敏感扫描；本次敏感扫描 184 个文件，findings=0。 |
 | Diff 空白检查 | `git diff --check` | 通过 | 检查本轮变更没有尾随空白或补丁格式问题；当前提示仅为 Git 在 Windows 下的 LF/CRLF 换行警告。 |
 
 ## 浏览器端到端覆盖明细
@@ -50,7 +50,7 @@
 
 - `config_preflight`：运行 Core 配置预检，确认本地配置满足启动前置条件。
 - `python_compile`：编译 `services`、`adapters`、`apps`、`tests`、`scripts`，捕获 Python 语法错误。
-- `unit_tests`：运行聚焦单测集合，当前 quick 报告记录 29 个测试。
+- `unit_tests`：运行聚焦单测集合，当前 quick 报告记录 32 个测试。
 - `agent_ai_full_flow_smoke`：默认使用 fake provider，验证 Agent AI 全流程冒烟，并生成脱敏报告。
 - `async_ai_review_worker_smoke`：默认使用 fake provider，验证异步 AI 审查 worker 的预算和熔断联动，并生成脱敏报告。
 - `sensitive_scan`：扫描工作区，跳过本地运行配置、`config/secrets`、`node_modules`、Git 内部目录和 Python 缓存，检查密钥形状、供应商主机、代理标记等敏感信息是否误入仓库。

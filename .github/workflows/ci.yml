@@ -1,0 +1,78 @@
+name: ATEE CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quick-gate:
+    name: Quick gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Initialize local config
+        run: python -c "from pathlib import Path; Path('config/config.json').write_text(Path('config/config.example.json').read_text(encoding='utf-8'), encoding='utf-8')"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Python tests
+        run: python -m unittest discover -s tests
+
+      - name: Build admin console
+        run: npm run build:admin
+
+      - name: Local release gate
+        run: python scripts/local-release-gate.py --quick --report reports/ci-local-release-gate.md
+
+      - name: Diff check
+        run: git diff --check
+
+  browser-e2e-windows:
+    name: Browser E2E (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+
+      - name: Initialize local config
+        run: python -c "from pathlib import Path; Path('config/config.json').write_text(Path('config/config.example.json').read_text(encoding='utf-8'), encoding='utf-8')"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build admin console
+        run: npm run build:admin
+
+      - name: Browser E2E
+        run: npm run e2e:browser

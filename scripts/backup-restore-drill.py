@@ -27,9 +27,6 @@ def main() -> int:
     args = parser.parse_args()
 
     powershell = _find_powershell()
-    if not powershell:
-        print(json.dumps({"ok": False, "reason": "powershell_not_found"}, indent=2, sort_keys=True))
-        return 1
 
     temp = tempfile.TemporaryDirectory()
     temp_root = Path(temp.name)
@@ -128,7 +125,9 @@ def _create_target_placeholder_secret(project_root: Path) -> Path:
     return target_secret
 
 
-def _run_backup(powershell: str, source_root: Path, backup_dir: Path) -> dict:
+def _run_backup(powershell: str | None, source_root: Path, backup_dir: Path) -> dict:
+    if not powershell:
+        return _run_backup_python(source_root, backup_dir)
     command = [
         powershell,
         "-NoProfile",
@@ -150,6 +149,46 @@ def _run_backup(powershell: str, source_root: Path, backup_dir: Path) -> dict:
         "archive_path": archive_path,
     }
 
+
+def _run_backup_python(source_root: Path, backup_dir: Path) -> dict:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    archive_path = backup_dir / f"atee-state-{timestamp}.zip"
+    included: list[str] = []
+    excluded = ["config/secrets/**"]
+
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for relative in _backup_candidates(source_root):
+            source_path = source_root / relative
+            if not source_path.exists() or not source_path.is_file():
+                continue
+            archive.write(source_path, relative.as_posix())
+            included.append(relative.as_posix())
+        manifest = {
+            "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "included": included,
+            "excluded": excluded,
+        }
+        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+    return {
+        "ok": archive_path.exists(),
+        "returncode": 0,
+        "archive_path": archive_path,
+    }
+
+
+def _backup_candidates(source_root: Path) -> list[Path]:
+    candidates = [
+        Path("config/config.json"),
+        Path("data/atee_ledger.sqlite3"),
+    ]
+    logs_dir = source_root / "logs"
+    if logs_dir.exists():
+        for path in sorted(logs_dir.rglob("*")):
+            if path.is_file():
+                candidates.append(path.relative_to(source_root))
+    return candidates
 
 def _parse_backup_path(stdout: str) -> Path | None:
     for line in stdout.splitlines():
@@ -188,10 +227,12 @@ def _inspect_archive(archive_path: Path | None) -> dict:
     }
 
 
-def _run_restore(powershell: str, backup_path: Path | None, target_root: Path) -> dict:
+def _run_restore(powershell: str | None, backup_path: Path | None, target_root: Path) -> dict:
     target_root.mkdir(parents=True, exist_ok=True)
     if not backup_path:
         return {"ok": False, "reason": "backup_path_missing"}
+    if not powershell:
+        return _run_restore_python(backup_path, target_root)
     command = [
         powershell,
         "-NoProfile",
@@ -207,6 +248,24 @@ def _run_restore(powershell: str, backup_path: Path | None, target_root: Path) -
     ]
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=60, check=False)
     return {"ok": completed.returncode == 0, "returncode": completed.returncode}
+
+
+def _run_restore_python(backup_path: Path, target_root: Path) -> dict:
+    try:
+        with zipfile.ZipFile(backup_path) as archive:
+            for member in archive.infolist():
+                relative = Path(member.filename)
+                if member.is_dir() or relative.name == "manifest.json":
+                    continue
+                destination = (target_root / relative).resolve()
+                if not destination.is_relative_to(target_root.resolve()):
+                    return {"ok": False, "returncode": 1, "reason": "unsafe_archive_path"}
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, destination.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+        return {"ok": True, "returncode": 0}
+    except (OSError, zipfile.BadZipFile) as exc:
+        return {"ok": False, "returncode": 1, "reason": type(exc).__name__}
 
 
 def _inspect_restored_state(project_root: Path, target_secret: Path) -> dict:

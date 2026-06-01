@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,8 @@ class LocalReleaseGateTests(unittest.TestCase):
     def test_quick_gate_runs_sanitized_release_checks(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             report_path = Path(temp_dir) / "local-release-gate.md"
+            env = os.environ.copy()
+            env.setdefault("ATEE_LLM_API_KEY", "atee-release-gate-placeholder-key")
             completed = subprocess.run(
                 [
                     sys.executable,
@@ -26,6 +29,7 @@ class LocalReleaseGateTests(unittest.TestCase):
                 text=True,
                 timeout=90,
                 check=False,
+                env=env,
             )
 
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)

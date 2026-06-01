@@ -992,3 +992,40 @@ P0 生产部署：未通过
 - 敏感扫描：本次扫描 164 个文件，`findings_count=0`；报告继续不输出 API Key、Authorization、真实供应商地址、代理地址、密钥文件路径、原始 Prompt 或原始请求体。
 - 清理：测试生成的 6 个 `__pycache__` 目录已按工作区路径校验后删除。
 - 文档：`docs/test-summary.md` 已补充全量单测和 quick 发布闸门的最新执行结果。
+
+### 2026-06-01 Step 81：生产冒烟最小闭环复测
+
+- 问题一句话：全量回归后仍需要单独确认生产冒烟脚本覆盖的上线入口没有因管理台拆分和静态资源重建而退化。
+- 最小解决方案：运行现有 `tests.test_production_smoke_check`，由测试启动真实 Core 服务并调用生产冒烟检查逻辑，不引入真实密钥或外部网络依赖。
+- 覆盖范围：本轮复测验证 `/health`、管理台首页、静态资源加载、`/v1/runtime/status`、Admin Token 鉴权、无 Token 拦截、审计 actor 探针和报告脱敏边界。
+- 验证：`python -m unittest tests.test_production_smoke_check` 通过，2 个测试 OK。
+
+### 2026-06-01 Step 82：部署入口与管理台按钮链路复测
+
+- 问题一句话：进入真实 Ubuntu/Nginx 复测前，需要先确认仓库内的部署脚本约束、反向代理样例、管理台按钮和 Admin Token 轮换链路仍保持闭合。
+- 最小解决方案：在本机先跑部署资产、HTTP E2E、管理台源码断言、浏览器按钮 E2E、生产冒烟和令牌轮换冒烟；WSL 仅作为可选 shell 层复验，不阻塞本轮主线。
+- 覆盖范围：Linux systemd 安装脚本、启动脚本、Nginx/Caddy 样例、管理台 20 项按钮链路、Admin 认证、Token 轮换后旧令牌拒绝/新令牌通过、生产冒烟报告脱敏。
+- WSL 状态：当前 Codex 进程调用 `wsl.exe` 时看不到可用默认发行版，返回安装/列出发行版提示；这不是 ATEE 代码失败，需在能进入 Ubuntu 的终端内再执行 shell 语法和 systemd verify。
+- 验证：`python -m unittest tests.test_deployment_assets tests.test_http_e2e tests.test_admin_console` 通过，32 个测试 OK；`npm.cmd run e2e:browser` 通过，20 项检查 OK；`python -m unittest tests.test_admin_token_rotation_smoke tests.test_production_smoke_check tests.test_deployment_assets` 通过，27 个测试 OK。
+
+### 2026-06-01 Step 83：Ubuntu WSL 实测与全量测试矩阵
+
+- 问题一句话：Windows 本机回归不能证明 Ubuntu/systemd/Nginx 场景可用，需要安装真实 Ubuntu WSL 并按功能、非功能、自动化和 CI/CD 矩阵实测。
+- 最小解决方案：安装 `Ubuntu-24.04`，补齐 Python/Node 22/Nginx/Chromium 工具链，在 WSL 内跑全量 Python、Vite 构建、Linux Chromium UI E2E、systemd+Nginx smoke、性能、安全、灾备和 release gate。
+- 修复问题：`backup-restore-drill.py` 增加无 PowerShell 时的 Python backup/restore fallback；`tests.test_local_release_gate` 在测试夹具中注入占位 `ATEE_LLM_API_KEY`，避免 Linux 测试依赖 Windows DPAPI；新增 `scripts/linux/wsl-systemd-nginx-smoke.sh` 做可复用 systemd+Nginx 部署冒烟并自动清理。
+- 验证：Ubuntu 全量 `python3 -m unittest discover -s tests` 通过，98 个测试 OK、1 个按设计跳过；`npm run build:admin` 通过；Linux Chromium `npm run e2e:browser` 通过 20 项；systemd+Nginx production smoke 通过；性能负载/压力/容量/稳定性 4 组均 0 errors；`npm audit` 0 vulnerabilities；release gate 敏感扫描 174 个文件 findings=0；灾备恢复通过。
+- 文档：新增 `docs/wsl-ubuntu-test-log.md` 与 `docs/wsl-ubuntu-test-matrix-report.md`，记录测试矩阵、问题处理、命令结果、限制与后续建议。
+
+### 2026-06-01 Step 84：按 Ubuntu 实测日志删减测试残留
+
+- 问题一句话：WSL 实测修复后仍残留一个人为 fallback 开关和若干只用于调试的内部字段，生产脚本可以更短更自然。
+- 最小解决方案：删除 `ATEE_BACKUP_DRILL_FORCE_PYTHON` 测试开关，改由“找不到 PowerShell”这一真实 Linux 条件自然进入 Python fallback；内联单用时间戳函数，使用 `Path.is_relative_to()` 替代自定义 helper，并移除未进入报告的 `backend` 调试字段。
+- 保留边界：保留 Linux Python backup/restore fallback、zip path traversal 防护、`config/secrets/**` 排除、WSL systemd+Nginx smoke 脚本和部署资产测试，因为这些都是日志中暴露的真实生产适配点。
+- 验证：`python -m unittest tests.test_backup_restore_drill tests.test_deployment_assets tests.test_local_release_gate` 通过，29 个测试 OK；Ubuntu `python3 scripts/backup-restore-drill.py --report reports/wsl-backup-restore-drill-pruned.md` 返回 `ok=true`；Ubuntu `bash -n scripts/linux/wsl-systemd-nginx-smoke.sh` 通过。
+
+### 2026-06-01 Step 85：测试问题分类与工程化补齐
+
+- 问题一句话：测试日志中的问题分散在矩阵报告、实测日志和命令输出里，且 CI/Git Hook 缺口、Linux 密钥预检文案仍未完全生产化。
+- 最小解决方案：新增 `docs/test-issue-summary.md`，按功能、适配、部署运维、CI/CD、性能、安全和可访问性归类问题；将 `check_config.py` 的密钥解密失败提示改为 OS/user context；新增 GitHub Actions quick gate 与可选 pre-push hook。
+- 代码修改：新增 `.github/workflows/ci.yml` 覆盖 Python 全量、管理台构建、quick release gate、diff check 和 Windows 浏览器 E2E；新增 `.githooks/pre-push` 执行部署资产/灾备/release gate 关键单测、管理台构建和 diff check。
+- 验证：`python -m py_compile services\core-service\check_config.py scripts\backup-restore-drill.py tests\test_deployment_assets.py tests\test_backup_restore_drill.py tests\test_local_release_gate.py` 通过；`python -m unittest tests.test_deployment_assets tests.test_backup_restore_drill tests.test_local_release_gate` 通过，31 个测试 OK；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，20 项检查 OK；`python scripts\local-release-gate.py --quick --report reports\local-release-gate.md` 通过，32 个聚焦测试，敏感扫描 184 个文件且 findings=0。
