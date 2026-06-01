@@ -267,11 +267,16 @@ class DeploymentAssetTests(unittest.TestCase):
             self.assertNotRegex(text, r"sk-[A-Za-z0-9]")
             self.assertNotIn(("api" + ".deepseek" + ".com"), text)
         self.assertIn("local-release-gate.py --quick", workflow)
-        self.assertIn("git show --check --format=short HEAD", workflow)
+        self.assertIn("python scripts/ci-whitespace-check.py", workflow)
         self.assertIn("git diff --check", hook)
         self.assertIn("node-version: \"22.12.0\"", workflow)
         self.assertIn("python-version: \"3.12\"", workflow)
         self.assertIn("Browser E2E", workflow)
+
+        checker = (ROOT / "scripts" / "ci-whitespace-check.py").read_text(encoding="utf-8")
+        self.assertIn("\"ls-tree\"", checker)
+        self.assertIn("HEAD:", checker)
+        self.assertNotRegex(checker, r"sk-[A-Za-z0-9]")
 
     def test_reverse_proxy_examples_use_local_upstream_and_security_headers(self):
         nginx = (ROOT / "deploy" / "reverse-proxy" / "nginx" / "atee.conf.example").read_text(encoding="utf-8")

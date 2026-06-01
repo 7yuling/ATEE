@@ -51,4 +51,4 @@
 
 | 分类 | 问题 | 影响 | 状态 | 修改 |
 |---|---|---|---|---|
-| CI/CD | Windows quick gate 在构建后执行 `git diff --check` | 构建产物或换行差异可能让远端 CI 误判失败 | 已修复 | GitHub Actions 改用 `git show --check --format=short HEAD` 检查当前提交；本地 pre-push 保留 `git diff --check`。 |
+| CI/CD | Windows quick gate 在构建后执行 `git diff --check` | 构建产物或换行差异可能让远端 CI 误判失败 | 已修复 | GitHub Actions 改用 `scripts/ci-whitespace-check.py` 读取 `HEAD` 中的提交内容；本地 pre-push 保留 `git diff --check`。 |

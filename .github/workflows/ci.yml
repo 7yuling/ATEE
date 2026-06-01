@@ -44,7 +44,7 @@ jobs:
         run: python scripts/local-release-gate.py --quick --report reports/ci-local-release-gate.md
 
       - name: Commit whitespace check
-        run: git show --check --format=short HEAD
+        run: python scripts/ci-whitespace-check.py
 
   browser-e2e-windows:
     name: Browser E2E (Windows)

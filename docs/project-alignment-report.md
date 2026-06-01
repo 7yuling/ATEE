@@ -1033,6 +1033,6 @@ P0 生产部署：未通过
 ### 2026-06-01 Step 86：GitHub Actions Windows 闸门修正
 
 - 问题一句话：首次远端 CI 中 Ubuntu quick gate 和 Windows 浏览器 E2E 通过，但 Windows quick gate 在构建后执行 `git diff --check`，容易被构建产物或换行差异误判为失败。
-- 最小解决方案：CI 改为 `git show --check --format=short HEAD` 检查当前提交本身的空白问题；本地 pre-push 继续保留 `git diff --check` 检查开发者工作区。
-- 代码修改：更新 `.github/workflows/ci.yml` 的 Windows/Ubuntu quick gate 空白检查命令，并同步调整 `tests/test_deployment_assets.py` 对 CI 与 hook 的断言边界。
-- 验证：`python -m unittest tests.test_deployment_assets` 通过，27 个测试 OK；`git diff --check` 通过，仅保留 Windows LF/CRLF 提示。
+- 最小解决方案：CI 改为 `python scripts/ci-whitespace-check.py`，直接读取 `HEAD` 内的提交文本内容并检查行尾空白；本地 pre-push 继续保留 `git diff --check` 检查开发者工作区。
+- 代码修改：新增 `scripts/ci-whitespace-check.py`，更新 `.github/workflows/ci.yml` 的 Windows/Ubuntu quick gate 空白检查命令，并同步调整 `tests/test_deployment_assets.py` 对 CI 与 hook 的断言边界。
+- 验证：`python -m py_compile scripts\ci-whitespace-check.py tests\test_deployment_assets.py` 通过；`python scripts\ci-whitespace-check.py` 通过；`python -m unittest tests.test_deployment_assets` 通过，27 个测试 OK；`git diff --check` 通过，仅保留 Windows LF/CRLF 提示。
