@@ -56,6 +56,87 @@ class AteeCoreTests(unittest.TestCase):
         self.assertEqual(result["fast_path"]["rule_id"], "FP_XSS_001")
         self.assertFalse(result["fast_path"]["llm_called"])
 
+    def test_fast_path_blocks_ssrf_metadata_before_agent_route(self):
+        core = CoreService()
+        result = core.check(
+            {
+                "method": "POST",
+                "path": "/fetch",
+                "body": {"url": "http://169.254.169.254/latest/meta-data/"},
+            }
+        )
+        self.assertEqual(result["route"]["route"], "fast_path_block")
+        self.assertEqual(result["fast_path"]["rule_id"], "FP_SSRF_001")
+
+    def test_fast_path_blocks_ssrf_localhost_before_agent_route(self):
+        core = CoreService()
+        result = core.check(
+            {
+                "method": "POST",
+                "path": "/fetch",
+                "body": {"url": "http://127.0.0.1:8787/health"},
+            }
+        )
+        self.assertEqual(result["route"]["route"], "fast_path_block")
+        self.assertEqual(result["fast_path"]["rule_id"], "FP_SSRF_001")
+
+    def test_fast_path_blocks_single_extension_upload(self):
+        core = CoreService()
+        result = core.check(
+            {
+                "method": "POST",
+                "path": "/upload",
+                "event_type": "upload",
+                "body": {"filename": "shell.php", "content_type": "application/octet-stream"},
+            }
+        )
+        self.assertEqual(result["route"]["route"], "fast_path_block")
+        self.assertEqual(result["fast_path"]["rule_id"], "FP_UPLOAD_001")
+
+    def test_fast_path_blocks_webshell_signature_before_upload_rule(self):
+        core = CoreService()
+        result = core.check(
+            {
+                "method": "POST",
+                "path": "/upload",
+                "event_type": "upload",
+                "body": {"filename": "a.aspx", "body": 'eval(Request.Item["pass"])'},
+            }
+        )
+        self.assertEqual(result["route"]["route"], "fast_path_block")
+        self.assertEqual(result["fast_path"]["rule_id"], "FP_WEBSHELL_001")
+
+    def test_fast_path_does_not_rate_limit_normal_get_batch(self):
+        core = CoreService(config=AdminConfig(trusted_proxy_cidrs=["203.0.113.0/24"]))
+        routes = []
+        for _ in range(90):
+            result = core.check(
+                {
+                    "method": "GET",
+                    "path": "/api/orders",
+                    "headers": {"X-Forwarded-For": "198.51.100.77"},
+                },
+                remote_addr="203.0.113.10",
+            )
+            routes.append(result["route"]["route"])
+        self.assertNotIn("fast_path_block", routes)
+
+    def test_fast_path_still_rate_limits_login_burst(self):
+        core = CoreService(config=AdminConfig(trusted_proxy_cidrs=["203.0.113.0/24"]))
+        routes = []
+        for _ in range(70):
+            result = core.check(
+                {
+                    "method": "POST",
+                    "path": "/login",
+                    "event_type": "login",
+                    "body": {"username": "demo", "password": "wrong"},
+                },
+                remote_addr="198.51.100.99",
+            )
+            routes.append(result["route"]["route"])
+        self.assertIn("fast_path_block", routes)
+
     def test_prompt_packet_redacts_sensitive_fields(self):
         ctx = RequestContext(
             method="POST",
@@ -123,6 +204,44 @@ class AteeCoreTests(unittest.TestCase):
             self.assertIn("llm_gateway_config", check_ids)
             self.assertEqual(report["summary"]["total"], len(report["checks"]))
             self.assertNotIn("api_key_value", json.dumps(report, ensure_ascii=False).lower())
+
+    def test_security_flow_rehearsal_returns_sanitized_steps(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(llm_mode="mock", llm_provider="mock", llm_model="atee-local-mock-v1"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            report = core.security_flow_rehearsal(actor={"id": "ops", "id_hash": "sha256:abc", "source_hash": "sha256:def"})
+            step_ids = {item["id"] for item in report["flow_steps"]}
+            public_text = json.dumps(report, ensure_ascii=False)
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(report["summary"]["total"], len(report["flow_steps"]))
+            self.assertIn("preflight", step_ids)
+            self.assertIn("safe_request", step_ids)
+            self.assertIn("fast_path", step_ids)
+            self.assertIn("async_queue", step_ids)
+            self.assertIn("appeal", step_ids)
+            self.assertIn("llm_gateway", step_ids)
+            self.assertIn("ledger", step_ids)
+            self.assertNotIn("records", report)
+            self.assertEqual(core.admin_appeals(status="pending")["count"], 0)
+            self.assertNotIn("ledger_record", public_text)
+            self.assertNotIn("api_key", public_text.lower())
+            self.assertNotIn("Authorization", public_text)
+
+    def test_read_only_blocks_security_flow_rehearsal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="read_only"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            report = core.security_flow_rehearsal()
+
+            self.assertFalse(report["ok"])
+            self.assertEqual(report["status"], 423)
+            self.assertEqual(report["reason"], "read_only_mode_blocks_security_flow")
+            self.assertEqual(core.ledger_recent(limit=5)["status"]["persisted_records"], 0)
 
     def test_agent_chat_mock_does_not_store_prompt_or_secret(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -218,6 +337,26 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(approved["count"], 1)
             self.assertEqual(approved["appeals"][0]["punishment_id"], "review-p1")
 
+    def test_read_only_blocks_appeal_review(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config" / "config.json"
+            core = CoreService(config=AdminConfig(runtime_mode="read_only"), config_path=config_path)
+            core.appeal({"punishment_id": "read-only-review", "reason": "please review"})
+
+            reviewed = core.review_appeal(
+                {
+                    "punishment_id": "read-only-review",
+                    "resolution": "approved",
+                    "admin_note": "should be blocked",
+                }
+            )
+            pending = core.admin_appeals(status="pending")
+
+            self.assertFalse(reviewed["ok"])
+            self.assertEqual(reviewed["status"], 423)
+            self.assertEqual(reviewed["reason"], "read_only_mode_blocks_appeal_review")
+            self.assertEqual(pending["count"], 1)
+
     def test_actions_survive_core_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config" / "config.json"
@@ -272,6 +411,34 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(expired_record["executed"])
             self.assertEqual(cleanup["expired_marked"], 1)
             self.assertEqual(expired["count"], 1)
+
+    def test_read_only_blocks_admin_action_mutations(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config" / "config.json"
+            core = CoreService(config=AdminConfig(runtime_mode="read_only"), config_path=config_path)
+            active_record = core.executor.execute(
+                {"duration_seconds": 60, "target_scope": {"type": "request", "hash": "active"}},
+                {"executed": True, "effective_action": "challenge"},
+            )["record"]
+            core.executor.execute(
+                {"duration_seconds": -1, "target_scope": {"type": "request", "hash": "expired"}},
+                {"executed": True, "effective_action": "challenge"},
+            )
+
+            listed = core.admin_actions(status="active")
+            expired_before_cleanup = core.admin_actions(status="expired")
+            revoked = core.revoke_action({"action_id": active_record["id"], "reason": "read only check"})
+            cleanup = core.cleanup_expired_actions()
+
+            self.assertEqual(listed["count"], 2)
+            self.assertEqual(expired_before_cleanup["count"], 0)
+            self.assertFalse(revoked["ok"])
+            self.assertEqual(revoked["status"], 423)
+            self.assertEqual(revoked["reason"], "read_only_mode_blocks_action_revoke")
+            self.assertFalse(cleanup["ok"])
+            self.assertEqual(cleanup["status"], 423)
+            self.assertEqual(cleanup["reason"], "read_only_mode_blocks_action_cleanup")
+            self.assertEqual(core.admin_actions(status="active")["count"], 2)
 
     def test_config_store_creates_and_loads_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -449,6 +616,27 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(recent["records"][0]["event_type"], "agent_decision")
             self.assertEqual(recent["records"][0]["endpoint_type"], "login")
 
+    def test_ledger_recent_public_payload_hides_details(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config" / "config.json"
+            core = CoreService(config_path=config_path)
+            actor = core.admin_actor_from_headers(
+                {"X-ATEE-Admin-Id": "ops.alice@example.com", "X-Real-IP": "203.0.113.77"},
+                remote_addr="127.0.0.1",
+            )
+            core.update_config({"runtime_mode": "degraded"}, actor=actor)
+
+            full = core.ledger_recent(limit=5, include_details=True)
+            public = core.ledger_recent(limit=5, include_details=False)
+
+            self.assertIn("summary", full["records"][0])
+            self.assertIn("admin_actor_id=ops.alice@example.com", full["records"][0]["summary"])
+            self.assertNotIn("summary", public["records"][0])
+            self.assertNotIn("endpoint_type", public["records"][0])
+            self.assertNotIn("ip_hash", public["records"][0])
+            self.assertNotIn("rule_id", public["records"][0])
+            self.assertNotIn("sqlite_path", public["status"])
+
     def test_update_config_rebuilds_real_ip_resolver(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(config_path=Path(temp_dir) / "config.json")
@@ -507,6 +695,32 @@ class AteeCoreTests(unittest.TestCase):
                 self.assertIn(env_name, persisted)
                 self.assertNotIn("test-runtime-key", persisted)
                 self.assertNotIn("llm_api_key_value", persisted)
+            finally:
+                os.environ.pop(env_name, None)
+
+    def test_read_only_blocks_config_update_and_runtime_api_key_write(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_name = "ATEE_TEST_READ_ONLY_API_KEY"
+            os.environ.pop(env_name, None)
+            try:
+                config_path = Path(temp_dir) / "config.json"
+                core = CoreService(config=AdminConfig(runtime_mode="read_only"), config_path=config_path)
+                result = core.update_config(
+                    {
+                        "runtime_mode": "auto",
+                        "llm_api_base": "https://provider.example/v1",
+                        "llm_api_key_env": env_name,
+                        "llm_api_key_value": "blocked-runtime-key",
+                    }
+                )
+
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["status"], 423)
+                self.assertEqual(result["reason"], "read_only_mode_blocks_config_update")
+                self.assertEqual(core.runtime_status()["runtime_mode"], "read_only")
+                self.assertIsNone(os.environ.get(env_name))
+                self.assertFalse(config_path.exists())
+                self.assertNotIn("blocked-runtime-key", json.dumps(result, ensure_ascii=False))
             finally:
                 os.environ.pop(env_name, None)
 
@@ -598,6 +812,34 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(dead["count"], 1)
             self.assertEqual(dead["jobs"][0]["attempts"], 3)
             self.assertEqual(dead["jobs"][0]["last_error"], "missing_api_key")
+
+    def test_read_only_blocks_async_review_processing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(
+                    runtime_mode="read_only",
+                    llm_mode="mock",
+                    llm_provider="mock",
+                    llm_model="atee-local-mock-v1",
+                ),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            queued = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "normal comment"},
+                }
+            )
+            processed = core.run_async_reviews({"limit": 1})
+            pending = core.admin_async_reviews(status="pending")
+
+            self.assertEqual(queued["route"]["route"], "async_agent")
+            self.assertFalse(processed["ok"])
+            self.assertEqual(processed["status"], 423)
+            self.assertEqual(processed["reason"], "read_only_mode_blocks_async_review_processing")
+            self.assertEqual(pending["count"], 1)
 
     def test_openai_compatible_gateway_requires_key_without_leaking_secret(self):
         with tempfile.TemporaryDirectory() as temp_dir:

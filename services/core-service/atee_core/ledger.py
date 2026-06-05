@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,11 +11,12 @@ class SQLiteLedgerStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._ensure_schema()
 
     def insert(self, record: dict[str, Any]) -> int:
         payload = json.dumps(record, ensure_ascii=False, sort_keys=True)
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO ledger_records
@@ -37,12 +39,12 @@ class SQLiteLedgerStore:
             return int(cursor.lastrowid)
 
     def count(self) -> int:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             row = conn.execute("SELECT COUNT(*) FROM ledger_records").fetchone()
             return int(row[0] if row else 0)
 
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -58,7 +60,7 @@ class SQLiteLedgerStore:
     def trim_to_max_bytes(self, max_bytes: int) -> None:
         if not self.path.exists() or self.path.stat().st_size <= max_bytes:
             return
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             while self.path.exists() and self.path.stat().st_size > max_bytes:
                 conn.execute(
                     """
@@ -76,7 +78,7 @@ class SQLiteLedgerStore:
                     break
 
     def _ensure_schema(self) -> None:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ledger_records (
@@ -97,6 +99,12 @@ class SQLiteLedgerStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_severity ON ledger_records(severity)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_event_type ON ledger_records(event_type)")
             conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        return conn
 
 
 class SecurityLedgerLite:

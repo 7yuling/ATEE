@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,10 +11,11 @@ class SQLiteActionStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._ensure_schema()
 
     def insert(self, record: dict[str, Any]) -> int:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO action_records
@@ -34,7 +36,7 @@ class SQLiteActionStore:
             return int(cursor.lastrowid)
 
     def load_all(self) -> list[dict[str, Any]]:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -54,7 +56,7 @@ class SQLiteActionStore:
 
     def update_status(self, action_id: int, status: str, reason: str = "") -> dict[str, Any] | None:
         now = datetime.now(timezone.utc).isoformat()
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
@@ -84,7 +86,7 @@ class SQLiteActionStore:
         return record
 
     def mark_expired(self, now_iso: str) -> int:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with self._lock, closing(self._connect()) as conn:
             cursor = conn.execute(
                 """
                 UPDATE action_records
@@ -97,7 +99,7 @@ class SQLiteActionStore:
             return int(cursor.rowcount)
 
     def _ensure_schema(self) -> None:
-        with closing(sqlite3.connect(self.path)) as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS action_records (
@@ -122,6 +124,12 @@ class SQLiteActionStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_action_records_expires_at ON action_records(expires_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_action_records_status ON action_records(status)")
             conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        return conn
 
 
 class ActionExecutor:
@@ -151,8 +159,9 @@ class ActionExecutor:
         self.actions.append(record)
         return {"executed": True, "record": record}
 
-    def list_actions(self, status: str = "active") -> list[dict[str, Any]]:
-        self.cleanup_expired()
+    def list_actions(self, status: str = "active", *, cleanup_expired: bool = True) -> list[dict[str, Any]]:
+        if cleanup_expired:
+            self.cleanup_expired()
         status = status if status in {"active", "revoked", "expired", "all"} else "active"
         if self.store:
             self.actions = self.store.load_all()
