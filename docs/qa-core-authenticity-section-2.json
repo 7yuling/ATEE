@@ -1,0 +1,97 @@
+{
+  "ok": true,
+  "verdict": "通过",
+  "section": "2",
+  "title": "第二部分：真实用户行为测试",
+  "generated_at": "2026-06-02T15:28:21+00:00",
+  "elapsed_seconds": 0.49,
+  "environment": "windows-local mock-core",
+  "cases": [
+    {
+      "id": "U-001",
+      "test_item": "新用户首次环境预检",
+      "steps": "网站管理员首次进入控制台后触发环境预检。",
+      "expected": "返回可执行检查结果，且基础运行环境可用。",
+      "actual": "ok=True; passed=7/7",
+      "passed": true,
+      "risk": "低",
+      "perspective": "管理员",
+      "impact": "本地环境可启动 ATEE 基础能力。"
+    },
+    {
+      "id": "U-002",
+      "test_item": "新手指引可操作性",
+      "steps": "普通管理员查看新手指引，检查是否覆盖预检、接入、模型、恢复和安全流程。",
+      "expected": "指引不是纯文案，至少覆盖核心操作模块。",
+      "actual": "steps=8; ids=adapter,ai_api,appeal,break_glass,environment,security_flow,site_type,trusted_proxy",
+      "passed": true,
+      "risk": "低",
+      "perspective": "管理员",
+      "impact": "新用户应能按指引完成首轮接入。"
+    },
+    {
+      "id": "U-003",
+      "test_item": "普通低频用户评论",
+      "steps": "普通用户提交一条中文评论。",
+      "expected": "不应被拦截或自动处罚，可进入异步审查。",
+      "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户",
+      "impact": "正常内容不能被误封。"
+    },
+    {
+      "id": "U-004",
+      "test_item": "搜索引擎爬虫静态访问",
+      "steps": "模拟搜索引擎反复访问 robots.txt 和 favicon.ico。",
+      "expected": "应全部低风险跳过，不产生攻击误报。",
+      "actual": "requests=120; workers=12; elapsed=0.017s; rps=7148.3; errors=0; routes={\"skip\": 120}; rules={\"FP_SKIP_001\": 120}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户/爬虫",
+      "impact": "搜索爬虫不应污染 SOC 告警。"
+    },
+    {
+      "id": "U-005",
+      "test_item": "Cloudflare 节点正常业务",
+      "steps": "从可信 Cloudflare 代理地址提交正常评论。",
+      "expected": "不应误封代理节点，不应执行 IP 封禁。",
+      "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "网站管理员/SOC",
+      "impact": "CDN 节点误封会导致大面积业务中断。"
+    },
+    {
+      "id": "U-006",
+      "test_item": "Nginx 反向代理 API 批量请求",
+      "steps": "同一真实客户端经可信 Nginx 代理发起 90 次正常 API 批量读取。",
+      "expected": "不应被识别为攻击，不应进入快速拦截。",
+      "actual": "requests=90; workers=8; elapsed=0.013s; rps=6851.82; errors=0; routes={\"skip\": 90}; rules={}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户/SOC",
+      "impact": "正常批量 API 被限流会造成误报和业务阻断。"
+    },
+    {
+      "id": "U-007",
+      "test_item": "用户刷新与重复提交",
+      "steps": "模拟用户支付页面刷新、返回、重复提交 12 次。",
+      "expected": "系统不崩溃，不应产生高影响误封。",
+      "actual": "requests=12; workers=4; elapsed=0.189s; rps=63.57; errors=0; routes={\"sync_agent\": 12}; rules={}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户",
+      "impact": "异常使用路径不能破坏业务稳定性。"
+    }
+  ],
+  "metrics": {
+    "false_positive_like_cases": 0,
+    "total_cases": 7,
+    "passed_cases": 7,
+    "failed_cases": 0,
+    "memory_current_mb": 0.197,
+    "memory_peak_mb": 0.663
+  },
+  "issues": []
+}

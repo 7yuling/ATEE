@@ -1048,3 +1048,110 @@ P0 生产部署：未通过
 - 问题一句话：报告提交 `db451bc` 触发的 Windows quick gate 在 Python tests 阶段失败，失败时长接近嵌套 release gate 测试的 90 秒超时边界，本地全量测试通过，判断为 Windows runner 慢导致的误杀。
 - 最小解决方案：不改产品逻辑，只将 `tests/test_local_release_gate.py` 中 release gate 子进程测试超时从 90 秒提高到 240 秒，给 Windows CI 留出稳定余量。
 - 验证：`python -m py_compile tests\test_local_release_gate.py` 通过；`python -m unittest tests.test_local_release_gate` 通过；`python -m unittest discover -s tests` 通过，100 个测试 OK。
+
+### 2026-06-02 Step 89：管理控制台功能闭环审计
+
+- 问题一句话：进入下一轮功能增强前，需要先确认控制台按钮、表单、菜单和后端 API 的真实对接状态，避免继续在不清楚闭合边界的情况下扩展。
+- 最小解决方案：不改产品源码，逐项审计 React 管理台源文件、Core HTTP 路由和现有 E2E 测试，形成独立闭环清单。
+- 审计结论：控制台主要按钮和表单已接入真实 Core API；Agent 对话、环境预检、模型网关测试、申诉、动作、异步 AI 审查、账本摘要、配置保存和紧急旁路检测均有后端闭环；当前最大缺口是新手引导部分步骤仍只是导航/说明，尚未做到字段级聚焦、推荐值预填或一键安全演练。
+- 文档：新增 `docs/admin-console-function-audit.md`，按模块列出控件、前端动作、后端接口、闭合状态、自动化覆盖和下一步 P0/P1 缺口。
+- 验证：`python -m unittest tests.test_admin_console tests.test_http_e2e` 通过，8 个测试 OK；`git diff --check` 通过，仅保留 Windows LF/CRLF 提示。
+
+### 2026-06-02 Step 90：板块 1 全局状态、认证与运行控制检查
+
+- 问题一句话：需要先确认控制台最外层的连接状态、Admin Token 会话、模式切换和暂停恢复是否真实落到后端，避免后续板块建立在错误运行态上。
+- 最小解决方案：核对 `main.jsx`、`adminSupport.jsx`、`http_server.py`、`core.py` 和既有测试，确认 `GET /v1/runtime/status`、`POST /v1/admin/mode`、`POST /v1/admin/pause-agent` 与 Admin Token 鉴权闭合。
+- 检查结论：刷新、模式切换、暂停/恢复均真实接入后端；Admin Token 与操作者 ID 只保存在本地会话，并仅随 `/v1/admin/*` 请求发送；后端所有管理接口先做鉴权，公开运行状态保持可读。
+- 修复情况：未发现需要修改的产品代码问题；仅将板块检查记录写入 `docs/admin-console-function-audit.md`。
+- 验证：`python -m unittest tests.test_admin_console tests.test_http_e2e` 通过，8 个测试 OK；`python -m unittest tests.test_core` 通过，37 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过。
+
+### 2026-06-02 Step 91：板块 2 操作台安全演练检查
+
+- 问题一句话：操作台四个演练按钮需要逐一确认是否真实调用后端并产生可见结果，不能只依赖源码里存在按钮。
+- 最小解决方案：核对 `DashboardTab`、`testSafe()`、`testAttack()`、`testAppeal()`、`testLlmGateway()`、HTTP 路由和浏览器 E2E，发现缺少操作台 LLM 按钮点击覆盖后只补一条断言。
+- 检查结论：安全请求、快速拦截、申诉和模型网关测试均真实接入后端；操作结果通过统一 `run()` 写入摘要和脱敏 JSON。
+- 修复情况：产品业务逻辑未改；`scripts/browser-e2e.mjs` 新增 `#testLlmBtn` 点击和返回 `ok=true` 断言，浏览器检查数从 20 更新为 21，并同步更新测试摘要。
+- 验证：`python -m unittest tests.test_admin_console tests.test_http_e2e` 通过，8 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run e2e:browser` 通过，21 项检查 OK。
+
+### 2026-06-02 Step 92：板块 3 Agent 对话和新手引导检查
+
+- 问题一句话：Agent 对话和环境预检已经有真实后端链路，但新手引导动作仍偏跳转，缺少字段级聚焦和可直接发送给 Agent 的上下文问题。
+- 最小解决方案：不改 Core 决策逻辑，只给引导动作按钮补稳定 ID，让 `runGuideAction(stepId)` 聚焦对应控件，并对网站类型/接入方式预填不含密钥的 Agent 问题。
+- 检查结论：`POST /v1/admin/agent/chat`、`GET /v1/onboarding/steps`、`GET /v1/admin/preflight` 均真实闭合；引导步骤现在能从说明进入对应功能控件。
+- 修复情况：`adminAgentGuide.jsx` 新增动态 `guideAction-*` ID；`main.jsx` 新增引导动作聚焦和 Agent 问题预填；`scripts/browser-e2e.mjs` 新增新手引导动作真实点击断言，浏览器检查数更新为 22。
+- 验证：`python -m unittest tests.test_admin_console tests.test_core` 通过，41 个测试 OK；`python -m unittest tests.test_http_e2e` 通过，4 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，22 项检查 OK。
+
+### 2026-06-02 Step 93：板块 4 申诉处理检查
+
+- 问题一句话：申诉通过和驳回都有真实后端能力，但浏览器回归只点击了“通过”，没有覆盖“驳回”按钮的真实 UI 闭环。
+- 最小解决方案：不改业务逻辑，只补 `rejectAppealBtn` 与审核备注的静态 ID 断言，并在浏览器 E2E 中创建第二条申诉后点击“驳回”。
+- 检查结论：申诉提交、列表筛选、行回填、通过、驳回、只读禁用、管理员审计和 SQLite 状态恢复均闭合。
+- 修复情况：`scripts/browser-e2e.mjs` 新增第二条申诉驳回流程，浏览器检查数更新为 23；`tests/test_admin_console.py` 新增 `appealNoteInput` 与 `rejectAppealBtn` 断言。
+- 验证：`python -m unittest tests.test_admin_console tests.test_http_e2e tests.test_core` 通过，45 个测试 OK；`python -m unittest tests.test_recovery_load` 通过，1 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run e2e:browser` 通过，23 项检查 OK。
+
+### 2026-06-02 Step 94：板块 5 异步 AI 审查检查
+
+- 问题一句话：异步 AI 审查处理会写队列状态、可能调用模型并写审计，但原先没有受只读模式保护。
+- 最小解决方案：在后端 `process_async_reviews()` 统一拒绝 read_only 处理，在前端给 `AsyncReviewsTab` 传入 `writeLocked` 并禁用 `runAsyncReviewsBtn`，再补单测和浏览器断言。
+- 检查结论：队列刷新、状态筛选、手动处理、后台 worker、重试/死信和脱敏列表均闭合；只读模式现在不会消费 pending 队列。
+- 修复情况：`core.py` 新增 read_only 423 返回；`adminReviewQueues.jsx` 和 `main.jsx` 新增只读禁用传递；`tests/test_core.py` 新增只读阻断单测；`scripts/browser-e2e.mjs` 新增只读按钮禁用断言，浏览器检查数更新为 24。
+- 验证：`python -m unittest tests.test_core tests.test_async_review_worker tests.test_http_e2e tests.test_admin_console` 通过，47 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，24 项检查 OK。
+
+### 2026-06-02 Step 95：板块 6 动作管理检查
+
+- 问题一句话：动作管理前端已禁用只读写按钮，但后端直连撤销/清理 API 仍可写入，且动作列表读取会隐式标记过期动作。
+- 最小解决方案：在 `revoke_action()` 和 `cleanup_expired_actions()` 统一拒绝 read_only 写操作，并让 `admin_actions()` 在只读模式走无副作用列表查询。
+- 检查结论：动作列表、状态筛选、行回填、撤销、过期清理和动作审计链路已闭合；只读模式现在同时保护前端按钮和后端 API。
+- 修复情况：`ActionExecutor.list_actions()` 新增可关闭过期清理的读取参数；`core.py` 新增两个 read_only 423 返回；`tests/test_core.py` 新增只读动作管理单测；`tests/test_admin_console.py` 补 `cleanupActionsBtn` 静态断言；`scripts/browser-e2e.mjs` 新增动作清理/撤销按钮只读禁用断言，浏览器检查数更新为 26。
+- 验证：`python -m unittest tests.test_core tests.test_http_e2e tests.test_admin_console tests.test_recovery_load` 通过，48 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run e2e:browser` 通过，26 项检查 OK。
+
+### 2026-06-02 Step 96：板块 7 安全账本检查
+
+- 问题一句话：安全账本页面只展示摘要列，但 HTTP 管理接口仍返回 `summary`、哈希详情和 `sqlite_path`，浏览器侧仍可展开过细审计内容。
+- 最小解决方案：保留 Core 内部完整审计读取，给 `ledger_recent()` 增加公开摘要模式，并让 HTTP 管理接口默认只返回表格需要的摘要字段。
+- 检查结论：账本读取按钮真实接入后端；控制台操作结果不再返回 records；HTTP records 不再包含 `summary`、`ip_hash`、`rule_id`、`endpoint_type`，公开 status 不再包含 `sqlite_path`。
+- 修复情况：`core.py` 新增 `_public_ledger_record()` 和 `_public_ledger_status()`；`http_server.py` 调用 `ledger_recent(..., include_details=False)`；`main.jsx` 移除账本操作结果中的 status；新增 Core/HTTP/浏览器断言，浏览器检查数更新为 27。
+- 验证：`python -m unittest tests.test_core tests.test_http_e2e tests.test_admin_console` 通过，48 个测试 OK；`python -m unittest tests.test_recovery_load` 通过；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，27 项检查 OK。
+
+### 2026-06-02 Step 97：板块 8 网关配置检查
+
+- 问题一句话：网关配置前端已在只读模式禁用保存按钮，但后端直连配置接口仍可修改运行配置并写入运行时 API Key 环境变量。
+- 最小解决方案：在 `update_config()` 入口统一拒绝 read_only 保存；保留独立模式切换接口用于退出只读模式。
+- 检查结论：配置读取、保存、模型测试和紧急旁路检测均接入真实后端；API Base、API Key、代理 URL、密钥文件和 Admin Token 文件在公开配置与测试结果中均以配置状态展示，不回显敏感值。
+- 修复情况：`core.py` 新增 `read_only_mode_blocks_config_update` 423 返回；`tests/test_core.py` 新增只读配置保存与运行时 API Key 阻断单测；`scripts/browser-e2e.mjs` 新增 `configSaveBtn` 只读禁用断言，浏览器检查数更新为 28。
+- 验证：`python -m unittest tests.test_core tests.test_http_e2e tests.test_admin_console` 通过，49 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run e2e:browser` 通过，28 项检查 OK。
+
+### 2026-06-02 Step 98：控制台与后端系统检查
+
+- 问题一句话：分板块修复后仍需从系统层确认管理写入口、只读边界、公开响应脱敏和生产冒烟脚本是否互相一致。
+- 最小解决方案：逐项复查 `/v1/admin/*` GET/POST 路由、Core 写入口和浏览器 E2E，只对发现的系统冲突做最小修复。
+- 发现问题 1：申诉审核前端只读禁用了按钮，但 `review_appeal()` 后端仍可被直连调用并修改申诉状态。
+- 修复情况 1：`review_appeal()` 新增 `read_only_mode_blocks_appeal_review` 423 返回；`tests/test_core.py` 新增只读申诉审核阻断单测；`scripts/browser-e2e.mjs` 新增 `approveAppealBtn` 和 `rejectAppealBtn` 只读禁用断言。
+- 发现问题 2：`production-smoke-check.py --verify-audit-actor` 仍依赖 HTTP 账本 `summary` 校验 actor，与安全账本公开摘要模式冲突。
+- 修复情况 2：生产冒烟脚本改为兼容公开账本：详细记录存在时验证 actor；公开详情隐藏时验证 `break_glass/bypass_status_check` 审计事件存在且 actor/token 未泄漏。
+- 系统结论：申诉审核、异步 AI 审查处理、动作撤销、动作清理、配置保存均具备前端禁用和后端 423 保护；模式切换保留可用以退出只读；公开配置、模型测试、账本和冒烟报告不回显敏感值。
+- 验证：`python -m unittest tests.test_core tests.test_http_e2e tests.test_admin_console tests.test_recovery_load` 通过，51 个测试 OK；`npm.cmd run e2e:browser` 通过，30 项检查 OK；`npm.cmd run build:admin` 通过；`python -m unittest discover -s tests` 通过，105 个测试 OK。
+
+### 2026-06-02 Step 99：控制台核心能力补齐
+
+- 问题一句话：新手引导里的安全情况处理总流程仍偏静态说明，缺少一个能从控制台触发并验证真实后端链路的一键演练入口。
+- 最小解决方案：新增受控的 `security_flow_rehearsal()` 后端编排和 `POST /v1/admin/security-flow/run` 管理接口，前端只增加一个按钮和步骤摘要列表，并用只读模式阻断写入。
+- 修复情况：演练会依次覆盖环境预检、安全请求、快速拦截、异步 AI 审查、申诉入口、模型网关和安全账本摘要；演练申诉提交后自动关闭，不污染真实待处理队列；返回结果只包含脱敏步骤摘要，不返回原始请求体、账本详情、API Key、代理或密钥路径。
+- 控制台：`GuideTab` 新增 `securityFlowBtn` 和 `securityFlowResultList`；`OperationSummary` 能将返回结果识别为“安全流程演练”；只读模式下按钮禁用，后端直连返回 423。
+- 报告：`docs/admin-console-function-audit.md` 已将该 P0 从未闭合项改为已闭合项；`docs/test-summary.md` 已把浏览器 E2E 覆盖更新为 32 项。
+- 验证：`python -m unittest tests.test_core tests.test_http_e2e tests.test_admin_console` 通过，52 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，32 项检查 OK；`python -m unittest discover -s tests` 通过，107 个测试 OK；`git diff --check` 通过，仅有 Windows LF/CRLF 提示。
+
+### 2026-06-02 Step 100：核心能力真实性验证与分区块修复
+
+- 问题一句话：第 2/5/6/7 项真实性验证证明 ATEE 不能只看按钮、接口或 Agent 输出，修复前存在云元数据 SSRF、危险上传、WebShell 漏拦，以及正常 Nginx/API 批量访问和日志洪泛误判。
+- 最小解决方案：将问题分为 SSRF/云元数据、危险上传/WebShell、正常生产流量误判、洪泛稳定性、回归测试、远程 AI 真实调用 6 个区块，并只在对应规则、账本并发写入和测试脚本边界做最小修改。
+- 修复情况：`fast_path.py` 新增 `FP_SSRF_001`、`FP_WEBSHELL_001`、危险上传扩展名检测和更窄的高风险写路径限流；`ledger.py`、`actions.py` 为 SQLite 写入增加进程内锁、`busy_timeout` 和 WAL；`tests/test_core.py` 固定 SSRF、上传、WebShell、正常 API 批量、登录爆破回归用例。
+- 验证：第 2/5/6/7 项真实性验证从 18/28 通过提升为 28/28 通过；攻击检测率、洪泛稳定性、决策准确率均为 100%；漏报率和误报率均为 0；`python -m unittest discover -s tests` 通过，113 个测试 OK；`python scripts\local-release-gate.py --quick --report docs\local-release-gate-after-core-fix.md` 通过，敏感扫描 205 个文件且 findings=0。
+- 远程 AI：已显式执行 `python scripts\agent-ai-full-flow-smoke.py --include-live --budget-cents 100 --report docs\agent-ai-live-full-flow-smoke.md`，`live_used=true`，同步 Agent 审查通过，预算记录 `daily_spend_cents=1`；报告不输出 API Key、API Base、代理 URL、Authorization、原始 Prompt 或原始请求体。
+- 文档：新增 `docs/qa-core-authenticity-verification-report.md`、`docs/qa-core-authenticity-fix-report.md`、`docs/agent-ai-live-full-flow-smoke.md` 和分项真实性报告。
+
+### 2026-06-02 Step 101：日终收尾
+
+- 收尾结论：今天的控制台核心能力补齐、核心真实性验证、分区块修复、远程 AI live smoke、敏感扫描和发布闸门均已形成报告，当前可进入“提交前复核 / Ubuntu 与云服务器复测 / 长时压测”阶段。
+- 仍需注意：本轮最终通过结果基于 Windows 本地、mock-core 真实性矩阵和一次 live provider 小流量 smoke；Ubuntu、Docker、云服务器、100MB 至 5GB 日志和长时间稳定性仍需在隔离环境继续跑。
+- 交付索引：日终总结见 `docs/daily-closeout-2026-06-02.md`。

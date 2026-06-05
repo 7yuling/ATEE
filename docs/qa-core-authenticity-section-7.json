@@ -1,0 +1,122 @@
+{
+  "ok": true,
+  "verdict": "通过",
+  "section": "7",
+  "title": "第七部分：Agent 决策质量测试",
+  "generated_at": "2026-06-02T15:36:05+00:00",
+  "elapsed_seconds": 0.337,
+  "environment": "windows-local mock-core",
+  "cases": [
+    {
+      "id": "D-001",
+      "test_item": "专家判定 SQL 注入",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_SQLI_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-002",
+      "test_item": "专家判定 XSS",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_XSS_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-003",
+      "test_item": "专家判定云元数据 SSRF",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_SSRF_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-004",
+      "test_item": "专家判定危险上传",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_UPLOAD_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-005",
+      "test_item": "专家判定 WebShell",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_WEBSHELL_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-006",
+      "test_item": "专家判定搜索爬虫正常",
+      "steps": "人工安全专家标签：benign；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=skip; rule=FP_SKIP_001; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-007",
+      "test_item": "专家判定 CDN 正常评论",
+      "steps": "人工安全专家标签：benign；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-008",
+      "test_item": "专家判定 Prompt Injection",
+      "steps": "人工安全专家标签：ai_abuse；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=sync_agent; rule=-; action=rule_hint; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-009",
+      "test_item": "专家判定正常 API 批量请求",
+      "steps": "人工标签：benign；同一用户经 Nginx 代理读取订单列表 90 次。",
+      "expected": "ATEE 不应将正常批量读取判为攻击。",
+      "actual": "requests=90; workers=8; elapsed=0.014s; rps=6575.49; errors=0; routes={\"skip\": 90}; rules={}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "误判批量 API 会导致业务不可用。"
+    }
+  ],
+  "metrics": {
+    "decision_accuracy": 100.0,
+    "false_negative_rate": 0.0,
+    "false_positive_rate": 0.0,
+    "prompt_injection_defense_rate": 100.0,
+    "total_cases": 9,
+    "passed_cases": 9,
+    "failed_cases": 0,
+    "memory_current_mb": 0.046,
+    "memory_peak_mb": 0.407
+  },
+  "issues": []
+}

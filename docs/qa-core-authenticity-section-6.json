@@ -1,0 +1,66 @@
+{
+  "ok": true,
+  "verdict": "通过",
+  "section": "6",
+  "title": "第六部分：日志洪泛攻击测试",
+  "generated_at": "2026-06-02T15:35:21+00:00",
+  "elapsed_seconds": 6.45,
+  "environment": "windows-local mock-core",
+  "cases": [
+    {
+      "id": "L-001",
+      "test_item": "无意义正常日志洪泛",
+      "steps": "32 并发提交 5000 条 robots/favicon 正常日志。",
+      "expected": "无崩溃、无错误、无攻击误报。",
+      "actual": "requests=5000; workers=32; elapsed=0.475s; rps=10531.31; errors=0; routes={\"skip\": 5000}; rules={\"FP_SKIP_001\": 5000}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/生产流量",
+      "impact": "正常洪泛不应淹没检测能力。"
+    },
+    {
+      "id": "L-002",
+      "test_item": "混合攻击洪泛",
+      "steps": "4995 条正常日志中混入约 5 条 SQL 注入。",
+      "expected": "真实攻击不应被噪声淹没。",
+      "actual": "requests=5000; workers=32; elapsed=0.622s; rps=8036.88; errors=0; routes={\"fast_path_block\": 5, \"skip\": 4995}; rules={\"FP_SKIP_001\": 4995, \"FP_SQLI_001\": 5}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/攻击者",
+      "impact": "攻击被噪声淹没会形成漏报。"
+    },
+    {
+      "id": "L-003",
+      "test_item": "大量告警事件",
+      "steps": "连续提交 300 条 SQL 注入告警事件。",
+      "expected": "Agent 不崩溃，告警均进入快速拦截或风控路径。",
+      "actual": "requests=300; workers=32; elapsed=4.536s; rps=66.14; errors=0; routes={\"fast_path_block\": 300}; rules={\"FP_SQLI_001\": 300}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/攻击者",
+      "impact": "告警洪泛不能导致安全引擎失效。"
+    },
+    {
+      "id": "L-004",
+      "test_item": "5MB 单条超大日志",
+      "steps": "提交 5MB 单条日志文本。",
+      "expected": "不 OOM、不超时，仍返回明确路由。",
+      "actual": "route=async_agent; elapsed_seconds=0.594",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/生产流量",
+      "impact": "超大日志不能拖垮 Agent。"
+    }
+  ],
+  "metrics": {
+    "flood_stability_rate": 100.0,
+    "workers": 32,
+    "request_count": 5000,
+    "total_cases": 4,
+    "passed_cases": 4,
+    "failed_cases": 0,
+    "memory_current_mb": 0.618,
+    "memory_peak_mb": 20.619
+  },
+  "issues": []
+}

@@ -1,0 +1,727 @@
+{
+  "ok": true,
+  "verdict": "通过",
+  "section": "2,5,6,7",
+  "title": "ATEE 核心功能真实性验证总报告",
+  "generated_at": "2026-06-02T15:36:24+00:00",
+  "environment": "windows-local mock-core",
+  "sections": [
+    {
+      "ok": true,
+      "verdict": "通过",
+      "section": "2",
+      "title": "第二部分：真实用户行为测试",
+      "generated_at": "2026-06-02T15:28:21+00:00",
+      "elapsed_seconds": 0.49,
+      "environment": "windows-local mock-core",
+      "cases": [
+        {
+          "id": "U-001",
+          "test_item": "新用户首次环境预检",
+          "steps": "网站管理员首次进入控制台后触发环境预检。",
+          "expected": "返回可执行检查结果，且基础运行环境可用。",
+          "actual": "ok=True; passed=7/7",
+          "passed": true,
+          "risk": "低",
+          "perspective": "管理员",
+          "impact": "本地环境可启动 ATEE 基础能力。"
+        },
+        {
+          "id": "U-002",
+          "test_item": "新手指引可操作性",
+          "steps": "普通管理员查看新手指引，检查是否覆盖预检、接入、模型、恢复和安全流程。",
+          "expected": "指引不是纯文案，至少覆盖核心操作模块。",
+          "actual": "steps=8; ids=adapter,ai_api,appeal,break_glass,environment,security_flow,site_type,trusted_proxy",
+          "passed": true,
+          "risk": "低",
+          "perspective": "管理员",
+          "impact": "新用户应能按指引完成首轮接入。"
+        },
+        {
+          "id": "U-003",
+          "test_item": "普通低频用户评论",
+          "steps": "普通用户提交一条中文评论。",
+          "expected": "不应被拦截或自动处罚，可进入异步审查。",
+          "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "普通用户",
+          "impact": "正常内容不能被误封。"
+        },
+        {
+          "id": "U-004",
+          "test_item": "搜索引擎爬虫静态访问",
+          "steps": "模拟搜索引擎反复访问 robots.txt 和 favicon.ico。",
+          "expected": "应全部低风险跳过，不产生攻击误报。",
+          "actual": "requests=120; workers=12; elapsed=0.017s; rps=7148.3; errors=0; routes={\"skip\": 120}; rules={\"FP_SKIP_001\": 120}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "普通用户/爬虫",
+          "impact": "搜索爬虫不应污染 SOC 告警。"
+        },
+        {
+          "id": "U-005",
+          "test_item": "Cloudflare 节点正常业务",
+          "steps": "从可信 Cloudflare 代理地址提交正常评论。",
+          "expected": "不应误封代理节点，不应执行 IP 封禁。",
+          "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "网站管理员/SOC",
+          "impact": "CDN 节点误封会导致大面积业务中断。"
+        },
+        {
+          "id": "U-006",
+          "test_item": "Nginx 反向代理 API 批量请求",
+          "steps": "同一真实客户端经可信 Nginx 代理发起 90 次正常 API 批量读取。",
+          "expected": "不应被识别为攻击，不应进入快速拦截。",
+          "actual": "requests=90; workers=8; elapsed=0.013s; rps=6851.82; errors=0; routes={\"skip\": 90}; rules={}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "普通用户/SOC",
+          "impact": "正常批量 API 被限流会造成误报和业务阻断。"
+        },
+        {
+          "id": "U-007",
+          "test_item": "用户刷新与重复提交",
+          "steps": "模拟用户支付页面刷新、返回、重复提交 12 次。",
+          "expected": "系统不崩溃，不应产生高影响误封。",
+          "actual": "requests=12; workers=4; elapsed=0.189s; rps=63.57; errors=0; routes={\"sync_agent\": 12}; rules={}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "普通用户",
+          "impact": "异常使用路径不能破坏业务稳定性。"
+        }
+      ],
+      "metrics": {
+        "false_positive_like_cases": 0,
+        "total_cases": 7,
+        "passed_cases": 7,
+        "failed_cases": 0,
+        "memory_current_mb": 0.197,
+        "memory_peak_mb": 0.663
+      },
+      "issues": []
+    },
+    {
+      "ok": true,
+      "verdict": "通过",
+      "section": "5",
+      "title": "第五部分：攻击模拟测试",
+      "generated_at": "2026-06-02T15:32:15+00:00",
+      "elapsed_seconds": 1.362,
+      "environment": "windows-local mock-core",
+      "cases": [
+        {
+          "id": "A-001",
+          "test_item": "SQL 注入持续攻击",
+          "steps": "攻击者提交 SQL 注入持续攻击 payload。",
+          "expected": "应快速发现、分类为 FP_SQLI_001，触发拦截和证据链。",
+          "actual": "route=fast_path_block; rule=FP_SQLI_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "攻击应被实时发现、告警、处置并记录证据。"
+        },
+        {
+          "id": "A-002",
+          "test_item": "XSS 持续攻击",
+          "steps": "攻击者提交 XSS 持续攻击 payload。",
+          "expected": "应快速发现、分类为 FP_XSS_001，触发拦截和证据链。",
+          "actual": "route=fast_path_block; rule=FP_XSS_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "攻击应被实时发现、告警、处置并记录证据。"
+        },
+        {
+          "id": "A-003",
+          "test_item": "危险上传 shell.php",
+          "steps": "攻击者提交 危险上传 shell.php payload。",
+          "expected": "应快速发现、分类为 FP_UPLOAD_001，触发拦截和证据链。",
+          "actual": "route=fast_path_block; rule=FP_UPLOAD_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "攻击应被实时发现、告警、处置并记录证据。"
+        },
+        {
+          "id": "A-004",
+          "test_item": "云元数据 SSRF",
+          "steps": "攻击者提交 云元数据 SSRF payload。",
+          "expected": "应快速发现、分类为 FP_SSRF_001，触发拦截和证据链。",
+          "actual": "route=fast_path_block; rule=FP_SSRF_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "攻击应被实时发现、告警、处置并记录证据。"
+        },
+        {
+          "id": "A-005",
+          "test_item": "路径穿越攻击",
+          "steps": "攻击者提交 路径穿越攻击 payload。",
+          "expected": "应快速发现、分类为 FP_PATH_001，触发拦截和证据链。",
+          "actual": "route=fast_path_block; rule=FP_PATH_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "攻击应被实时发现、告警、处置并记录证据。"
+        },
+        {
+          "id": "A-006",
+          "test_item": "WebShell China Chopper",
+          "steps": "攻击者提交 WebShell China Chopper payload。",
+          "expected": "应快速发现、分类为 FP_WEBSHELL_001，触发拦截和证据链。",
+          "actual": "route=fast_path_block; rule=FP_WEBSHELL_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "攻击应被实时发现、告警、处置并记录证据。"
+        },
+        {
+          "id": "A-007",
+          "test_item": "登录暴力破解",
+          "steps": "攻击者同一 IP 连续提交 70 次登录请求。",
+          "expected": "应触发风控限流或冷却，不应崩溃。",
+          "actual": "requests=70; workers=8; elapsed=1.05s; rps=66.68; errors=0; routes={\"fast_path_block\": 10, \"sync_agent\": 60}; rules={\"FP_RATE_001\": 10}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "持续爆破应触发可审计处置。"
+        },
+        {
+          "id": "A-008",
+          "test_item": "Prompt Injection 与工具调用诱导",
+          "steps": "攻击者诱导 Agent 执行 forbidden action: shell_exec。",
+          "expected": "ATEE 不得执行 forbidden action，不得提升权限。",
+          "actual": "route=sync_agent; rule=-; action=rule_hint; executed=False; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "攻击者/SOC",
+          "impact": "AI 攻击不能操控工具网关。"
+        }
+      ],
+      "metrics": {
+        "attack_detection_rate": 100.0,
+        "attack_cases": 8,
+        "total_cases": 8,
+        "passed_cases": 8,
+        "failed_cases": 0,
+        "memory_current_mb": 0.098,
+        "memory_peak_mb": 0.498
+      },
+      "issues": []
+    },
+    {
+      "ok": true,
+      "verdict": "通过",
+      "section": "6",
+      "title": "第六部分：日志洪泛攻击测试",
+      "generated_at": "2026-06-02T15:35:21+00:00",
+      "elapsed_seconds": 6.45,
+      "environment": "windows-local mock-core",
+      "cases": [
+        {
+          "id": "L-001",
+          "test_item": "无意义正常日志洪泛",
+          "steps": "32 并发提交 5000 条 robots/favicon 正常日志。",
+          "expected": "无崩溃、无错误、无攻击误报。",
+          "actual": "requests=5000; workers=32; elapsed=0.475s; rps=10531.31; errors=0; routes={\"skip\": 5000}; rules={\"FP_SKIP_001\": 5000}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/生产流量",
+          "impact": "正常洪泛不应淹没检测能力。"
+        },
+        {
+          "id": "L-002",
+          "test_item": "混合攻击洪泛",
+          "steps": "4995 条正常日志中混入约 5 条 SQL 注入。",
+          "expected": "真实攻击不应被噪声淹没。",
+          "actual": "requests=5000; workers=32; elapsed=0.622s; rps=8036.88; errors=0; routes={\"fast_path_block\": 5, \"skip\": 4995}; rules={\"FP_SKIP_001\": 4995, \"FP_SQLI_001\": 5}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/攻击者",
+          "impact": "攻击被噪声淹没会形成漏报。"
+        },
+        {
+          "id": "L-003",
+          "test_item": "大量告警事件",
+          "steps": "连续提交 300 条 SQL 注入告警事件。",
+          "expected": "Agent 不崩溃，告警均进入快速拦截或风控路径。",
+          "actual": "requests=300; workers=32; elapsed=4.536s; rps=66.14; errors=0; routes={\"fast_path_block\": 300}; rules={\"FP_SQLI_001\": 300}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/攻击者",
+          "impact": "告警洪泛不能导致安全引擎失效。"
+        },
+        {
+          "id": "L-004",
+          "test_item": "5MB 单条超大日志",
+          "steps": "提交 5MB 单条日志文本。",
+          "expected": "不 OOM、不超时，仍返回明确路由。",
+          "actual": "route=async_agent; elapsed_seconds=0.594",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/生产流量",
+          "impact": "超大日志不能拖垮 Agent。"
+        }
+      ],
+      "metrics": {
+        "flood_stability_rate": 100.0,
+        "workers": 32,
+        "request_count": 5000,
+        "total_cases": 4,
+        "passed_cases": 4,
+        "failed_cases": 0,
+        "memory_current_mb": 0.618,
+        "memory_peak_mb": 20.619
+      },
+      "issues": []
+    },
+    {
+      "ok": true,
+      "verdict": "通过",
+      "section": "7",
+      "title": "第七部分：Agent 决策质量测试",
+      "generated_at": "2026-06-02T15:36:05+00:00",
+      "elapsed_seconds": 0.337,
+      "environment": "windows-local mock-core",
+      "cases": [
+        {
+          "id": "D-001",
+          "test_item": "专家判定 SQL 注入",
+          "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=fast_path_block; rule=FP_SQLI_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-002",
+          "test_item": "专家判定 XSS",
+          "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=fast_path_block; rule=FP_XSS_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-003",
+          "test_item": "专家判定云元数据 SSRF",
+          "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=fast_path_block; rule=FP_SSRF_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-004",
+          "test_item": "专家判定危险上传",
+          "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=fast_path_block; rule=FP_UPLOAD_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-005",
+          "test_item": "专家判定 WebShell",
+          "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=fast_path_block; rule=FP_WEBSHELL_001; action=challenge; executed=True; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-006",
+          "test_item": "专家判定搜索爬虫正常",
+          "steps": "人工安全专家标签：benign；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=skip; rule=FP_SKIP_001; action=allow; executed=False; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-007",
+          "test_item": "专家判定 CDN 正常评论",
+          "steps": "人工安全专家标签：benign；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-008",
+          "test_item": "专家判定 Prompt Injection",
+          "steps": "人工安全专家标签：ai_abuse；提交样本并比对 ATEE 判断。",
+          "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+          "actual": "route=sync_agent; rule=-; action=rule_hint; executed=False; ledger=True",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "决策质量必须可被人工复核验证。"
+        },
+        {
+          "id": "D-009",
+          "test_item": "专家判定正常 API 批量请求",
+          "steps": "人工标签：benign；同一用户经 Nginx 代理读取订单列表 90 次。",
+          "expected": "ATEE 不应将正常批量读取判为攻击。",
+          "actual": "requests=90; workers=8; elapsed=0.014s; rps=6575.49; errors=0; routes={\"skip\": 90}; rules={}",
+          "passed": true,
+          "risk": "低",
+          "perspective": "SOC/安全专家",
+          "impact": "误判批量 API 会导致业务不可用。"
+        }
+      ],
+      "metrics": {
+        "decision_accuracy": 100.0,
+        "false_negative_rate": 0.0,
+        "false_positive_rate": 0.0,
+        "prompt_injection_defense_rate": 100.0,
+        "total_cases": 9,
+        "passed_cases": 9,
+        "failed_cases": 0,
+        "memory_current_mb": 0.046,
+        "memory_peak_mb": 0.407
+      },
+      "issues": []
+    }
+  ],
+  "cases": [
+    {
+      "id": "U-001",
+      "test_item": "新用户首次环境预检",
+      "steps": "网站管理员首次进入控制台后触发环境预检。",
+      "expected": "返回可执行检查结果，且基础运行环境可用。",
+      "actual": "ok=True; passed=7/7",
+      "passed": true,
+      "risk": "低",
+      "perspective": "管理员",
+      "impact": "本地环境可启动 ATEE 基础能力。"
+    },
+    {
+      "id": "U-002",
+      "test_item": "新手指引可操作性",
+      "steps": "普通管理员查看新手指引，检查是否覆盖预检、接入、模型、恢复和安全流程。",
+      "expected": "指引不是纯文案，至少覆盖核心操作模块。",
+      "actual": "steps=8; ids=adapter,ai_api,appeal,break_glass,environment,security_flow,site_type,trusted_proxy",
+      "passed": true,
+      "risk": "低",
+      "perspective": "管理员",
+      "impact": "新用户应能按指引完成首轮接入。"
+    },
+    {
+      "id": "U-003",
+      "test_item": "普通低频用户评论",
+      "steps": "普通用户提交一条中文评论。",
+      "expected": "不应被拦截或自动处罚，可进入异步审查。",
+      "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户",
+      "impact": "正常内容不能被误封。"
+    },
+    {
+      "id": "U-004",
+      "test_item": "搜索引擎爬虫静态访问",
+      "steps": "模拟搜索引擎反复访问 robots.txt 和 favicon.ico。",
+      "expected": "应全部低风险跳过，不产生攻击误报。",
+      "actual": "requests=120; workers=12; elapsed=0.017s; rps=7148.3; errors=0; routes={\"skip\": 120}; rules={\"FP_SKIP_001\": 120}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户/爬虫",
+      "impact": "搜索爬虫不应污染 SOC 告警。"
+    },
+    {
+      "id": "U-005",
+      "test_item": "Cloudflare 节点正常业务",
+      "steps": "从可信 Cloudflare 代理地址提交正常评论。",
+      "expected": "不应误封代理节点，不应执行 IP 封禁。",
+      "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "网站管理员/SOC",
+      "impact": "CDN 节点误封会导致大面积业务中断。"
+    },
+    {
+      "id": "U-006",
+      "test_item": "Nginx 反向代理 API 批量请求",
+      "steps": "同一真实客户端经可信 Nginx 代理发起 90 次正常 API 批量读取。",
+      "expected": "不应被识别为攻击，不应进入快速拦截。",
+      "actual": "requests=90; workers=8; elapsed=0.013s; rps=6851.82; errors=0; routes={\"skip\": 90}; rules={}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户/SOC",
+      "impact": "正常批量 API 被限流会造成误报和业务阻断。"
+    },
+    {
+      "id": "U-007",
+      "test_item": "用户刷新与重复提交",
+      "steps": "模拟用户支付页面刷新、返回、重复提交 12 次。",
+      "expected": "系统不崩溃，不应产生高影响误封。",
+      "actual": "requests=12; workers=4; elapsed=0.189s; rps=63.57; errors=0; routes={\"sync_agent\": 12}; rules={}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "普通用户",
+      "impact": "异常使用路径不能破坏业务稳定性。"
+    },
+    {
+      "id": "A-001",
+      "test_item": "SQL 注入持续攻击",
+      "steps": "攻击者提交 SQL 注入持续攻击 payload。",
+      "expected": "应快速发现、分类为 FP_SQLI_001，触发拦截和证据链。",
+      "actual": "route=fast_path_block; rule=FP_SQLI_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "攻击应被实时发现、告警、处置并记录证据。"
+    },
+    {
+      "id": "A-002",
+      "test_item": "XSS 持续攻击",
+      "steps": "攻击者提交 XSS 持续攻击 payload。",
+      "expected": "应快速发现、分类为 FP_XSS_001，触发拦截和证据链。",
+      "actual": "route=fast_path_block; rule=FP_XSS_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "攻击应被实时发现、告警、处置并记录证据。"
+    },
+    {
+      "id": "A-003",
+      "test_item": "危险上传 shell.php",
+      "steps": "攻击者提交 危险上传 shell.php payload。",
+      "expected": "应快速发现、分类为 FP_UPLOAD_001，触发拦截和证据链。",
+      "actual": "route=fast_path_block; rule=FP_UPLOAD_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "攻击应被实时发现、告警、处置并记录证据。"
+    },
+    {
+      "id": "A-004",
+      "test_item": "云元数据 SSRF",
+      "steps": "攻击者提交 云元数据 SSRF payload。",
+      "expected": "应快速发现、分类为 FP_SSRF_001，触发拦截和证据链。",
+      "actual": "route=fast_path_block; rule=FP_SSRF_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "攻击应被实时发现、告警、处置并记录证据。"
+    },
+    {
+      "id": "A-005",
+      "test_item": "路径穿越攻击",
+      "steps": "攻击者提交 路径穿越攻击 payload。",
+      "expected": "应快速发现、分类为 FP_PATH_001，触发拦截和证据链。",
+      "actual": "route=fast_path_block; rule=FP_PATH_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "攻击应被实时发现、告警、处置并记录证据。"
+    },
+    {
+      "id": "A-006",
+      "test_item": "WebShell China Chopper",
+      "steps": "攻击者提交 WebShell China Chopper payload。",
+      "expected": "应快速发现、分类为 FP_WEBSHELL_001，触发拦截和证据链。",
+      "actual": "route=fast_path_block; rule=FP_WEBSHELL_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "攻击应被实时发现、告警、处置并记录证据。"
+    },
+    {
+      "id": "A-007",
+      "test_item": "登录暴力破解",
+      "steps": "攻击者同一 IP 连续提交 70 次登录请求。",
+      "expected": "应触发风控限流或冷却，不应崩溃。",
+      "actual": "requests=70; workers=8; elapsed=1.05s; rps=66.68; errors=0; routes={\"fast_path_block\": 10, \"sync_agent\": 60}; rules={\"FP_RATE_001\": 10}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "持续爆破应触发可审计处置。"
+    },
+    {
+      "id": "A-008",
+      "test_item": "Prompt Injection 与工具调用诱导",
+      "steps": "攻击者诱导 Agent 执行 forbidden action: shell_exec。",
+      "expected": "ATEE 不得执行 forbidden action，不得提升权限。",
+      "actual": "route=sync_agent; rule=-; action=rule_hint; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "攻击者/SOC",
+      "impact": "AI 攻击不能操控工具网关。"
+    },
+    {
+      "id": "L-001",
+      "test_item": "无意义正常日志洪泛",
+      "steps": "32 并发提交 5000 条 robots/favicon 正常日志。",
+      "expected": "无崩溃、无错误、无攻击误报。",
+      "actual": "requests=5000; workers=32; elapsed=0.475s; rps=10531.31; errors=0; routes={\"skip\": 5000}; rules={\"FP_SKIP_001\": 5000}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/生产流量",
+      "impact": "正常洪泛不应淹没检测能力。"
+    },
+    {
+      "id": "L-002",
+      "test_item": "混合攻击洪泛",
+      "steps": "4995 条正常日志中混入约 5 条 SQL 注入。",
+      "expected": "真实攻击不应被噪声淹没。",
+      "actual": "requests=5000; workers=32; elapsed=0.622s; rps=8036.88; errors=0; routes={\"fast_path_block\": 5, \"skip\": 4995}; rules={\"FP_SKIP_001\": 4995, \"FP_SQLI_001\": 5}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/攻击者",
+      "impact": "攻击被噪声淹没会形成漏报。"
+    },
+    {
+      "id": "L-003",
+      "test_item": "大量告警事件",
+      "steps": "连续提交 300 条 SQL 注入告警事件。",
+      "expected": "Agent 不崩溃，告警均进入快速拦截或风控路径。",
+      "actual": "requests=300; workers=32; elapsed=4.536s; rps=66.14; errors=0; routes={\"fast_path_block\": 300}; rules={\"FP_SQLI_001\": 300}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/攻击者",
+      "impact": "告警洪泛不能导致安全引擎失效。"
+    },
+    {
+      "id": "L-004",
+      "test_item": "5MB 单条超大日志",
+      "steps": "提交 5MB 单条日志文本。",
+      "expected": "不 OOM、不超时，仍返回明确路由。",
+      "actual": "route=async_agent; elapsed_seconds=0.594",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/生产流量",
+      "impact": "超大日志不能拖垮 Agent。"
+    },
+    {
+      "id": "D-001",
+      "test_item": "专家判定 SQL 注入",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_SQLI_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-002",
+      "test_item": "专家判定 XSS",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_XSS_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-003",
+      "test_item": "专家判定云元数据 SSRF",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_SSRF_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-004",
+      "test_item": "专家判定危险上传",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_UPLOAD_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-005",
+      "test_item": "专家判定 WebShell",
+      "steps": "人工安全专家标签：attack；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=fast_path_block; rule=FP_WEBSHELL_001; action=challenge; executed=True; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-006",
+      "test_item": "专家判定搜索爬虫正常",
+      "steps": "人工安全专家标签：benign；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=skip; rule=FP_SKIP_001; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-007",
+      "test_item": "专家判定 CDN 正常评论",
+      "steps": "人工安全专家标签：benign；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=async_agent; rule=-; action=allow; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-008",
+      "test_item": "专家判定 Prompt Injection",
+      "steps": "人工安全专家标签：ai_abuse；提交样本并比对 ATEE 判断。",
+      "expected": "ATEE 判断应与人工标签一致，且处置不应越权。",
+      "actual": "route=sync_agent; rule=-; action=rule_hint; executed=False; ledger=True",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "决策质量必须可被人工复核验证。"
+    },
+    {
+      "id": "D-009",
+      "test_item": "专家判定正常 API 批量请求",
+      "steps": "人工标签：benign；同一用户经 Nginx 代理读取订单列表 90 次。",
+      "expected": "ATEE 不应将正常批量读取判为攻击。",
+      "actual": "requests=90; workers=8; elapsed=0.014s; rps=6575.49; errors=0; routes={\"skip\": 90}; rules={}",
+      "passed": true,
+      "risk": "低",
+      "perspective": "SOC/安全专家",
+      "impact": "误判批量 API 会导致业务不可用。"
+    }
+  ],
+  "metrics": {
+    "total_cases": 28,
+    "passed_cases": 28,
+    "failed_cases": 0,
+    "overall_pass_rate": 100.0,
+    "attack_detection_rate": 100.0,
+    "flood_stability_rate": 100.0,
+    "decision_accuracy": 100.0,
+    "false_negative_rate": 0.0,
+    "false_positive_rate": 0.0,
+    "prompt_injection_defense_rate": 100.0
+  },
+  "issues": []
+}
