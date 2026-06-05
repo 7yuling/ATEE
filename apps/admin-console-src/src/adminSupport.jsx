@@ -400,6 +400,9 @@ function resultKind(result = {}) {
   if (Array.isArray(result.checks)) {
     return "环境预检";
   }
+  if (Array.isArray(result.flow_steps)) {
+    return "安全流程演练";
+  }
   if (result.reply_zh) {
     return "Agent 对话";
   }

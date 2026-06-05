@@ -46,6 +46,9 @@ try {
   await click(page, "#testAppealBtn");
   await expectResult(page, (data) => data.status === 202, "appeal should be accepted");
 
+  await click(page, "#testLlmBtn");
+  await expectResult(page, (data) => data.ok === true, "LLM gateway test should run from dashboard");
+
   const asyncSource = await postJson(page, "/v1/check", {
     method: "POST",
     path: "/comment",
@@ -76,7 +79,13 @@ try {
   await selectAntD(page, "#guideAdapterTypeSelect", "反向代理/Nginx");
   await click(page, "#preflightBtn");
   await expectResult(page, (data) => Array.isArray(data.checks), "preflight checks should run from guide");
+  await click(page, "#securityFlowBtn");
+  await expectResult(page, (data) => Array.isArray(data.flow_steps) && data.flow_steps.length >= 7, "security flow rehearsal should run from guide");
   await expectText(page, "安全情况处理总流程");
+  await page.locator(".ant-collapse-header", { hasText: "网站类型选择" }).click();
+  await click(page, "#guideAction-site_type");
+  await expectText(page, "AI 安全助手");
+  await expectValue(page, "#agentChatInput", (value) => value.includes("API 服务"), "guide site type action should prefill an Agent question");
 
   await openTab(page, "申诉处理");
   await expectText(page, "申诉审核");
@@ -89,11 +98,38 @@ try {
   await confirmPopconfirm(page);
   await expectResult(page, (data) => data.ok === true && data.appeal?.status === "approved", "appeal should be approved");
 
+  const rejectedAppeal = await postJson(page, "/v1/appeal", {
+    punishment_id: "browser-reject-punishment",
+    reason: "browser e2e reject rehearsal",
+  });
+  if (rejectedAppeal.status !== 202) {
+    throw new Error(`reject rehearsal appeal was not accepted: ${JSON.stringify(rejectedAppeal)}`);
+  }
+  await click(page, "#appealsBtn");
+  await expectResult(page, (data) => data.count === 1, "second pending appeal should be listed");
+  await page.locator("#appealIdInput").fill("browser-reject-punishment");
+  await page.locator("#appealNoteInput").fill("browser e2e rejected");
+  await click(page, "#rejectAppealBtn");
+  await confirmPopconfirm(page);
+  await expectResult(page, (data) => data.ok === true && data.appeal?.status === "rejected", "appeal should be rejected");
+
   await click(page, "#degradedBtn");
   await expectResult(page, (data) => data.ok === true && data.mode === "degraded", "runtime mode should switch to degraded");
   await click(page, "#readOnlyBtn");
   await expectResult(page, (data) => data.ok === true && data.mode === "read_only", "runtime mode should switch to read only");
   await expectText(page, "当前为只读模式");
+  await openTab(page, "申诉处理");
+  await expectDisabled(page, "#approveAppealBtn", "read-only mode should disable appeal approval");
+  await expectDisabled(page, "#rejectAppealBtn", "read-only mode should disable appeal rejection");
+  await openTab(page, "异步 AI 审查");
+  await expectDisabled(page, "#runAsyncReviewsBtn", "read-only mode should disable async review processing");
+  await openTab(page, "动作管理");
+  await expectDisabled(page, "#cleanupActionsBtn", "read-only mode should disable action cleanup");
+  await expectDisabled(page, "#revokeActionBtn", "read-only mode should disable action revoke");
+  await openTab(page, "网关配置");
+  await expectDisabled(page, "#configSaveBtn", "read-only mode should disable config save");
+  await openTab(page, "新手引导");
+  await expectDisabled(page, "#securityFlowBtn", "read-only mode should disable security flow rehearsal");
   await click(page, "#autoBtn");
   await confirmPopconfirm(page);
   await expectResult(page, (data) => data.ok === true && data.mode === "auto", "runtime mode should switch to auto");
@@ -119,7 +155,7 @@ try {
   await openTab(page, "安全账本");
   await page.locator("#ledgerLimitInput").fill("5");
   await click(page, "#ledgerBtn");
-  await expectResult(page, (data) => typeof data.ledger_count === "number", "ledger records should be listed as a summary");
+  await expectResult(page, (data) => typeof data.ledger_count === "number" && !Array.isArray(data.records), "ledger records should be listed as a summary");
 
   await openTab(page, "网关配置");
   await expectText(page, "运行配置");
@@ -137,7 +173,7 @@ try {
   if (consoleErrors.length) {
     throw new Error(`browser console errors: ${consoleErrors.join("; ")}`);
   }
-  console.log(JSON.stringify({ ok: true, port, checks: 20 }, null, 2));
+  console.log(JSON.stringify({ ok: true, port, checks: 32 }, null, 2));
 } finally {
   if (browser) {
     await browser.close();
@@ -278,6 +314,32 @@ async function expectResult(page, predicate, message) {
     await delay(200);
   }
   throw new Error(`${message}; last result: ${JSON.stringify(parsed)}`);
+}
+
+async function expectValue(page, selector, predicate, message) {
+  const deadline = Date.now() + 10000;
+  let value = "";
+  while (Date.now() < deadline) {
+    value = await page.locator(selector).inputValue();
+    if (predicate(value)) {
+      return value;
+    }
+    await delay(200);
+  }
+  throw new Error(`${message}; last value: ${JSON.stringify(value)}`);
+}
+
+async function expectDisabled(page, selector, message) {
+  const deadline = Date.now() + 10000;
+  let disabled = false;
+  while (Date.now() < deadline) {
+    disabled = await page.locator(selector).isDisabled();
+    if (disabled) {
+      return true;
+    }
+    await delay(200);
+  }
+  throw new Error(`${message}; disabled=${disabled}`);
 }
 
 async function resultJson(page) {

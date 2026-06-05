@@ -91,6 +91,7 @@ function App() {
   const [siteType, setSiteType] = useState("通用网站");
   const [adapterType, setAdapterType] = useState("HTTP API");
   const [preflightReport, setPreflightReport] = useState(null);
+  const [securityFlowReport, setSecurityFlowReport] = useState(null);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState([
     {
@@ -260,6 +261,18 @@ function App() {
     });
   }
 
+  async function runSecurityFlow() {
+    await run("security-flow", async () => {
+      const { data } = await apiRequest("/v1/admin/security-flow/run", {
+        method: "POST",
+        body: "{}",
+      });
+      setSecurityFlowReport(data);
+      await refresh();
+      return data;
+    });
+  }
+
   async function sendAgentChat() {
     const message = String(chatDraft || "").trim();
     if (!message) {
@@ -288,17 +301,44 @@ function App() {
     });
   }
 
-  function runGuideAction(stepId) {
+  function focusControl(elementId) {
+    window.setTimeout(() => {
+      const element = document.getElementById(elementId);
+      if (!element) {
+        return;
+      }
+      element.scrollIntoView({ block: "center", behavior: "smooth" });
+      element.focus?.();
+    }, 80);
+  }
+
+  async function runGuideAction(stepId) {
     if (stepId === "environment") {
-      runPreflight();
-    } else if (stepId === "site_type" || stepId === "adapter") {
-      setActiveMenu("guide");
-    } else if (stepId === "trusted_proxy" || stepId === "ai_api" || stepId === "break_glass") {
+      await runPreflight();
+      focusControl("preflightChecks");
+    } else if (stepId === "site_type") {
+      setChatDraft(`请根据“${siteType}”网站类型，给我一份 ATEE 初次接入和安全关注点清单。`);
+      setActiveMenu("agent");
+      focusControl("siteTypeSelect");
+    } else if (stepId === "adapter") {
+      setChatDraft(`我计划使用“${adapterType}”接入 ATEE，请给我最小上线步骤、风险点和验证命令。`);
+      setActiveMenu("agent");
+      focusControl("adapterTypeSelect");
+    } else if (stepId === "trusted_proxy") {
       setActiveMenu("config");
+      focusControl("trustedProxyInput");
+    } else if (stepId === "ai_api") {
+      setActiveMenu("config");
+      focusControl("llmApiBaseInput");
+    } else if (stepId === "break_glass") {
+      setActiveMenu("config");
+      focusControl("bypassKeyFileInput");
     } else if (stepId === "appeal") {
       setActiveMenu("appeals");
+      focusControl("appealsBtn");
     } else {
       setActiveMenu("dashboard");
+      focusControl("testSafeBtn");
     }
   }
 
@@ -332,7 +372,6 @@ function App() {
       return {
         ok: data.ok,
         ledger_count: (data.records || []).length,
-        status: data.status,
         display: data.display,
       };
     });
@@ -742,9 +781,12 @@ function App() {
                     setAdapterType={setAdapterType}
                     runPreflight={runPreflight}
                     preflightReport={preflightReport}
+                    runSecurityFlow={runSecurityFlow}
+                    securityFlowReport={securityFlowReport}
                     guideSteps={guideSteps}
                     runGuideAction={runGuideAction}
                     loading={loading}
+                    writeLocked={writeLocked}
                   />
                 ),
               },
@@ -792,6 +834,7 @@ function App() {
                     asyncReviewColumns={asyncReviewColumns}
                     asyncReviews={asyncReviews}
                     runAsyncReviews={runAsyncReviews}
+                    writeLocked={writeLocked}
                   />
                 ),
               },

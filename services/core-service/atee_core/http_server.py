@@ -60,7 +60,7 @@ class AteeHandler(BaseHTTPRequestHandler):
             self._send_json(CORE.test_llm_gateway())
             return
         if self.path.startswith("/v1/admin/ledger/recent"):
-            self._send_json(CORE.ledger_recent(self._query_limit(default=20)))
+            self._send_json(CORE.ledger_recent(self._query_limit(default=20), include_details=False))
             return
         if self.path.startswith("/v1/admin/appeals"):
             self._send_json(CORE.admin_appeals(self._query_value("status", "pending"), self._query_limit(default=50)))
@@ -107,6 +107,10 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/admin/preflight":
             self._send_json(CORE.environment_preflight())
+            return
+        if self.path == "/v1/admin/security-flow/run":
+            result = CORE.security_flow_rehearsal(actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
             return
         if self.path == "/v1/admin/agent/chat":
             result = CORE.agent_chat(payload, actor=self._admin_actor())

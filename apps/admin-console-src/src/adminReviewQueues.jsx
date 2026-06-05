@@ -173,6 +173,7 @@ export function AsyncReviewsTab({
   asyncReviewColumns,
   asyncReviews,
   runAsyncReviews,
+  writeLocked,
 }) {
   return (
     <Card title="异步 AI 审查队列">
@@ -203,7 +204,7 @@ export function AsyncReviewsTab({
         <Button id="asyncReviewsBtn" icon={<ReloadOutlined />} onClick={() => showAsyncReviews(asyncReviewStatus)}>
           刷新队列
         </Button>
-        <Button id="runAsyncReviewsBtn" type="primary" icon={<BranchesOutlined />} onClick={runAsyncReviews}>
+        <Button id="runAsyncReviewsBtn" type="primary" icon={<BranchesOutlined />} onClick={runAsyncReviews} disabled={writeLocked}>
           处理到期任务
         </Button>
       </Space>

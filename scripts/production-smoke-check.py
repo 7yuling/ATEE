@@ -163,18 +163,45 @@ class SmokeRunner:
         status, _, _ = self._request("POST", "/v1/admin/break-glass/status", headers=headers, payload={})
         ledger_status, _, ledger_body = self._request("GET", "/v1/admin/ledger/recent?limit=20", headers=self._auth_headers())
         ledger = _json_body(ledger_body)
+        records = ledger.get("records") or []
+        ledger_text = json.dumps(ledger, ensure_ascii=False, sort_keys=True)
         summaries = "\n".join(str(record.get("summary") or "") for record in ledger.get("records") or [])
-        ok = (
-            status == 200
-            and ledger_status == 200
-            and f"admin_actor_id={expected_actor}" in summaries
-            and "admin_actor_hash=sha256:" in summaries
-            and "admin_source_hash=sha256:" in summaries
-            and self.token not in summaries
+        if summaries:
+            ok = (
+                status == 200
+                and ledger_status == 200
+                and f"admin_actor_id={expected_actor}" in summaries
+                and "admin_actor_hash=sha256:" in summaries
+                and "admin_source_hash=sha256:" in summaries
+                and self.token not in summaries
+            )
+            if self.args.expected_audit_actor and self.args.expected_audit_actor != self.args.audit_actor_id:
+                ok = ok and f"admin_actor_id={self.args.audit_actor_id}" not in summaries
+            self._record("audit_actor", ok, status=status, ledger_status=ledger_status, actor_matched=ok)
+            return
+
+        audit_event_recorded = any(
+            record.get("event_type") == "break_glass" and record.get("action") == "bypass_status_check"
+            for record in records
         )
-        if self.args.expected_audit_actor and self.args.expected_audit_actor != self.args.audit_actor_id:
-            ok = ok and f"admin_actor_id={self.args.audit_actor_id}" not in summaries
-        self._record("audit_actor", ok, status=status, ledger_status=ledger_status, actor_matched=ok)
+        details_hidden = (
+            "summary" not in ledger_text
+            and "admin_actor_id=" not in ledger_text
+            and "admin_actor_hash=sha256:" not in ledger_text
+            and "admin_source_hash=sha256:" not in ledger_text
+            and self.args.audit_actor_id not in ledger_text
+            and (not self.args.expected_audit_actor or self.args.expected_audit_actor not in ledger_text)
+            and self.token not in ledger_text
+        )
+        ok = status == 200 and ledger_status == 200 and audit_event_recorded and details_hidden
+        self._record(
+            "audit_actor",
+            ok,
+            status=status,
+            ledger_status=ledger_status,
+            audit_event_recorded=audit_event_recorded,
+            actor_details_public=False,
+        )
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}

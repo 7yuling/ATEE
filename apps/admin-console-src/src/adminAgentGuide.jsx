@@ -1,7 +1,10 @@
 import {
   BranchesOutlined,
+  CheckCircleOutlined,
   DeploymentUnitOutlined,
   MessageOutlined,
+  SafetyCertificateOutlined,
+  StopOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -16,6 +19,7 @@ import {
   Row,
   Select,
   Space,
+  Tag,
   Typography,
 } from "antd";
 import {
@@ -103,9 +107,12 @@ export function GuideTab({
   setAdapterType,
   runPreflight,
   preflightReport,
+  runSecurityFlow,
+  securityFlowReport,
   guideSteps,
   runGuideAction,
   loading,
+  writeLocked = false,
 }) {
   return (
     <Row gutter={[16, 16]}>
@@ -154,7 +161,7 @@ export function GuideTab({
                     dataSource={item.details_zh || []}
                     renderItem={(detail) => <List.Item>{detail}</List.Item>}
                   />
-                  <Button size="small" icon={<BranchesOutlined />} onClick={() => runGuideAction(item.id)}>
+                  <Button id={`guideAction-${item.id}`} size="small" icon={<BranchesOutlined />} onClick={() => runGuideAction(item.id)}>
                     {item.next_action_zh || "进入对应功能"}
                   </Button>
                 </Space>
@@ -163,12 +170,57 @@ export function GuideTab({
           />
         </Card>
         <Card title="安全情况处理总流程" className="flow-card">
+          <Space direction="vertical" size="small" className="guide-detail">
+            <Text type="secondary">按真实后台链路演练预检、请求识别、快速拦截、异步 AI 审查、申诉、模型网关和账本摘要。</Text>
+            <Button
+              id="securityFlowBtn"
+              type="primary"
+              icon={<SafetyCertificateOutlined />}
+              onClick={runSecurityFlow}
+              loading={loading}
+              disabled={writeLocked}
+            >
+              运行安全流程演练
+            </Button>
+            {writeLocked ? (
+              <Alert type="warning" showIcon message="只读模式下不会写入演练记录，请先切回观察、降级或自动模式。" />
+            ) : null}
+          </Space>
           <List
             id="securityFlowList"
             size="small"
             dataSource={SECURITY_FLOW_STEPS}
             renderItem={(item) => <List.Item>{item}</List.Item>}
           />
+          {securityFlowReport?.flow_steps?.length ? (
+            <>
+              <Divider />
+              <List
+                id="securityFlowResultList"
+                size="small"
+                dataSource={securityFlowReport.flow_steps}
+                renderItem={(item) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      avatar={item.ok ? <CheckCircleOutlined className="ok-icon" /> : <StopOutlined className="bad-icon" />}
+                      title={
+                        <Space>
+                          <Text strong>{item.title_zh}</Text>
+                          <Tag color={item.ok ? "success" : "warning"}>{item.status_zh}</Tag>
+                        </Space>
+                      }
+                      description={
+                        <Space direction="vertical" size={2}>
+                          <Text>{item.detail_zh}</Text>
+                          {item.code ? <Text type="secondary">代码：{item.code}</Text> : null}
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            </>
+          ) : null}
         </Card>
       </Col>
     </Row>

@@ -43,6 +43,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/async-reviews/run", js)
         self.assertIn("/v1/admin/config", js)
         self.assertIn("/v1/admin/preflight", js)
+        self.assertIn("/v1/admin/security-flow/run", js)
         self.assertIn("/v1/admin/agent/chat", js)
         self.assertIn("<script>alert(1)<\\/script>", js)
         self.assertIn("ATEE 管理控制台", js)
@@ -70,10 +71,13 @@ class AdminConsoleTests(unittest.TestCase):
 
         for element_id in [
             "appealIdInput",
+            "appealNoteInput",
             "appealStatusSelect",
             "approveAppealBtn",
+            "rejectAppealBtn",
             "actionIdInput",
             "actionStatusSelect",
+            "cleanupActionsBtn",
             "revokeActionBtn",
             "llmState",
             "circuitState",
@@ -118,7 +122,10 @@ class AdminConsoleTests(unittest.TestCase):
             "guideAdapterTypeSelect",
             "preflightBtn",
             "preflightChecks",
+            "securityFlowBtn",
+            "guideAction-${item.id}",
             "securityFlowList",
+            "securityFlowResultList",
             "asyncReviewQueue",
             "asyncReviewStatusSelect",
             "asyncReviewsBtn",

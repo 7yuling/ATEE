@@ -6,6 +6,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .actions import ActionExecutor
 from .appeals import AppealService
@@ -202,6 +203,16 @@ class CoreService:
         }
 
     def update_config(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_config_update",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会保存运行配置。",
+                },
+            }
         api_key_value = str(payload.get("llm_api_key_value") or "").lstrip("\ufeff").strip()
         allowed = {
             "runtime_mode",
@@ -403,6 +414,160 @@ class CoreService:
             },
         }
 
+    def security_flow_rehearsal(self, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_security_flow",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会执行安全流程演练。",
+                },
+            }
+
+        steps: list[dict[str, Any]] = []
+
+        def add_step(step_id: str, title: str, ok: bool, detail: str, code: str = "") -> None:
+            steps.append(
+                {
+                    "id": step_id,
+                    "title_zh": title,
+                    "ok": bool(ok),
+                    "status_zh": "通过" if ok else "需处理",
+                    "detail_zh": str(detail)[:240],
+                    "code": str(code or "")[:80],
+                }
+            )
+
+        def run_step(step_id: str, title: str, callback) -> None:
+            try:
+                ok, detail, code = callback()
+            except Exception as error:
+                ok = False
+                detail = f"{title}执行失败：{type(error).__name__}"
+                code = "exception"
+            add_step(step_id, title, bool(ok), str(detail), str(code or ""))
+
+        def preflight_step() -> tuple[bool, str, str]:
+            result = self.environment_preflight()
+            summary = result.get("summary") or {}
+            passed = int(summary.get("passed") or 0)
+            total = int(summary.get("total") or 0)
+            failed_ids = ",".join(item.get("id", "") for item in result.get("checks", []) if not item.get("ok"))
+            return bool(result.get("ok")), f"环境预检完成，通过 {passed}/{total} 项。", failed_ids
+
+        def safe_request_step() -> tuple[bool, str, str]:
+            result = self.check(
+                {
+                    "method": "GET",
+                    "path": "/security-flow/health",
+                    "headers": {},
+                    "body": {"text": "normal security flow rehearsal request"},
+                },
+                remote_addr="198.51.100.20",
+            )
+            route = (result.get("route") or {}).get("route")
+            return route == "skip", f"低风险请求路由为 {route or '-'}。", str(route or "")
+
+        def fast_path_step() -> tuple[bool, str, str]:
+            result = self.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "<script>alert(1)</script>"},
+                },
+                remote_addr="198.51.100.21",
+            )
+            route = (result.get("route") or {}).get("route")
+            action = (result.get("tool_gateway") or {}).get("effective_action") or (
+                result.get("decision") or {}
+            ).get("selected_action")
+            return route == "fast_path_block", f"攻击样例命中 {route or '-'}，处置动作 {action or '-'}。", str(route or "")
+
+        def async_queue_step() -> tuple[bool, str, str]:
+            result = self.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "normal comment for async AI review"},
+                },
+                remote_addr="198.51.100.22",
+            )
+            route = (result.get("route") or {}).get("route")
+            reason = (result.get("llm_gateway") or {}).get("reason")
+            return route == "async_agent", f"普通评论进入 {route or '-'}，原因 {reason or '-'}。", str(reason or route or "")
+
+        def appeal_step() -> tuple[bool, str, str]:
+            punishment_id = f"flow-{uuid4().hex[:12]}"
+            result = self.appeal(
+                {
+                    "punishment_id": punishment_id,
+                    "reason": "安全流程演练申诉，请管理员复核。",
+                },
+                remote_addr="198.51.100.23",
+            )
+            status = int(result.get("status") or 0)
+            closed = {}
+            if status in {200, 202}:
+                closed = self.review_appeal(
+                    {
+                        "punishment_id": punishment_id,
+                        "resolution": "rejected",
+                        "admin_note": "安全流程演练自动关闭，不进入真实待办。",
+                    },
+                    actor=actor,
+                )
+            closed_ok = bool(closed.get("ok"))
+            detail = f"申诉入口返回 HTTP {status}，演练申诉已自动关闭。" if closed_ok else f"申诉入口返回 HTTP {status}。"
+            code = f"{status}:{closed.get('reason') or closed.get('appeal', {}).get('status') or ''}"
+            return status in {200, 202} and closed_ok, detail, code
+
+        def llm_gateway_step() -> tuple[bool, str, str]:
+            result = self.test_llm_gateway()
+            display = result.get("display") or {}
+            reason = result.get("reason") or ""
+            detail = display.get("message_zh") or ("模型网关连接正常。" if result.get("ok") else "模型网关当前不可用。")
+            return bool(result.get("ok")), detail, str(reason)
+
+        def ledger_step() -> tuple[bool, str, str]:
+            result = self.ledger_recent(limit=5, include_details=False)
+            count = len(result.get("records") or [])
+            status = result.get("status") or {}
+            return bool(result.get("ok")), f"账本摘要可读取，最近返回 {count} 条，累计 {status.get('persisted_records', 0)} 条。", "public_summary"
+
+        run_step("preflight", "环境预检", preflight_step)
+        run_step("safe_request", "安全请求", safe_request_step)
+        run_step("fast_path", "快速拦截", fast_path_step)
+        run_step("async_queue", "异步 AI 审查", async_queue_step)
+        run_step("appeal", "申诉入口", appeal_step)
+        run_step("llm_gateway", "模型网关", llm_gateway_step)
+        run_step("ledger", "安全账本", ledger_step)
+
+        passed = sum(1 for item in steps if item["ok"])
+        failed = len(steps) - passed
+        self._record_admin_audit(
+            "admin_security_flow_rehearsal",
+            "run_security_flow",
+            f"steps={len(steps)} failed={failed}",
+            actor,
+        )
+        return {
+            "ok": True,
+            "flow_steps": steps,
+            "summary": {
+                "total": len(steps),
+                "passed": passed,
+                "failed": failed,
+            },
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": f"安全流程演练已完成，{failed} 项需要处理。",
+            },
+        }
+
     def agent_chat(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         message = str(payload.get("message") or "").strip()
         context = {
@@ -470,6 +635,16 @@ class CoreService:
         }
 
     def process_async_reviews(self, limit: int = 10) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_async_review_processing",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会处理异步 AI 审查队列。",
+                },
+            }
         if not self.async_reviews:
             return {
                 "ok": False,
@@ -542,11 +717,16 @@ class CoreService:
             )
         return result
 
-    def ledger_recent(self, limit: int = 20) -> dict[str, Any]:
+    def ledger_recent(self, limit: int = 20, *, include_details: bool = True) -> dict[str, Any]:
+        records = self.ledger.recent(limit)
+        status = self.ledger.status()
+        if not include_details:
+            records = [self._public_ledger_record(record) for record in records]
+            status = self._public_ledger_status(status)
         return {
             "ok": True,
-            "records": self.ledger.recent(limit),
-            "status": self.ledger.status(),
+            "records": records,
+            "status": status,
             "display": {
                 "locale": "zh-CN",
                 "message_zh": "最近账本记录已返回。低危聚合事件不会高频写入 SQLite。",
@@ -566,6 +746,16 @@ class CoreService:
         }
 
     def review_appeal(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_appeal_review",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会审核申诉。",
+                },
+            }
         result = self.appeals.review(payload)
         if result.get("ok"):
             appeal = result["appeal"]
@@ -588,7 +778,7 @@ class CoreService:
         return result
 
     def admin_actions(self, status: str = "active") -> dict[str, Any]:
-        actions = self.executor.list_actions(status=status)
+        actions = self.executor.list_actions(status=status, cleanup_expired=self.config.runtime_mode != "read_only")
         return {
             "ok": True,
             "actions": actions,
@@ -600,6 +790,16 @@ class CoreService:
         }
 
     def revoke_action(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_action_revoke",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会撤销动作记录。",
+                },
+            }
         try:
             action_id = int(payload.get("action_id"))
         except (TypeError, ValueError):
@@ -627,6 +827,16 @@ class CoreService:
         return result
 
     def cleanup_expired_actions(self, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_action_cleanup",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会清理过期动作。",
+                },
+            }
         changed = self.executor.cleanup_expired()
         if changed:
             self.ledger.record(
@@ -865,6 +1075,28 @@ class CoreService:
                 "summary": self._admin_summary(summary, actor),
             }
         )
+
+    def _public_ledger_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: record.get(key)
+            for key in ("id", "created_at", "event_type", "severity", "action")
+            if key in record
+        }
+
+    def _public_ledger_status(self, status: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: status.get(key)
+            for key in (
+                "records",
+                "aggregates",
+                "sqlite_enabled",
+                "persisted_records",
+                "sqlite_bytes",
+                "raw_prompt_storage",
+                "raw_request_body_storage",
+            )
+            if key in status
+        }
 
     def _public_changed(self, changed: dict[str, Any]) -> dict[str, Any]:
         public = dict(changed)

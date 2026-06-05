@@ -96,9 +96,11 @@ class AteeHttpE2ETests(unittest.TestCase):
         action_id = executed["action_result"]["record"]["id"]
         active = self._json("GET", "/v1/admin/actions?status=active")
         revoked = self._json("POST", "/v1/admin/actions/revoke", {"action_id": action_id, "reason": "reviewed"})
+        security_flow = self._json("POST", "/v1/admin/security-flow/run", {})
 
         self.assertIn("ATEE 管理控制台", html)
         self.assertIn("/v1/admin/actions/revoke", admin_js)
+        self.assertIn("/v1/admin/security-flow/run", admin_js)
         self.assertEqual(chunk_status, 200)
         self.assertIn("application/javascript", chunk_headers["Content-Type"])
         self.assertTrue(chunk_body)
@@ -116,6 +118,9 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertTrue(reviewed["ok"])
         self.assertEqual(active["count"], 1)
         self.assertTrue(revoked["ok"])
+        self.assertTrue(security_flow["ok"])
+        self.assertGreaterEqual(len(security_flow["flow_steps"]), 7)
+        self.assertNotIn("records", security_flow)
 
     def test_admin_console_csp_nonce_is_generated_per_response(self):
         status_one, headers_one, html_one = self._response("GET", "/")
@@ -177,9 +182,12 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertTrue(mode["ok"])
             self.assertTrue(header_authorized["ok"])
             self.assertTrue(public_status["admin_auth"]["enabled"])
-            summaries = "\n".join(record["summary"] for record in recent["records"])
-            self.assertIn("admin_actor_id=ops-http", summaries)
-            self.assertIn("admin_actor_hash=sha256:", summaries)
+            self.assertTrue(any(record.get("event_type") == "admin_runtime_mode" for record in recent["records"]))
+            self.assertTrue(all("summary" not in record for record in recent["records"]))
+            self.assertTrue(all("ip_hash" not in record for record in recent["records"]))
+            self.assertTrue(all("rule_id" not in record for record in recent["records"]))
+            self.assertTrue(all("endpoint_type" not in record for record in recent["records"]))
+            self.assertNotIn("sqlite_path", recent["status"])
             self.assertNotIn("http-e2e-admin-token", json.dumps(unauthorized))
             self.assertNotIn("http-e2e-admin-token", json.dumps(public_status))
             self.assertNotIn("http-e2e-admin-token", json.dumps(recent))
