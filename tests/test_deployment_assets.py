@@ -88,6 +88,17 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("Stop-Process", stop_script)
         self.assertIn("atee-server.pid", stop_script)
 
+    def test_frontend_live_rehearsal_applies_adjustable_budget_to_core(self):
+        script = (ROOT / "scripts" / "frontend-live-production-rehearsal.mjs").read_text(encoding="utf-8")
+
+        self.assertIn('const budgetCents = nonNegativeIntArg(args, "budget-cents", 1000);', script)
+        self.assertIn("await applyRuntimeBudget(corePort);", script)
+        self.assertIn("/v1/admin/config", script)
+        self.assertIn("llm_daily_budget_cents: budgetCents", script)
+        self.assertIn("ATEE_ADMIN_TOKEN", script)
+        self.assertIn("remaining !== null && remaining !== undefined", script)
+        self.assertNotRegex(script, r"sk-[A-Za-z0-9]")
+
     def test_windows_install_task_uses_scheduled_task_wrapper(self):
         script = (ROOT / "scripts" / "windows" / "install-atee-task.ps1").read_text(encoding="utf-8")
 

@@ -1,11 +1,18 @@
 import json
+import os
+import socket
+import urllib.error
 import urllib.request
 from typing import Any
 
 
+DEFAULT_TIMEOUT_SECONDS = 25.0
+
+
 class AteeThinAdapter:
-    def __init__(self, core_url: str = "http://127.0.0.1:8787"):
+    def __init__(self, core_url: str = "http://127.0.0.1:8787", timeout_seconds: float | None = None):
         self.core_url = core_url.rstrip("/")
+        self.timeout_seconds = _adapter_timeout_seconds(timeout_seconds)
 
     def check(self, request_context: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/check", request_context)
@@ -24,8 +31,23 @@ class AteeThinAdapter:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=5) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, socket.timeout) as error:
+            raise RuntimeError(f"ATEE Core request to {path} timed out after {self.timeout_seconds:g}s") from error
+        except urllib.error.URLError as error:
+            reason = getattr(error, "reason", error)
+            raise RuntimeError(f"ATEE Core request to {path} failed: {reason}") from error
+
+
+def _adapter_timeout_seconds(value: float | None = None) -> float:
+    raw = os.environ.get("ATEE_ADAPTER_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)) if value is None else value
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT_SECONDS
+    return timeout if timeout > 0 else DEFAULT_TIMEOUT_SECONDS
 
 
 def build_context(

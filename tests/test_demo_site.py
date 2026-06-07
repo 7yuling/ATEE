@@ -1,8 +1,10 @@
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +16,15 @@ from atee_core.core import CoreService
 def load_demo_module():
     module_path = ROOT / "apps" / "demo-site" / "server.py"
     spec = importlib.util.spec_from_file_location("atee_demo_site_server", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_adapter_module():
+    module_path = ROOT / "adapters" / "python-fastapi" / "atee_adapter.py"
+    spec = importlib.util.spec_from_file_location("atee_python_fastapi_adapter", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -72,10 +83,48 @@ class DemoSiteTests(unittest.TestCase):
         self.assertIn("def appeal", text)
         self.assertIn('"/v1/appeal"', text)
 
+    def test_python_adapter_timeout_is_configurable(self):
+        adapter_module = load_adapter_module()
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def fake_urlopen(_request, timeout):
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with patch.dict(os.environ, {"ATEE_ADAPTER_TIMEOUT_SECONDS": "12.5"}):
+            adapter = adapter_module.AteeThinAdapter("http://127.0.0.1:8787")
+            with patch.object(adapter_module.urllib.request, "urlopen", fake_urlopen):
+                self.assertEqual(adapter.check({"method": "GET", "path": "/health"}), {"ok": True})
+
+        self.assertEqual(captured["timeout"], 12.5)
+
+    def test_python_adapter_timeout_error_is_explainable(self):
+        adapter_module = load_adapter_module()
+
+        def fake_urlopen(_request, timeout):
+            raise TimeoutError("timed out")
+
+        with patch.dict(os.environ, {"ATEE_ADAPTER_TIMEOUT_SECONDS": "7"}):
+            adapter = adapter_module.AteeThinAdapter("http://127.0.0.1:8787")
+            with patch.object(adapter_module.urllib.request, "urlopen", fake_urlopen):
+                with self.assertRaisesRegex(RuntimeError, r"/v1/check.*7s"):
+                    adapter.check({"method": "POST", "path": "/login"})
+
     def test_demo_server_has_deployment_overrides_and_core_error_response(self):
         source = (self.demo_dir / "server.py").read_text(encoding="utf-8")
 
         self.assertIn("ATEE_CORE_URL", source)
+        self.assertIn("ATEE_ADAPTER_TIMEOUT_SECONDS", (ROOT / "adapters" / "python-fastapi" / "atee_adapter.py").read_text(encoding="utf-8"))
         self.assertIn("ATEE_DEMO_PORT", source)
         self.assertIn("core_request_failed", source)
         self.assertIn("could not bind", source)
