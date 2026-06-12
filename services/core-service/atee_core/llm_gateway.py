@@ -111,6 +111,60 @@ class RemoteLLMGateway:
             "raw_prompt_storage": False,
         }
 
+    def available_review_attempts(self, requested: int) -> dict[str, Any]:
+        self._refresh_budget_window()
+        try:
+            requested = max(1, int(requested))
+        except (TypeError, ValueError):
+            requested = 1
+        if self.config.llm_mode not in {"openai_compatible", "remote"}:
+            return {"ok": True, "available": requested, "reason": None, "budget": self._budget_status()}
+        budget = self._daily_budget_cents()
+        if budget <= 0:
+            return {"ok": True, "available": requested, "reason": None, "budget": self._budget_status()}
+        remaining_attempts = max(0, (budget - self.daily_spend_cents) // REMOTE_ATTEMPT_COST_CENTS)
+        if remaining_attempts <= 0:
+            return {
+                "ok": False,
+                "available": 0,
+                "reason": "llm_budget_exhausted",
+                "budget": self._budget_status(),
+            }
+        return {
+            "ok": True,
+            "available": min(requested, remaining_attempts),
+            "reason": None,
+            "budget": self._budget_status(),
+        }
+
+    def runtime_state(self) -> dict[str, Any]:
+        self._refresh_budget_window()
+        return {
+            "version": 1,
+            "daily_spend_cents": self.daily_spend_cents,
+            "budget_day": self.budget_day,
+            "consecutive_failures": self.consecutive_failures,
+            "circuit_opened_until": self.circuit_opened_until,
+        }
+
+    def restore_runtime_state(self, state: dict[str, Any] | None) -> None:
+        if not isinstance(state, dict):
+            return
+        try:
+            self.daily_spend_cents = max(0, int(state.get("daily_spend_cents") or 0))
+        except (TypeError, ValueError):
+            self.daily_spend_cents = 0
+        self.budget_day = str(state.get("budget_day") or self.budget_day)
+        try:
+            self.consecutive_failures = max(0, int(state.get("consecutive_failures") or 0))
+        except (TypeError, ValueError):
+            self.consecutive_failures = 0
+        try:
+            self.circuit_opened_until = max(0.0, float(state.get("circuit_opened_until") or 0.0))
+        except (TypeError, ValueError):
+            self.circuit_opened_until = 0.0
+        self._refresh_budget_window()
+
     def _openai_compatible_review(self, packet: dict[str, Any], route: dict[str, Any]) -> dict[str, Any]:
         api_key = self._load_api_key()
         if not self.config.llm_api_base:

@@ -1,3 +1,4 @@
+import json
 import hashlib
 import hmac
 import os
@@ -9,8 +10,10 @@ from typing import Any
 from uuid import uuid4
 
 from .actions import ActionExecutor
+from .admin_auth import AdminAuthService
+from .api_keys import ApiKeyRegistry
 from .appeals import AppealService
-from .async_review import AsyncReviewQueue
+from .async_review import AsyncReviewQueue, AsyncReviewQueueFull
 from .config import DEFAULT_CONFIG, AdminConfig, ConfigStore, config_to_dict
 from .decision_engine import AgentDecisionEngine
 from .fast_path import FastPathRuleGate
@@ -25,6 +28,16 @@ from .router import RequestRouter
 from .runtime import RuntimeController, VALID_MODES
 from .secret_store import SecretStoreError, load_secret_file
 from .tool_gateway import ToolGateway
+
+
+ASYNC_REVIEW_PAUSE_REASONS = {"llm_budget_exhausted"}
+MANUAL_FEATURE_BAN_MAX_SECONDS = 7 * 24 * 3600
+
+
+class AsyncReviewProcessingPaused(RuntimeError):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
 
 class CoreService:
@@ -45,12 +58,15 @@ class CoreService:
         self.packet_compiler = PromptPacketCompiler()
         self.decision_engine = AgentDecisionEngine()
         self.llm_gateway = RemoteLLMGateway(self.config, base_dir=self.project_root)
+        self._load_llm_gateway_state()
         self.tool_gateway = ToolGateway()
         state_sqlite_path = self._resolve_project_path(self.config.ledger_sqlite_path)
         self.executor = ActionExecutor(state_sqlite_path)
         self.ledger = SecurityLedgerLite(self.config.ledger_max_bytes, state_sqlite_path)
         self.appeals = AppealService(state_sqlite_path)
-        self.async_reviews = AsyncReviewQueue(state_sqlite_path) if state_sqlite_path else None
+        self.admin_auth = AdminAuthService(state_sqlite_path)
+        self.api_keys = ApiKeyRegistry(state_sqlite_path)
+        self.async_reviews = self._make_async_review_queue(state_sqlite_path)
         self.runtime = RuntimeController(self.config)
 
     def check(self, payload: dict[str, Any], remote_addr: str = "127.0.0.1") -> dict[str, Any]:
@@ -76,17 +92,6 @@ class CoreService:
 
         if route["route"] == "fast_path_block":
             packet = self.packet_compiler.compile(ctx, real_ip, fast_path, route)
-            ledger_record = self.ledger.record(
-                {
-                    "severity": "high",
-                    "event_type": "fast_path_block",
-                    "ip_hash": packet.get("ip_hash"),
-                    "rule_id": fast_path.get("rule_id"),
-                    "endpoint_type": route.get("event_type"),
-                    "action": fast_path.get("action"),
-                    "summary": fast_path.get("reason"),
-                }
-            )
             decision = {
                 "selected_action": "cooldown" if fast_path["action"] == "rate_limited" else "challenge",
                 "scores": {
@@ -100,6 +105,18 @@ class CoreService:
                 "target_scope": {"type": "request"},
                 "reason_codes": [f"fast_path:{fast_path.get('rule_id')}"],
             }
+            ledger_record = self.ledger.record(
+                {
+                    "severity": "high",
+                    "event_type": "fast_path_block",
+                    "ip_hash": packet.get("ip_hash"),
+                    "rule_id": fast_path.get("rule_id"),
+                    "endpoint_type": route.get("event_type"),
+                    "action": fast_path.get("action"),
+                    "summary": fast_path.get("reason"),
+                    "details": self._ledger_details(packet, route, fast_path, decision, None, None),
+                }
+            )
             gateway = self.tool_gateway.validate(decision, real_ip, self.config)
             action_record = self.executor.execute(decision, gateway)
             return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record, None)
@@ -109,6 +126,7 @@ class CoreService:
             return self._enqueue_async_review(ctx, real_ip, fast_path, route, packet)
 
         llm_result = self.llm_gateway.review(packet, route)
+        self._save_llm_gateway_state()
         agent_decision = payload.get("agent_decision") or llm_result.get("agent_decision")
         decision = self.decision_engine.decide(packet, route, agent_decision)
         gateway = self.tool_gateway.validate(decision, real_ip, self.config)
@@ -122,6 +140,7 @@ class CoreService:
                 "endpoint_type": route.get("event_type"),
                 "action": gateway.get("effective_action"),
                 "summary": f"{decision.get('admin_explanation', '')} llm_reason={llm_result.get('reason')}",
+                "details": self._ledger_details(packet, route, fast_path, decision, llm_result, gateway),
             }
         )
         return self._response(ctx, real_ip, fast_path, route, decision, gateway, ledger_record, action_record, llm_result)
@@ -149,6 +168,58 @@ class CoreService:
                 }
             )
         return result
+
+    def feature_access(self, payload: dict[str, Any]) -> dict[str, Any]:
+        user_id = str(payload.get("user_id") or "").strip()
+        feature = str(payload.get("feature_scope") or payload.get("feature") or "").strip()
+        if not user_id:
+            return {
+                "ok": False,
+                "status": 400,
+                "allowed": False,
+                "reason": "user_id_required",
+            }
+        if not feature:
+            return {
+                "ok": False,
+                "status": 400,
+                "allowed": False,
+                "reason": "feature_scope_required",
+            }
+
+        user_hash = self.packet_compiler._hash(user_id)
+        active_action = self.executor.find_active_user_feature(str(user_hash or ""), feature)
+        if active_action:
+            return {
+                "ok": True,
+                "status": 200,
+                "allowed": False,
+                "reason": "active_feature_ban",
+                "user_hash": user_hash,
+                "feature_scope": feature,
+                "active_action": active_action,
+                "punishment_id": active_action.get("punishment_id"),
+                "expires_at": active_action.get("expires_at"),
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "Feature access is blocked by an active ATEE feature_ban.",
+                },
+            }
+        return {
+            "ok": True,
+            "status": 200,
+            "allowed": True,
+            "reason": "no_active_feature_ban",
+            "user_hash": user_hash,
+            "feature_scope": feature,
+            "active_action": None,
+            "punishment_id": None,
+            "expires_at": None,
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "Feature access is allowed; no active ATEE feature_ban matched.",
+            },
+        }
 
     def runtime_status(self) -> dict[str, Any]:
         status = {
@@ -228,6 +299,7 @@ class CoreService:
             "async_review_worker_enabled",
             "async_review_worker_interval_seconds",
             "async_review_worker_batch_size",
+            "async_review_queue_max_depth",
             "admin_auth_enabled",
             "admin_token_file",
             "admin_token_env",
@@ -263,6 +335,7 @@ class CoreService:
                 "llm_daily_budget_cents",
                 "async_review_worker_interval_seconds",
                 "async_review_worker_batch_size",
+                "async_review_queue_max_depth",
             }:
                 value = int(value)
             elif key in {"agent_paused", "auto_ip_ban_enabled", "bypass_enabled", "admin_auth_enabled", "async_review_worker_enabled"}:
@@ -278,18 +351,24 @@ class CoreService:
                 changed["llm_api_key_env_configured"] = True
 
         if changed:
+            llm_gateway_state = self.llm_gateway.runtime_state()
             self._load_admin_token()
             self._load_bypass_key()
             self.ip_resolver = TrustedRealIpResolver(self.config.trusted_proxy_cidrs)
             self.llm_gateway = RemoteLLMGateway(self.config, base_dir=self.project_root)
-            if "ledger_max_bytes" in changed or "ledger_sqlite_path" in changed:
+            self.llm_gateway.restore_runtime_state(llm_gateway_state)
+            if "ledger_max_bytes" in changed or "ledger_sqlite_path" in changed or "async_review_queue_max_depth" in changed:
                 state_sqlite_path = self._resolve_project_path(self.config.ledger_sqlite_path)
                 self.ledger = SecurityLedgerLite(self.config.ledger_max_bytes, state_sqlite_path)
                 if "ledger_sqlite_path" in changed:
                     self.executor = ActionExecutor(state_sqlite_path)
                     self.appeals = AppealService(state_sqlite_path)
-                    self.async_reviews = AsyncReviewQueue(state_sqlite_path) if state_sqlite_path else None
+                    self.admin_auth = AdminAuthService(state_sqlite_path)
+                    self.api_keys = ApiKeyRegistry(state_sqlite_path)
+                if "ledger_sqlite_path" in changed or "async_review_queue_max_depth" in changed:
+                    self.async_reviews = self._make_async_review_queue(state_sqlite_path)
             self._save_config()
+            self._save_llm_gateway_state()
             public_changed = self._public_changed(changed)
             self._record_admin_audit(
                 "admin_config_update",
@@ -583,6 +662,7 @@ class CoreService:
                 "reply_zh": "请输入需要 Agent 协助判断的问题。",
             }
         result = self.llm_gateway.chat(message, context)
+        self._save_llm_gateway_state()
         self._record_admin_audit(
             "admin_agent_chat",
             "agent_chat",
@@ -600,13 +680,17 @@ class CoreService:
         }
 
     def test_llm_gateway(self) -> dict[str, Any]:
-        return self.llm_gateway.test_connection()
+        result = self.llm_gateway.test_connection()
+        self._save_llm_gateway_state()
+        return result
 
     def async_review_worker_status(self) -> dict[str, Any]:
         return {
             "enabled": bool(self.config.async_review_worker_enabled),
             "interval_seconds": int(self.config.async_review_worker_interval_seconds),
             "batch_size": int(self.config.async_review_worker_batch_size),
+            "adaptive": True,
+            "max_batch_size": 100,
         }
 
     def admin_async_reviews(self, status: str = "pending", limit: int = 50) -> dict[str, Any]:
@@ -659,11 +743,38 @@ class CoreService:
             limit = int(limit or 10)
         except (TypeError, ValueError):
             limit = 10
+        capacity = self.llm_gateway.available_review_attempts(limit)
+        if not capacity.get("ok") or int(capacity.get("available") or 0) <= 0:
+            return {
+                "ok": True,
+                "claimed": 0,
+                "processed": [],
+                "paused": True,
+                "reason": capacity.get("reason") or "async_review_processing_paused",
+                "budget": capacity.get("budget"),
+                "queue": self.async_reviews.status(),
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "Async AI review processing is paused until budget is available.",
+                },
+            }
+        limit = min(limit, int(capacity.get("available") or limit))
         jobs = self.async_reviews.claim_due(limit=limit)
         processed: list[dict[str, Any]] = []
         for job in jobs:
             try:
                 review_result = self._process_async_review_job(job)
+            except AsyncReviewProcessingPaused as error:
+                updated = self.async_reviews.defer(job["id"], error.reason, delay_seconds=60)
+                processed.append(
+                    {
+                        "id": job["id"],
+                        "status": (updated or {}).get("status", "retry"),
+                        "paused": True,
+                        "reason": error.reason,
+                    }
+                )
+                break
             except Exception as error:
                 updated = self.async_reviews.fail(job["id"], str(error))
                 status = (updated or {}).get("status", "retry")
@@ -717,8 +828,120 @@ class CoreService:
             )
         return result
 
+    def manual_review_async_job(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_manual_review",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "只读模式下不会执行人工审查动作。",
+                },
+            }
+        if not self.async_reviews:
+            return {
+                "ok": False,
+                "status": 503,
+                "reason": "async_review_queue_unavailable",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "异步 AI 审查队列不可用，无法执行人工审查。",
+                },
+            }
+        try:
+            job_id = int(payload.get("job_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "status": 400, "reason": "job_id_required"}
+        job = self.async_reviews.get(job_id, include_payload=True)
+        if not job:
+            return {"ok": False, "status": 404, "reason": "async_review_job_not_found"}
+        if job.get("status") == "completed":
+            return {"ok": False, "status": 409, "reason": "async_review_job_already_completed"}
+        if job.get("status") == "processing":
+            return {"ok": False, "status": 409, "reason": "async_review_job_processing"}
+
+        packet = job.get("packet") or {}
+        user_hash = str(payload.get("user_hash") or packet.get("user_hash") or "").strip()
+        feature = str(payload.get("feature_scope") or packet.get("feature_scope") or packet.get("endpoint_type") or "").strip()
+        if not user_hash:
+            return {"ok": False, "status": 400, "reason": "user_hash_required"}
+        if not feature:
+            return {"ok": False, "status": 400, "reason": "feature_scope_required"}
+        try:
+            duration_seconds = int(payload.get("duration_seconds") or 3600)
+        except (TypeError, ValueError):
+            duration_seconds = 3600
+        duration_seconds = max(60, min(duration_seconds, MANUAL_FEATURE_BAN_MAX_SECONDS))
+        admin_note = str(payload.get("admin_note") or "").strip()[:1000]
+        decision = {
+            "selected_action": "feature_ban",
+            "scores": {
+                "evidence_score": 1.0,
+                "behavior_score": 1.0,
+                "reputation_score": 1.0,
+                "ai_confidence": 0.0,
+                "final_confidence": 1.0,
+            },
+            "reason_codes": ["manual_review", f"async_review_job:{job_id}"],
+            "admin_explanation": "Manual reviewer applied a feature ban from an async review queue item.",
+            "duration_seconds": duration_seconds,
+            "target_scope": {
+                "type": "user_feature",
+                "user_hash": user_hash,
+                "feature": feature,
+            },
+        }
+        gateway = {
+            "allowed": True,
+            "executed": True,
+            "effective_action": "feature_ban",
+            "reason": "manual_review_policy_passed",
+        }
+        action_record = self.executor.execute(decision, gateway)
+        ledger_record = self.ledger.record(
+            {
+                "severity": "high",
+                "event_type": "manual_async_review_action",
+                "ip_hash": packet.get("ip_hash"),
+                "rule_id": (packet.get("fast_path_signal") or {}).get("rule_id"),
+                "endpoint_type": job.get("event_type"),
+                "action": "feature_ban",
+                "summary": self._admin_summary(
+                    (
+                        f"manual_async_review job_id={job_id} action=feature_ban "
+                        f"user_hash={user_hash} feature={feature} duration_seconds={duration_seconds} note={admin_note}"
+                    ),
+                    actor,
+                ),
+            }
+        )
+        result = {
+            "manual_review": True,
+            "reviewer_action": "feature_ban",
+            "decision": decision,
+            "tool_gateway": gateway,
+            "action_result": action_record,
+            "ledger_record": ledger_record,
+            "raw_prompt_stored": False,
+            "raw_request_body_stored": False,
+        }
+        completed = self.async_reviews.complete(job_id, result)
+        return {
+            "ok": True,
+            "status": 200,
+            "job": completed,
+            "action_result": action_record,
+            "ledger_record": ledger_record,
+            "queue": self.async_reviews.status(),
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "人工审查动作已执行，异步审查任务已标记完成。",
+            },
+        }
+
     def ledger_recent(self, limit: int = 20, *, include_details: bool = True) -> dict[str, Any]:
-        records = self.ledger.recent(limit)
+        records = self.ledger.recent(limit, include_details=include_details)
         status = self.ledger.status()
         if not include_details:
             records = [self._public_ledger_record(record) for record in records]
@@ -745,6 +968,82 @@ class CoreService:
             },
         }
 
+    def admin_captcha(self) -> dict[str, Any]:
+        return self.admin_auth.create_captcha()
+
+    def register_admin(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = self.admin_auth.register(payload)
+        if result.get("ok"):
+            self._record_admin_audit(
+                "admin_account",
+                "register_first_admin",
+                f"username={result.get('username')}",
+                {"id": result.get("username", "unknown"), "id_hash": self._short_hash(result.get("username", "unknown")), "source_hash": self._short_hash("bootstrap")},
+            )
+        return result
+
+    def login_admin(self, payload: dict[str, Any], remote_addr: str = "") -> dict[str, Any]:
+        result = self.admin_auth.login(payload, remote_addr=remote_addr)
+        if result.get("ok"):
+            self._record_admin_audit(
+                "admin_login",
+                "captcha_login",
+                f"username={result.get('username')}",
+                {"id": result.get("username", "unknown"), "id_hash": self._short_hash(result.get("username", "unknown")), "source_hash": self._short_hash(remote_addr or "unknown")},
+            )
+        return result
+
+    def admin_accounts(self) -> dict[str, Any]:
+        return self.admin_auth.list_admins()
+
+    def create_admin_account(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_admin_account_create"}
+        result = self.admin_auth.create_admin(payload)
+        if result.get("ok"):
+            self._record_admin_audit("admin_account", "create_admin", f"username={result.get('username')}", actor)
+        return result
+
+    def change_admin_password(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_admin_password_change"}
+        result = self.admin_auth.change_password(payload, actor_username=actor.get("id") if actor else None)
+        if result.get("ok"):
+            self._record_admin_audit("admin_account", "change_password", f"username={result.get('username')}", actor)
+        return result
+
+    def admin_api_keys(self, include_revoked: bool = False) -> dict[str, Any]:
+        return self.api_keys.list(include_revoked=include_revoked)
+
+    def create_api_key(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_api_key_create"}
+        result = self.api_keys.create(payload)
+        if result.get("ok"):
+            record = result.get("record") or {}
+            if record.get("scope") == "backend" and payload.get("activate_provider_key", True):
+                self.config.llm_api_key_env = str(record.get("env_name") or self.config.llm_api_key_env)
+                self._rebuild_llm_gateway()
+                self._save_config()
+            self._record_admin_audit(
+                "admin_api_key",
+                "create_api_key",
+                f"name={record.get('name')} scope={record.get('scope')} env_name={record.get('env_name')}",
+                actor,
+            )
+        return result
+
+    def delete_api_key(self, key_id: int, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_api_key_delete"}
+        result = self.api_keys.delete(key_id)
+        if result.get("ok"):
+            if result.get("env_name") == self.config.llm_api_key_env:
+                self._rebuild_llm_gateway()
+                self._save_config()
+            self._record_admin_audit("admin_api_key", "delete_api_key", f"id={key_id} env_name={result.get('env_name')}", actor)
+        return result
+
     def review_appeal(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         if self.config.runtime_mode == "read_only":
             return {
@@ -759,6 +1058,14 @@ class CoreService:
         result = self.appeals.review(payload)
         if result.get("ok"):
             appeal = result["appeal"]
+            if appeal.get("status") == "approved":
+                result["auto_unban"] = self._auto_unban_approved_appeal(appeal, actor)
+            else:
+                result["auto_unban"] = {
+                    "ok": False,
+                    "executed": False,
+                    "reason": "appeal_not_approved",
+                }
             self.ledger.record(
                 {
                     "severity": "medium",
@@ -877,6 +1184,7 @@ class CoreService:
                     "endpoint_type": route.get("event_type"),
                     "action": "review_not_queued",
                     "summary": "async AI review queue unavailable; request allowed pending manual inspection",
+                    "details": self._ledger_details(packet, route, fast_path, decision, None, None),
                 }
             )
             llm_result = {
@@ -886,7 +1194,48 @@ class CoreService:
             }
             return self._response(ctx, real_ip, fast_path, route, decision, None, ledger_record, None, llm_result)
 
-        job = self.async_reviews.enqueue(packet, route)
+        try:
+            job = self.async_reviews.enqueue(packet, route)
+        except AsyncReviewQueueFull as error:
+            queue_status = error.status
+            decision = {
+                "selected_action": "allow",
+                "scores": {
+                    "evidence_score": 0.0,
+                    "behavior_score": 0.0,
+                    "reputation_score": 0.0,
+                    "ai_confidence": 0.0,
+                    "final_confidence": 0.0,
+                },
+                "reason_codes": ["route:async_agent", "async_review:backpressure"],
+                "admin_explanation": "Async AI review queue is at capacity; request is allowed but review was not queued.",
+                "duration_seconds": 0,
+                "target_scope": {"type": "request"},
+            }
+            llm_result = {
+                "ok": False,
+                "llm_called": False,
+                "reason": "async_review_backpressure",
+                "queue": queue_status,
+            }
+            ledger_record = self.ledger.record(
+                {
+                    "severity": "high",
+                    "event_type": "async_review_backpressure",
+                    "ip_hash": packet.get("ip_hash"),
+                    "rule_id": fast_path.get("rule_id"),
+                    "endpoint_type": route.get("event_type"),
+                    "action": "review_not_queued",
+                    "summary": (
+                        "async_review_queue at capacity "
+                        f"active_depth={queue_status.get('active_depth')} max_depth={queue_status.get('max_depth')}"
+                    ),
+                    "details": self._ledger_details(packet, route, fast_path, decision, llm_result, None),
+                }
+            )
+            response = self._response(ctx, real_ip, fast_path, route, decision, None, ledger_record, None, llm_result)
+            response["async_review_queue"] = queue_status
+            return response
         decision = {
             "selected_action": "allow",
             "scores": {
@@ -910,6 +1259,7 @@ class CoreService:
                 "endpoint_type": route.get("event_type"),
                 "action": "queued",
                 "summary": f"async_review_job id={job.get('id')} queued",
+                "details": self._ledger_details(packet, route, fast_path, decision, None, None),
             }
         )
         llm_result = {
@@ -927,7 +1277,11 @@ class CoreService:
         packet = job.get("packet") or {}
         route = job.get("route_detail") or {"route": "async_agent", "event_type": job.get("event_type")}
         llm_result = self.llm_gateway.review(packet, route)
+        self._save_llm_gateway_state()
         if not llm_result.get("ok"):
+            reason = str(llm_result.get("reason") or "llm_review_failed")
+            if reason in ASYNC_REVIEW_PAUSE_REASONS:
+                raise AsyncReviewProcessingPaused(reason)
             raise RuntimeError(str(llm_result.get("reason") or "llm_review_failed"))
         decision = self.decision_engine.decide(packet, route, llm_result.get("agent_decision"))
         gateway = self.tool_gateway.validate(decision, {"can_ip_ban": False}, self.config)
@@ -944,6 +1298,14 @@ class CoreService:
                     f"async_review_job id={job.get('id')} "
                     f"decision={decision.get('selected_action')} reason={llm_result.get('reason')}"
                 ),
+                "details": self._ledger_details(
+                    packet,
+                    route,
+                    packet.get("fast_path_signal") or {},
+                    decision,
+                    llm_result,
+                    gateway,
+                ),
             }
         )
         return {
@@ -959,6 +1321,44 @@ class CoreService:
     def _save_config(self) -> None:
         if self.config_store:
             self.config_store.save(self.config)
+
+    def _make_async_review_queue(self, state_sqlite_path: Path | None) -> AsyncReviewQueue | None:
+        if not state_sqlite_path:
+            return None
+        return AsyncReviewQueue(
+            state_sqlite_path,
+            max_depth=int(getattr(self.config, "async_review_queue_max_depth", 5000) or 5000),
+        )
+
+    def _load_llm_gateway_state(self) -> None:
+        state_path = self._llm_gateway_state_path()
+        if not state_path:
+            return
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        self.llm_gateway.restore_runtime_state(state)
+
+    def _save_llm_gateway_state(self) -> None:
+        state_path = self._llm_gateway_state_path()
+        if not state_path:
+            return
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps(self.llm_gateway.runtime_state(), ensure_ascii=False, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError:
+            return
+
+    def _llm_gateway_state_path(self) -> Path | None:
+        if not self.config_store:
+            return None
+        ledger_path = self._resolve_project_path(self.config.ledger_sqlite_path)
+        state_dir = ledger_path.parent if ledger_path else self.project_root / "data"
+        return state_dir / "atee_llm_gateway_state.json"
 
     def _resolve_project_path(self, value: str | None) -> Path | None:
         if not value:
@@ -999,20 +1399,25 @@ class CoreService:
             self._admin_token = None
 
     def admin_auth_status(self) -> dict[str, Any]:
+        account_status = self.admin_auth.status()
         return {
             "enabled": bool(self.config.admin_auth_enabled),
             "token_configured": bool(self._admin_token),
+            "legacy_token_configured": bool(self._admin_token),
             "token_file_configured": bool(self.config.admin_token_file),
             "token_env": self.config.admin_token_env,
+            **account_status,
         }
 
     def admin_authorized(self, headers: dict[str, str] | None = None) -> bool:
         if not self.config.admin_auth_enabled:
             return True
-        if not self._admin_token:
-            return False
         supplied = self._admin_token_from_headers(headers or {})
-        return bool(supplied and hmac.compare_digest(supplied, self._admin_token))
+        if supplied and self.admin_auth.validate_session(supplied):
+            return True
+        if self._admin_token and supplied:
+            return hmac.compare_digest(supplied, self._admin_token)
+        return False
 
     def admin_auth_challenge(self) -> dict[str, Any]:
         return {
@@ -1021,7 +1426,7 @@ class CoreService:
             "admin_auth": self.admin_auth_status(),
             "display": {
                 "locale": "zh-CN",
-                "message_zh": "管理接口需要有效的 Admin Token。",
+                "message_zh": "管理接口需要验证码登录会话或兼容 Admin Token。",
             },
         }
 
@@ -1035,7 +1440,9 @@ class CoreService:
 
     def admin_actor_from_headers(self, headers: dict[str, str] | None = None, remote_addr: str = "") -> dict[str, str]:
         normalized = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
-        actor_id = self._clean_admin_actor_id(normalized.get("x-atee-admin-id", "unknown"))
+        supplied = self._admin_token_from_headers(headers or {})
+        session = self.admin_auth.validate_session(supplied or "")
+        actor_id = self._clean_admin_actor_id((session or {}).get("username") or normalized.get("x-atee-admin-id", "unknown"))
         source = normalized.get("x-real-ip") or remote_addr or "unknown"
         return {
             "id": actor_id,
@@ -1076,6 +1483,66 @@ class CoreService:
             }
         )
 
+    def _rebuild_llm_gateway(self) -> None:
+        llm_gateway_state = self.llm_gateway.runtime_state()
+        self.llm_gateway = RemoteLLMGateway(self.config, base_dir=self.project_root)
+        self.llm_gateway.restore_runtime_state(llm_gateway_state)
+        self._save_llm_gateway_state()
+
+    def _ledger_details(
+        self,
+        packet: dict[str, Any],
+        route: dict[str, Any],
+        fast_path: dict[str, Any],
+        decision: dict[str, Any] | None,
+        llm_result: dict[str, Any] | None,
+        gateway: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        decision = decision or {}
+        llm_result = llm_result or {}
+        gateway = gateway or {}
+        return {
+            "request": {
+                "method": packet.get("method"),
+                "path": packet.get("path"),
+                "headers": packet.get("headers") or {},
+                "query_keys": packet.get("query_keys") or [],
+                "body_summary": packet.get("body_summary") or {},
+                "user_hash": packet.get("user_hash"),
+                "session_hash": packet.get("session_hash"),
+                "ip_hash": packet.get("ip_hash"),
+                "endpoint_type": packet.get("endpoint_type"),
+                "feature_scope": packet.get("feature_scope"),
+            },
+            "route": route,
+            "fast_path": {
+                "action": fast_path.get("action"),
+                "rule_id": fast_path.get("rule_id"),
+                "reason": fast_path.get("reason"),
+            },
+            "core_decision": {
+                "selected_action": decision.get("selected_action"),
+                "scores": decision.get("scores") or {},
+                "reason_codes": decision.get("reason_codes") or [],
+                "admin_explanation": decision.get("admin_explanation"),
+                "duration_seconds": decision.get("duration_seconds"),
+                "target_scope": decision.get("target_scope"),
+            },
+            "core_scores": decision.get("scores") or {},
+            "tool_gateway": {
+                "allowed": gateway.get("allowed"),
+                "effective_action": gateway.get("effective_action"),
+                "reason": gateway.get("reason"),
+            },
+            "llm_gateway": {
+                "ok": llm_result.get("ok"),
+                "llm_called": llm_result.get("llm_called"),
+                "provider": llm_result.get("provider"),
+                "reason": llm_result.get("reason"),
+                "latency_ms": llm_result.get("latency_ms"),
+            },
+        }
+
     def _public_ledger_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return {
             key: record.get(key)
@@ -1113,6 +1580,85 @@ class CoreService:
             public.pop("admin_token_file", None)
             public["admin_token_file_configured"] = bool(changed.get("admin_token_file"))
         return public
+
+    def _auto_unban_approved_appeal(self, appeal: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        punishment_id = str(appeal.get("punishment_id") or "").strip()
+        action_id, parse_reason = self._parse_action_punishment_id(punishment_id)
+        if action_id is None:
+            return {
+                "ok": False,
+                "executed": False,
+                "reason": parse_reason,
+                "punishment_id": punishment_id,
+            }
+
+        action = self.executor.active_action(action_id)
+        if not action:
+            return {
+                "ok": False,
+                "executed": False,
+                "reason": "active_action_not_found",
+                "punishment_id": punishment_id,
+                "action_id": action_id,
+            }
+        if action.get("action") != "feature_ban":
+            return {
+                "ok": False,
+                "executed": False,
+                "reason": "action_is_not_feature_ban",
+                "punishment_id": punishment_id,
+                "action_id": action_id,
+            }
+        if not action.get("reversible"):
+            return {
+                "ok": False,
+                "executed": False,
+                "reason": "action_not_reversible",
+                "punishment_id": punishment_id,
+                "action_id": action_id,
+            }
+
+        revoked = self.executor.revoke(action_id, f"appeal approved: {punishment_id}")
+        if not revoked.get("ok"):
+            return {
+                "ok": False,
+                "executed": False,
+                "reason": revoked.get("reason") or "action_revoke_failed",
+                "punishment_id": punishment_id,
+                "action_id": action_id,
+            }
+        self.ledger.record(
+            {
+                "severity": "medium",
+                "event_type": "appeal_auto_unban",
+                "endpoint_type": "admin",
+                "action": "revoke_feature_ban",
+                "summary": self._admin_summary(
+                    f"appeal_auto_unban punishment_id={punishment_id} action_id={action_id}",
+                    actor,
+                ),
+            }
+        )
+        return {
+            "ok": True,
+            "executed": True,
+            "reason": "feature_ban_revoked",
+            "punishment_id": punishment_id,
+            "action_id": action_id,
+            "action": revoked.get("action"),
+        }
+
+    def _parse_action_punishment_id(self, punishment_id: str) -> tuple[int | None, str]:
+        if not punishment_id.startswith("action:"):
+            return None, "unsupported_punishment_id"
+        raw_action_id = punishment_id.removeprefix("action:")
+        try:
+            action_id = int(raw_action_id)
+        except (TypeError, ValueError):
+            return None, "invalid_action_punishment_id"
+        if action_id <= 0:
+            return None, "invalid_action_punishment_id"
+        return action_id, "ok"
 
     def break_glass_status(self, headers: dict[str, str] | None = None, actor: dict[str, str] | None = None) -> dict[str, Any]:
         headers = {k.lower(): v for k, v in (headers or {}).items()}

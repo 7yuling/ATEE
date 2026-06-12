@@ -50,8 +50,18 @@ class AteeHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/runtime/status":
             self._send_json(CORE.runtime_status())
             return
+        if self.path == "/v1/auth/captcha":
+            self._send_json(CORE.admin_captcha())
+            return
         if self.path == "/v1/admin/config":
             self._send_json(CORE.config_status())
+            return
+        if self.path == "/v1/admin/accounts":
+            self._send_json(CORE.admin_accounts())
+            return
+        if self.path.startswith("/v1/admin/api-keys"):
+            include_revoked = self._query_value("include_revoked", "0") == "1"
+            self._send_json(CORE.admin_api_keys(include_revoked=include_revoked))
             return
         if self.path == "/v1/admin/preflight":
             self._send_json(CORE.environment_preflight())
@@ -60,7 +70,8 @@ class AteeHandler(BaseHTTPRequestHandler):
             self._send_json(CORE.test_llm_gateway())
             return
         if self.path.startswith("/v1/admin/ledger/recent"):
-            self._send_json(CORE.ledger_recent(self._query_limit(default=20), include_details=False))
+            include_details = self._query_value("details", "0") == "1"
+            self._send_json(CORE.ledger_recent(self._query_limit(default=20), include_details=include_details))
             return
         if self.path.startswith("/v1/admin/appeals"):
             self._send_json(CORE.admin_appeals(self._query_value("status", "pending"), self._query_limit(default=50)))
@@ -86,11 +97,23 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         payload = self._read_json()
         remote_addr = self.client_address[0] if self.client_address else "127.0.0.1"
+        if self.path == "/v1/auth/register":
+            result = CORE.register_admin(payload)
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/auth/login":
+            result = CORE.login_admin(payload, remote_addr=remote_addr)
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
         if self.path == "/v1/check":
             self._send_json(CORE.check(payload, remote_addr=remote_addr))
             return
         if self.path == "/v1/event":
             self._send_json(CORE.event(payload, remote_addr=remote_addr))
+            return
+        if self.path == "/v1/feature-access":
+            result = CORE.feature_access(payload)
+            self._send_json(result, status=int(result.get("status", 200)))
             return
         if self.path == "/v1/appeal":
             result = CORE.appeal(payload, remote_addr=remote_addr)
@@ -104,6 +127,18 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/admin/config":
             self._send_json(CORE.update_config(payload, actor=self._admin_actor()))
+            return
+        if self.path == "/v1/admin/accounts":
+            result = CORE.create_admin_account(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/accounts/password":
+            result = CORE.change_admin_password(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/api-keys":
+            result = CORE.create_api_key(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
             return
         if self.path == "/v1/admin/preflight":
             self._send_json(CORE.environment_preflight())
@@ -135,6 +170,26 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/admin/async-reviews/run":
             self._send_json(CORE.run_async_reviews(payload, actor=self._admin_actor()))
+            return
+        if self.path == "/v1/admin/async-reviews/manual-action":
+            result = CORE.manual_review_async_job(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        self._send_json({"error": "not_found"}, status=404)
+
+    def do_DELETE(self) -> None:
+        if self._is_admin_api_path() and not self._ensure_admin_auth():
+            return
+        path = urlsplit(self.path).path
+        if path.startswith("/v1/admin/api-keys/"):
+            _, _, raw_id = path.rpartition("/")
+            try:
+                key_id = int(raw_id)
+            except ValueError:
+                self._send_json({"ok": False, "status": 400, "reason": "api_key_id_required"}, status=400)
+                return
+            result = CORE.delete_api_key(key_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
             return
         self._send_json({"error": "not_found"}, status=404)
 

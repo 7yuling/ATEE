@@ -108,11 +108,12 @@ def _run_live(config_path: Path) -> dict:
 def _run_budget_scenario(base_url: str, provider_calls) -> dict:
     config = _fake_config(base_url, budget_cents=1)
     return _run_worker_scenario(
-        name="budget_exhaustion_dead_letter",
+        name="budget_exhaustion_pauses_pending",
         config=config,
         job_count=2,
         expected_completed=1,
-        expected_dead_letter=1,
+        expected_dead_letter=0,
+        expected_pending=1,
         expected_provider_calls=1,
         expect_circuit_open=False,
         provider_calls=provider_calls,
@@ -159,6 +160,7 @@ def _run_worker_scenario(
     expected_dead_letter: int,
     expected_provider_calls: int | None,
     expect_circuit_open: bool,
+    expected_pending: int | None = None,
     provider_calls=None,
 ) -> dict:
     core = CoreService(config=config)
@@ -184,14 +186,17 @@ def _run_worker_scenario(
         worker.stop()
 
     status = core.runtime_status()
+    queue_status = status.get("async_review") or {}
     llm_status = status.get("llm_gateway") or {}
     circuit = llm_status.get("circuit") or {}
     budget = llm_status.get("budget") or {}
     actual_provider_calls = provider_calls() if callable(provider_calls) else None
     provider_calls_ok = True if expected_provider_calls is None else actual_provider_calls == expected_provider_calls
+    pending_ok = True if expected_pending is None else int(queue_status.get("pending") or 0) == expected_pending
     ok = (
         completed == expected_completed
         and dead_letter == expected_dead_letter
+        and pending_ok
         and provider_calls_ok
         and bool(circuit.get("open")) is bool(expect_circuit_open)
     )
@@ -217,7 +222,7 @@ def _run_worker_scenario(
             "last_error": worker.last_error,
             "last_claimed": (worker.last_result or {}).get("claimed"),
         },
-        "queue": _public_queue_status(status.get("async_review") or {}),
+        "queue": _public_queue_status(queue_status),
     }
 
 

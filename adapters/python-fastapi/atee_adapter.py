@@ -20,6 +20,9 @@ class AteeThinAdapter:
     def event(self, request_context: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/event", request_context)
 
+    def feature_access(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/v1/feature-access", payload)
+
     def appeal(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/appeal", payload)
 

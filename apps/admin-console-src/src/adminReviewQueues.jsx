@@ -13,7 +13,10 @@ import {
   Select,
   Space,
   Table,
+  Typography,
 } from "antd";
+
+const { Text } = Typography;
 
 export function AppealsTab({
   appealStatus,
@@ -50,6 +53,20 @@ export function AppealsTab({
         columns={appealColumns}
         dataSource={appeals}
         pagination={{ pageSize: 5 }}
+        expandable={{
+          expandedRowRender: (record) => (
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Text strong>申诉内容</Text>
+              <pre id={`appealReason-${record.punishment_id}`}>{record.reason_untrusted_text || "无申诉内容"}</pre>
+              {record.admin_note_untrusted_text ? (
+                <>
+                  <Text strong>管理员备注</Text>
+                  <pre>{record.admin_note_untrusted_text}</pre>
+                </>
+              ) : null}
+            </Space>
+          ),
+        }}
         onRow={(record) => ({
           className: "clickable-row",
           onClick: () => appealForm.setFieldsValue({ punishment_id: record.punishment_id }),
@@ -172,6 +189,8 @@ export function AsyncReviewsTab({
   showAsyncReviews,
   asyncReviewColumns,
   asyncReviews,
+  manualReviewForm,
+  manualFeatureBan,
   runAsyncReviews,
   writeLocked,
 }) {
@@ -213,7 +232,45 @@ export function AsyncReviewsTab({
         columns={asyncReviewColumns}
         dataSource={asyncReviews}
         pagination={{ pageSize: 5 }}
+        onRow={(record) => ({
+          className: "clickable-row",
+          onClick: () => manualReviewForm.setFieldsValue({
+            job_id: record.id,
+            user_hash: record.user_hash,
+            feature_scope: record.feature_scope || record.event_type,
+            duration_seconds: 3600,
+          }),
+        })}
       />
+      <Form form={manualReviewForm} layout="inline" className="review-form">
+        <Form.Item label="审查任务" name="job_id">
+          <Input id="manualReviewJobIdInput" inputMode="numeric" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="用户哈希" name="user_hash">
+          <Input id="manualReviewUserHashInput" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="功能范围" name="feature_scope">
+          <Input id="manualReviewFeatureInput" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="封禁秒数" name="duration_seconds">
+          <Input id="manualReviewDurationInput" inputMode="numeric" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="人工备注" name="admin_note">
+          <Input id="manualReviewNoteInput" autoComplete="off" />
+        </Form.Item>
+        <Form.Item>
+          <Popconfirm
+            title="确认执行人工功能封禁"
+            description="该操作会把异步审查任务标记完成，并为任务中的脱敏用户账号记录可撤销的 feature_ban 动作。"
+            okText="确认封禁"
+            cancelText="取消"
+            onConfirm={manualFeatureBan}
+            disabled={writeLocked}
+          >
+            <Button id="manualFeatureBanBtn" danger disabled={writeLocked}>人工功能封禁</Button>
+          </Popconfirm>
+        </Form.Item>
+      </Form>
     </Card>
   );
 }

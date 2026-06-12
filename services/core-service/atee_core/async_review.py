@@ -8,6 +8,13 @@ from typing import Any
 
 
 QUEUE_STATUSES = {"pending", "retry", "processing", "completed", "dead_letter", "all"}
+ACTIVE_QUEUE_STATUSES = ("pending", "retry", "processing")
+
+
+class AsyncReviewQueueFull(RuntimeError):
+    def __init__(self, status: dict[str, Any]):
+        self.status = status
+        super().__init__("async_review_queue_full")
 
 
 class AsyncReviewQueue:
@@ -17,18 +24,23 @@ class AsyncReviewQueue:
         max_attempts: int = 3,
         retry_backoff_seconds: int = 60,
         stale_processing_seconds: int = 300,
+        max_depth: int = 5000,
     ):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.max_attempts = max(1, int(max_attempts))
         self.retry_backoff_seconds = max(1, int(retry_backoff_seconds))
         self.stale_processing_seconds = max(1, int(stale_processing_seconds))
+        self.max_depth = max(1, int(max_depth))
         self._ensure_schema()
 
     def enqueue(self, packet: dict[str, Any], route: dict[str, Any]) -> dict[str, Any]:
         now = self._now_iso()
         now_ts = time.time()
         with closing(sqlite3.connect(self.path)) as conn:
+            active_depth = self._active_depth(conn)
+            if active_depth >= self.max_depth:
+                raise AsyncReviewQueueFull(self._status_from_conn(conn))
             cursor = conn.execute(
                 """
                 INSERT INTO async_review_jobs
@@ -132,6 +144,25 @@ class AsyncReviewQueue:
             conn.commit()
         return self.get(job_id, include_payload=False)
 
+    def defer(self, job_id: int, reason: str, delay_seconds: int = 60) -> dict[str, Any] | None:
+        next_attempt_at = time.time() + max(1, int(delay_seconds))
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute(
+                """
+                UPDATE async_review_jobs
+                SET status = 'retry',
+                    attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+                    last_error = ?,
+                    next_attempt_at = ?,
+                    processing_started_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (str(reason)[:512], next_attempt_at, self._now_iso(), int(job_id)),
+            )
+            conn.commit()
+        return self.get(job_id, include_payload=False)
+
     def requeue_stale_processing(self) -> int:
         cutoff = time.time() - self.stale_processing_seconds
         with closing(sqlite3.connect(self.path)) as conn:
@@ -183,27 +214,45 @@ class AsyncReviewQueue:
         return self._row_to_job(row, include_payload=include_payload) if row else None
 
     def status(self) -> dict[str, Any]:
-        counts = {key: 0 for key in ["pending", "retry", "processing", "completed", "dead_letter"]}
         with closing(sqlite3.connect(self.path)) as conn:
-            rows = conn.execute(
-                """
-                SELECT status, COUNT(*)
-                FROM async_review_jobs
-                GROUP BY status
-                """
-            ).fetchall()
+            return self._status_from_conn(conn)
+
+    def _status_from_conn(self, conn: sqlite3.Connection) -> dict[str, Any]:
+        counts = {key: 0 for key in ["pending", "retry", "processing", "completed", "dead_letter"]}
+        rows = conn.execute(
+            """
+            SELECT status, COUNT(*)
+            FROM async_review_jobs
+            GROUP BY status
+            """
+        ).fetchall()
         for status, count in rows:
             if status in counts:
                 counts[status] = int(count)
+        active_depth = counts["pending"] + counts["retry"] + counts["processing"]
         return {
             **counts,
             "queued": counts["pending"] + counts["retry"],
+            "active_depth": active_depth,
+            "max_depth": self.max_depth,
+            "available_depth": max(0, self.max_depth - active_depth),
+            "backpressure": active_depth >= self.max_depth,
             "max_attempts": self.max_attempts,
             "sqlite_enabled": True,
             "sqlite_path": str(self.path),
         }
 
+    def _active_depth(self, conn: sqlite3.Connection) -> int:
+        placeholders = ",".join("?" for _ in ACTIVE_QUEUE_STATUSES)
+        return int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM async_review_jobs WHERE status IN ({placeholders})",
+                ACTIVE_QUEUE_STATUSES,
+            ).fetchone()[0]
+        )
+
     def _row_to_job(self, row: sqlite3.Row, include_payload: bool = False) -> dict[str, Any]:
+        packet = json.loads(row["packet_json"] or "{}")
         job = {
             "id": int(row["id"]),
             "status": row["status"],
@@ -211,15 +260,19 @@ class AsyncReviewQueue:
             "max_attempts": int(row["max_attempts"] or self.max_attempts),
             "event_type": row["event_type"],
             "route": row["route"],
+            "user_hash": packet.get("user_hash"),
             "ip_hash": row["ip_hash"],
             "rule_id": row["rule_id"],
+            "feature_scope": packet.get("feature_scope") or packet.get("endpoint_type"),
+            "body_signals": (packet.get("body_summary") or {}).get("signals") or [],
+            "body_preview": (packet.get("body_summary") or {}).get("preview"),
             "last_error": row["last_error"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "next_attempt_at": row["next_attempt_at"],
         }
         if include_payload:
-            job["packet"] = json.loads(row["packet_json"] or "{}")
+            job["packet"] = packet
             job["route_detail"] = json.loads(row["route_json"] or "{}")
         if row["result_json"]:
             job["result"] = json.loads(row["result_json"])

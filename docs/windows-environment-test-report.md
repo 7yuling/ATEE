@@ -13,7 +13,7 @@ ATEE 在 Windows 环境中已经完成从本地运行、管理台构建、浏览
 
 | 项目 | 说明 |
 |---|---|
-| 工作区 | `C:\Users\Pro16\Documents\Codex\2026-05-12\skills\atee` |
+| 工作区 | `C:\Users\Pro16\Documents\Codex\ATEE` |
 | 运行形态 | Windows 本地 Python/Node、Core Service 临时服务、React + Ant Design 管理台、系统 Chrome/Chromium 浏览器自动化。 |
 | 密钥形态 | Windows 侧支持 DPAPI/密钥文件/环境变量；测试与报告只记录“是否已配置”，不回显敏感值。 |
 | 服务入口 | 本地临时服务常用 `127.0.0.1` 随机端口或 `127.0.0.1:8787`；生产脚本验证健康检查、管理台资源和管理接口鉴权。 |

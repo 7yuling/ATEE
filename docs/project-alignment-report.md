@@ -5,7 +5,7 @@
 
 - `ATEE_Agentic_Coding_Workflow_v3.3.md`
 - `ATEE_最终合并会议报告_v3.3_含小白引导.md`
-- 当前工程目录：`C:\Users\Pro16\Documents\Codex\2026-05-12\skills\atee`
+- 当前工程目录：`C:\Users\Pro16\Documents\Codex\ATEE`
 
 ## 1. 对齐结论
 

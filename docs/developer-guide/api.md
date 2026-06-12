@@ -31,6 +31,19 @@ Response includes:
 
 Same shape as `/v1/check`, defaulting to a write/event path.
 
+## POST /v1/feature-access
+
+Request:
+
+```json
+{
+  "user_id": "site-user-123",
+  "feature_scope": "comments"
+}
+```
+
+Core hashes `user_id` internally and does not return the raw value. If an active `user_feature` `feature_ban` matches the hashed user and feature, the response includes `allowed=false`, `reason=active_feature_ban`, `active_action`, `punishment_id` in the form `action:<action_id>`, and `expires_at`. Otherwise it returns `allowed=true` with `reason=no_active_feature_ban`.
+
 ## POST /v1/appeal
 
 Request:
@@ -45,6 +58,8 @@ Request:
 
 Appeal POST is limited to one submission per `punishment_id` and `banned_ip_hash` per hour. Rate-limited appeals return `429` and do not create a record. Accepted pending appeals are persisted to SQLite and loaded again on Core Service restart.
 
+For user-feature bans, use the `punishment_id` returned by `/v1/feature-access`, for example `action:12`. When an admin approves that appeal, Core Service automatically revokes the active reversible `feature_ban` action record. Rejected appeals do not unban.
+
 ## Runtime
 
 - `GET /v1/runtime/status`
@@ -55,6 +70,7 @@ Appeal POST is limited to one submission per `punishment_id` and `banned_ip_hash
 - `POST /v1/admin/agent/chat`
 - `GET /v1/admin/llm/test`
 - `POST /v1/admin/llm/test`
+- `POST /v1/feature-access`
 - `GET /v1/admin/ledger/recent?limit=10`
 - `GET /v1/admin/appeals?status=pending`
 - `POST /v1/admin/appeals/review`
@@ -424,6 +440,8 @@ Review an appeal:
 
 `resolution` must be `approved` or `rejected`. Admin notes and appeal reasons are stored and rendered as untrusted text.
 
+If the reviewed appeal uses `punishment_id=action:<action_id>` and the resolution is `approved`, the response includes `auto_unban`. Core only auto-revokes an active reversible `feature_ban`; invalid ids, expired records, revoked records, or non-feature-ban actions leave the appeal review saved and return `auto_unban.executed=false` with a reason.
+
 ## Admin Action Management
 
 List action records:
@@ -433,6 +451,8 @@ GET /v1/admin/actions?status=active
 ```
 
 `status` can be `active`, `revoked`, `expired`, or `all`.
+
+Active `feature_ban` records with an id include `punishment_id=action:<action_id>` so connected sites can show an appeal id without exposing raw user identifiers.
 
 Revoke an active ATEE action record:
 

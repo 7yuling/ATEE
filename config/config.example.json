@@ -17,6 +17,7 @@
   "async_review_worker_enabled": false,
   "async_review_worker_interval_seconds": 5,
   "async_review_worker_batch_size": 5,
+  "async_review_queue_max_depth": 5000,
   "llm_api_base": null,
   "llm_api_key_env": "ATEE_LLM_API_KEY",
   "llm_api_key_file": null,

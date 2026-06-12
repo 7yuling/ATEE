@@ -45,6 +45,10 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/preflight", js)
         self.assertIn("/v1/admin/security-flow/run", js)
         self.assertIn("/v1/admin/agent/chat", js)
+        self.assertIn("/v1/auth/captcha", js)
+        self.assertIn("/v1/auth/login", js)
+        self.assertIn("/v1/admin/accounts", js)
+        self.assertIn("/v1/admin/api-keys", js)
         self.assertIn("<script>alert(1)<\\/script>", js)
         self.assertIn("ATEE 管理控制台", js)
 
@@ -54,6 +58,7 @@ class AdminConsoleTests(unittest.TestCase):
         dashboard_source = (self.source_dir / "src" / "adminDashboard.jsx").read_text(encoding="utf-8")
         ledger_config_source = (self.source_dir / "src" / "adminLedgerConfig.jsx").read_text(encoding="utf-8")
         review_source = (self.source_dir / "src" / "adminReviewQueues.jsx").read_text(encoding="utf-8")
+        access_source = (self.source_dir / "src" / "adminAccess.jsx").read_text(encoding="utf-8")
         support_source = (self.source_dir / "src" / "adminSupport.jsx").read_text(encoding="utf-8")
         source = (
             main_source
@@ -65,6 +70,8 @@ class AdminConsoleTests(unittest.TestCase):
             + ledger_config_source
             + "\n"
             + review_source
+            + "\n"
+            + access_source
             + "\n"
             + support_source
         )
@@ -88,6 +95,23 @@ class AdminConsoleTests(unittest.TestCase):
             "operationGuardAlert",
             "adminIdInput",
             "adminTokenInput",
+            "adminLoginUsernameInput",
+            "adminLoginPasswordInput",
+            "adminCaptchaAnswerInput",
+            "loadCaptchaBtn",
+            "adminLoginBtn",
+            "adminRegisterBtn",
+            "adminAccountsBtn",
+            "newAdminUsernameInput",
+            "newAdminPasswordInput",
+            "createAdminAccountBtn",
+            "changeAdminPasswordBtn",
+            "apiKeysBtn",
+            "apiKeyNameInput",
+            "apiKeyScopeSelect",
+            "apiKeyEnvInput",
+            "apiKeyValueInput",
+            "createApiKeyBtn",
             "saveAdminTokenBtn",
             "clearAdminTokenBtn",
             "adminAuthState",
@@ -163,6 +187,12 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("atee-admin-auth-required", source)
         self.assertIn("POST\",", source)
         self.assertIn("/v1/admin/config", source)
+        self.assertIn("/v1/auth/captcha", source)
+        self.assertIn("/v1/auth/login", source)
+        self.assertIn("/v1/auth/register", source)
+        self.assertIn("/v1/admin/accounts", source)
+        self.assertIn("/v1/admin/api-keys", source)
+        self.assertIn("details=1", source)
         self.assertIn("installStyleNonce(runtimeCspNonce)", source)
         self.assertIn("csp={{ nonce: runtimeCspNonce }}", source)
         self.assertIn("wave={{ disabled: true }}", source)

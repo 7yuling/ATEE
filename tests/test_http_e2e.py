@@ -75,6 +75,42 @@ class AteeHttpE2ETests(unittest.TestCase):
         async_pending = self._json("GET", "/v1/admin/async-reviews?status=pending")
         async_run = self._json("POST", "/v1/admin/async-reviews/run", {"limit": 2})
         async_completed = self._json("GET", "/v1/admin/async-reviews?status=completed")
+        feature_user = "http-feature-user"
+        feature_scope = "comments"
+        feature_user_hash = http_server.CORE.packet_compiler._hash(feature_user)
+        feature_action = http_server.CORE.executor.execute(
+            {
+                "selected_action": "feature_ban",
+                "duration_seconds": 3600,
+                "target_scope": {
+                    "type": "user_feature",
+                    "user_hash": feature_user_hash,
+                    "feature": feature_scope,
+                },
+            },
+            {"executed": True, "effective_action": "feature_ban"},
+        )
+        feature_punishment_id = f"action:{feature_action['record']['id']}"
+        feature_blocked = self._json(
+            "POST",
+            "/v1/feature-access",
+            {"user_id": feature_user, "feature_scope": feature_scope},
+        )
+        feature_appeal = self._json(
+            "POST",
+            "/v1/appeal",
+            {"punishment_id": feature_punishment_id, "reason": "feature ban appeal"},
+        )
+        feature_reviewed = self._json(
+            "POST",
+            "/v1/admin/appeals/review",
+            {"punishment_id": feature_punishment_id, "resolution": "approved", "admin_note": "low risk"},
+        )
+        feature_allowed = self._json(
+            "POST",
+            "/v1/feature-access",
+            {"user_id": feature_user, "feature_scope": feature_scope},
+        )
         appeal = self._json("POST", "/v1/appeal", {"punishment_id": "http-e2e-p1", "reason": "please review"})
         pending = self._json("GET", "/v1/admin/appeals?status=pending")
         reviewed = self._json(
@@ -113,6 +149,11 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertEqual(async_pending["count"], 1)
         self.assertEqual(async_run["claimed"], 1)
         self.assertEqual(async_completed["count"], 1)
+        self.assertFalse(feature_blocked["allowed"])
+        self.assertEqual(feature_blocked["punishment_id"], feature_punishment_id)
+        self.assertEqual(feature_appeal["status"], 202)
+        self.assertTrue(feature_reviewed["auto_unban"]["executed"])
+        self.assertTrue(feature_allowed["allowed"])
         self.assertEqual(appeal["status"], 202)
         self.assertEqual(pending["count"], 1)
         self.assertTrue(reviewed["ok"])
@@ -191,6 +232,80 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertNotIn("http-e2e-admin-token", json.dumps(unauthorized))
             self.assertNotIn("http-e2e-admin-token", json.dumps(public_status))
             self.assertNotIn("http-e2e-admin-token", json.dumps(recent))
+        finally:
+            os.environ.pop(env_name, None)
+
+    def test_captcha_admin_login_and_api_key_routes_over_http(self):
+        env_name = "ATEE_HTTP_MANAGED_PROVIDER_KEY"
+        os.environ.pop(env_name, None)
+        try:
+            captcha = self._json("GET", "/v1/auth/captcha")
+            left, right = [int(part.strip()) for part in captcha["question"].split("=")[0].split("+")]
+            registered = self._json(
+                "POST",
+                "/v1/auth/register",
+                {
+                    "username": "http-admin",
+                    "password": "http-admin-pass",
+                    "captcha_id": captcha["captcha_id"],
+                    "captcha_answer": str(left + right),
+                },
+            )
+            login_captcha = self._json("GET", "/v1/auth/captcha")
+            left, right = [int(part.strip()) for part in login_captcha["question"].split("=")[0].split("+")]
+            logged_in = self._json(
+                "POST",
+                "/v1/auth/login",
+                {
+                    "username": "http-admin",
+                    "password": "http-admin-pass",
+                    "captcha_id": login_captcha["captcha_id"],
+                    "captcha_answer": str(left + right),
+                },
+            )
+            token_headers = {"Authorization": f"Bearer {logged_in['token']}"}
+            self._json("POST", "/v1/admin/config", {"admin_auth_enabled": True}, headers=token_headers)
+            accounts = self._json("GET", "/v1/admin/accounts", headers=token_headers)
+            created_key = self._json(
+                "POST",
+                "/v1/admin/api-keys",
+                {
+                    "name": "http-provider",
+                    "scope": "backend",
+                    "env_name": env_name,
+                    "key_value": "sk-http-secret",
+                },
+                headers=token_headers,
+            )
+            listed = self._json("GET", "/v1/admin/api-keys", headers=token_headers)
+            env_after_create = os.environ.get(env_name)
+            deleted = self._json("DELETE", f"/v1/admin/api-keys/{created_key['record']['id']}", headers=token_headers)
+            self._json(
+                "POST",
+                "/v1/check",
+                {
+                    "method": "POST",
+                    "path": "/login",
+                    "event_type": "login",
+                    "body": {"username": "http-user", "password": "hidden-password"},
+                },
+            )
+            ledger = self._json("GET", "/v1/admin/ledger/recent?limit=5&details=1", headers=token_headers)
+            public_text = json.dumps({"accounts": accounts, "listed": listed, "ledger": ledger}, ensure_ascii=False)
+
+            self.assertTrue(registered["ok"])
+            self.assertTrue(logged_in["ok"])
+            self.assertTrue(accounts["ok"])
+            self.assertEqual(accounts["count"], 1)
+            self.assertTrue(created_key["ok"])
+            self.assertEqual(env_after_create, "sk-http-secret")
+            self.assertEqual(listed["count"], 1)
+            self.assertIn("********", listed["keys"][0]["masked_key"])
+            self.assertTrue(deleted["ok"])
+            self.assertIsNone(os.environ.get(env_name))
+            self.assertTrue(any(record.get("details") is not None for record in ledger["records"]))
+            self.assertNotIn("sk-http-secret", public_text)
+            self.assertNotIn(logged_in["token"], public_text)
         finally:
             os.environ.pop(env_name, None)
 

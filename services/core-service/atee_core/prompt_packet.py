@@ -47,6 +47,7 @@ class PromptPacketCompiler:
             "session_hash": self._hash(ctx.session_id),
             "ip_hash": self._hash(real_ip.get("client_ip")),
             "endpoint_type": route.get("event_type"),
+            "feature_scope": ctx.feature_scope,
             "fast_path_signal": {
                 "action": fast_path.get("action"),
                 "rule_id": fast_path.get("rule_id"),

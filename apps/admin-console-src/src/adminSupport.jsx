@@ -22,6 +22,7 @@ export const SECRET_PLACEHOLDER = "已配置的敏感值不会回显；留空保
 const REDACTED_VALUE = "[已保密]";
 const SECRET_JSON_KEYS = new Set([
   "api_base",
+  "key",
   "llm_api_base",
   "api_key",
   "openai_api",

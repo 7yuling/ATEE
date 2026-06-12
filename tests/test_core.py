@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from time import monotonic
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,27 @@ from atee_core.tool_gateway import ToolGateway
 
 
 class AteeCoreTests(unittest.TestCase):
+    def _execute_user_feature_ban(
+        self,
+        core: CoreService,
+        user_id: str = "feature-user",
+        feature_scope: str = "comments",
+        duration_seconds: int = 3600,
+    ) -> dict:
+        user_hash = core.packet_compiler._hash(user_id)
+        return core.executor.execute(
+            {
+                "selected_action": "feature_ban",
+                "duration_seconds": duration_seconds,
+                "target_scope": {
+                    "type": "user_feature",
+                    "user_hash": user_hash,
+                    "feature": feature_scope,
+                },
+            },
+            {"executed": True, "effective_action": "feature_ban"},
+        )
+
     def test_unconfigured_proxy_disables_ip_ban(self):
         resolver = TrustedRealIpResolver([])
         result = resolver.resolve({"X-Forwarded-For": "1.2.3.4"}, "10.0.0.5")
@@ -412,6 +434,95 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(cleanup["expired_marked"], 1)
             self.assertEqual(expired["count"], 1)
 
+    def test_feature_access_blocks_active_user_feature_ban_with_punishment_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            action = self._execute_user_feature_ban(core, user_id="low-risk-user", feature_scope="comments")
+
+            access = core.feature_access({"user_id": "low-risk-user", "feature_scope": "comments"})
+            unrelated = core.feature_access({"user_id": "low-risk-user", "feature_scope": "uploads"})
+
+            self.assertFalse(access["allowed"])
+            self.assertEqual(access["reason"], "active_feature_ban")
+            self.assertEqual(access["punishment_id"], f"action:{action['record']['id']}")
+            self.assertEqual(access["active_action"]["punishment_id"], f"action:{action['record']['id']}")
+            self.assertEqual(access["active_action"]["target_scope"]["feature"], "comments")
+            self.assertTrue(unrelated["allowed"])
+            self.assertNotIn("low-risk-user", json.dumps(access, ensure_ascii=False))
+
+    def test_approved_feature_ban_appeal_auto_unbans_action(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            action = self._execute_user_feature_ban(core, user_id="appeal-user", feature_scope="comments")
+            punishment_id = f"action:{action['record']['id']}"
+            appeal = core.appeal({"punishment_id": punishment_id, "reason": "please review"})
+
+            reviewed = core.review_appeal(
+                {"punishment_id": punishment_id, "resolution": "approved", "admin_note": "low risk"},
+                actor={"id": "ops", "id_hash": "sha256:ops", "source_hash": "sha256:src"},
+            )
+            access = core.feature_access({"user_id": "appeal-user", "feature_scope": "comments"})
+            revoked = core.admin_actions(status="revoked")
+
+            self.assertEqual(appeal["status"], 202)
+            self.assertTrue(reviewed["ok"])
+            self.assertTrue(reviewed["auto_unban"]["executed"])
+            self.assertEqual(reviewed["auto_unban"]["reason"], "feature_ban_revoked")
+            self.assertTrue(access["allowed"])
+            self.assertEqual(access["reason"], "no_active_feature_ban")
+            self.assertEqual(revoked["count"], 1)
+            self.assertEqual(revoked["actions"][0]["punishment_id"], punishment_id)
+
+    def test_rejected_feature_ban_appeal_does_not_unban_action(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            action = self._execute_user_feature_ban(core, user_id="reject-user", feature_scope="comments")
+            punishment_id = f"action:{action['record']['id']}"
+            core.appeal({"punishment_id": punishment_id, "reason": "please review"})
+
+            reviewed = core.review_appeal({"punishment_id": punishment_id, "resolution": "rejected"})
+            access = core.feature_access({"user_id": "reject-user", "feature_scope": "comments"})
+
+            self.assertTrue(reviewed["ok"])
+            self.assertFalse(reviewed["auto_unban"]["executed"])
+            self.assertEqual(reviewed["auto_unban"]["reason"], "appeal_not_approved")
+            self.assertFalse(access["allowed"])
+            self.assertEqual(core.admin_actions(status="active")["count"], 1)
+
+    def test_approved_appeal_with_invalid_or_non_feature_action_keeps_review_saved(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            challenge = core.executor.execute(
+                {"duration_seconds": 60, "target_scope": {"type": "request", "hash": "challenge"}},
+                {"executed": True, "effective_action": "challenge"},
+            )
+            invalid_id = "action:not-a-number"
+            non_feature_id = f"action:{challenge['record']['id']}"
+            core.appeal({"punishment_id": invalid_id, "reason": "invalid"})
+            core.appeal({"punishment_id": non_feature_id, "reason": "not feature"})
+
+            invalid_review = core.review_appeal({"punishment_id": invalid_id, "resolution": "approved"})
+            non_feature_review = core.review_appeal({"punishment_id": non_feature_id, "resolution": "approved"})
+
+            self.assertTrue(invalid_review["ok"])
+            self.assertEqual(invalid_review["auto_unban"]["reason"], "invalid_action_punishment_id")
+            self.assertTrue(non_feature_review["ok"])
+            self.assertEqual(non_feature_review["auto_unban"]["reason"], "action_is_not_feature_ban")
+            self.assertEqual(core.admin_appeals(status="approved")["count"], 2)
+            self.assertEqual(core.admin_actions(status="active")["count"], 1)
+
     def test_read_only_blocks_admin_action_mutations(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config" / "config.json"
@@ -529,6 +640,85 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(core.admin_authorized({"Authorization": "Bearer file-admin-token"}))
             self.assertFalse(core.admin_authorized({}))
 
+    def test_admin_captcha_register_login_session_and_accounts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(admin_auth_enabled=True),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            captcha = core.admin_captcha()
+            left, right = [int(part.strip()) for part in captcha["question"].split("=")[0].split("+")]
+            registered = core.register_admin(
+                {
+                    "username": "ops@example.com",
+                    "password": "strong-pass-1",
+                    "captcha_id": captcha["captcha_id"],
+                    "captcha_answer": str(left + right),
+                }
+            )
+            login_captcha = core.admin_captcha()
+            left, right = [int(part.strip()) for part in login_captcha["question"].split("=")[0].split("+")]
+            logged_in = core.login_admin(
+                {
+                    "username": "ops@example.com",
+                    "password": "strong-pass-1",
+                    "captcha_id": login_captcha["captcha_id"],
+                    "captcha_answer": str(left + right),
+                },
+                remote_addr="203.0.113.5",
+            )
+            actor = core.admin_actor_from_headers({"Authorization": f"Bearer {logged_in['token']}"})
+            accounts = core.admin_accounts()
+            created = core.create_admin_account({"username": "backup", "password": "backup-pass-1"}, actor=actor)
+            changed = core.change_admin_password(
+                {"username": "backup", "new_password": "backup-pass-2"},
+                actor=actor,
+            )
+
+            self.assertTrue(registered["ok"])
+            self.assertTrue(logged_in["ok"])
+            self.assertTrue(core.admin_authorized({"Authorization": f"Bearer {logged_in['token']}"}))
+            self.assertEqual(actor["id"], "ops@example.com")
+            self.assertEqual(accounts["count"], 1)
+            self.assertTrue(created["ok"])
+            self.assertTrue(changed["ok"])
+            self.assertTrue(core.admin_auth_status()["accounts_configured"])
+            self.assertNotIn("strong-pass-1", json.dumps(core.admin_accounts(), ensure_ascii=False))
+            self.assertNotIn(logged_in["token"], json.dumps(core.runtime_status(), ensure_ascii=False))
+
+    def test_admin_api_key_registry_masks_key_and_uses_runtime_env(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_name = "ATEE_TEST_MANAGED_PROVIDER_KEY"
+            os.environ.pop(env_name, None)
+            try:
+                core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+                created = core.create_api_key(
+                    {
+                        "name": "provider",
+                        "scope": "backend",
+                        "env_name": env_name,
+                        "key_value": "sk-live-secret-value",
+                    }
+                )
+                listed = core.admin_api_keys()
+                env_after_create = os.environ.get(env_name)
+                deleted = core.delete_api_key(created["record"]["id"])
+                listed_after_delete = core.admin_api_keys()
+                persisted = (Path(temp_dir) / "data" / "atee_ledger.sqlite3").read_bytes()
+
+                self.assertTrue(created["ok"])
+                self.assertEqual(env_after_create, "sk-live-secret-value")
+                self.assertEqual(core.config.llm_api_key_env, env_name)
+                self.assertEqual(listed["count"], 1)
+                self.assertIn("********", listed["keys"][0]["masked_key"])
+                self.assertNotIn("sk-live-secret-value", json.dumps(listed, ensure_ascii=False))
+                self.assertTrue(deleted["ok"])
+                self.assertIsNone(os.environ.get(env_name))
+                self.assertEqual(listed_after_delete["count"], 0)
+                self.assertNotIn(b"sk-live-secret-value", persisted)
+            finally:
+                os.environ.pop(env_name, None)
+
     def test_admin_mutations_record_actor_summary_without_tokens(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config" / "config.json"
@@ -637,6 +827,33 @@ class AteeCoreTests(unittest.TestCase):
             self.assertNotIn("rule_id", public["records"][0])
             self.assertNotIn("sqlite_path", public["status"])
 
+    def test_ledger_recent_details_include_sanitized_behavior_and_core_scores(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config" / "config.json"
+            core = CoreService(config_path=config_path)
+            core.check(
+                {
+                    "method": "POST",
+                    "path": "/login",
+                    "event_type": "login",
+                    "body": {"username": "alice", "password": "secret-password"},
+                    "headers": {"Authorization": "Bearer hidden"},
+                }
+            )
+            full = core.ledger_recent(limit=5, include_details=True)
+            public = core.ledger_recent(limit=5, include_details=False)
+            details = full["records"][0]["details"]
+            public_text = json.dumps(public, ensure_ascii=False)
+            details_text = json.dumps(details, ensure_ascii=False)
+
+            self.assertEqual(details["request"]["path"], "/login")
+            self.assertIn("[REDACTED]", details["request"]["body_summary"]["preview"])
+            self.assertIn("final_confidence", details["core_scores"])
+            self.assertIn("reason_codes", details["core_decision"])
+            self.assertNotIn("Authorization", details_text)
+            self.assertNotIn("secret-password", details_text)
+            self.assertNotIn("details", public_text)
+
     def test_update_config_rebuilds_real_ip_resolver(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(config_path=Path(temp_dir) / "config.json")
@@ -672,6 +889,61 @@ class AteeCoreTests(unittest.TestCase):
                 }
             )
             self.assertEqual(check["real_ip"]["client_ip"], "203.0.113.8")
+
+    def test_update_config_preserves_llm_budget_and_circuit_runtime_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(llm_daily_budget_cents=10),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            core.llm_gateway.daily_spend_cents = 4
+            core.llm_gateway.consecutive_failures = 3
+            core.llm_gateway.circuit_opened_until = monotonic() + 60
+            old_gateway = core.llm_gateway
+
+            core.update_config(
+                {
+                    "llm_daily_budget_cents": 6,
+                    "llm_proxy_url": "http://proxy.example:1080",
+                }
+            )
+            status = core.runtime_status()["llm_gateway"]
+
+            self.assertIsNot(core.llm_gateway, old_gateway)
+            self.assertEqual(status["budget"]["daily_budget_cents"], 6)
+            self.assertEqual(status["budget"]["daily_spend_cents"], 4)
+            self.assertEqual(status["budget"]["daily_remaining_cents"], 2)
+            self.assertTrue(status["circuit"]["open"])
+            self.assertEqual(status["circuit"]["consecutive_failures"], 3)
+            self.assertGreater(status["circuit"]["remaining_ms"], 0)
+
+    def test_llm_budget_and_circuit_runtime_state_survive_core_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config" / "config.json"
+            core = CoreService(config_path=config_path)
+            core.update_config(
+                {
+                    "llm_daily_budget_cents": 10,
+                    "llm_api_base": "https://provider.example/v1",
+                    "llm_api_key_env": "ATEE_TEST_PROVIDER_KEY",
+                }
+            )
+            core.llm_gateway.daily_spend_cents = 4
+            core.llm_gateway.consecutive_failures = 3
+            core.llm_gateway.circuit_opened_until = monotonic() + 60
+            core._save_llm_gateway_state()
+
+            state_text = core._llm_gateway_state_path().read_text(encoding="utf-8")
+            restarted = CoreService(config_path=config_path)
+            status = restarted.runtime_status()["llm_gateway"]
+
+            self.assertEqual(status["budget"]["daily_budget_cents"], 10)
+            self.assertEqual(status["budget"]["daily_spend_cents"], 4)
+            self.assertEqual(status["budget"]["daily_remaining_cents"], 6)
+            self.assertTrue(status["circuit"]["open"])
+            self.assertEqual(status["circuit"]["consecutive_failures"], 3)
+            self.assertNotIn("provider.example", state_text)
+            self.assertNotIn("ATEE_TEST_PROVIDER_KEY", state_text)
 
     def test_update_config_stores_api_key_value_only_in_runtime_env(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -812,6 +1084,145 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(dead["count"], 1)
             self.assertEqual(dead["jobs"][0]["attempts"], 3)
             self.assertEqual(dead["jobs"][0]["last_error"], "missing_api_key")
+
+    def test_async_review_processing_pauses_before_claim_when_budget_exhausted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(
+                    llm_mode="openai_compatible",
+                    llm_provider="deepseek",
+                    llm_model="test-model",
+                    llm_api_base="https://provider.example/v1",
+                    llm_daily_budget_cents=1,
+                ),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            core.llm_gateway.daily_spend_cents = 1
+            queued = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "normal comment"},
+                }
+            )
+
+            processed = core.run_async_reviews({"limit": 5})
+            pending = core.admin_async_reviews(status="pending")
+            dead = core.admin_async_reviews(status="dead_letter")
+
+            self.assertEqual(queued["llm_gateway"]["reason"], "async_review_queued")
+            self.assertTrue(processed["ok"])
+            self.assertTrue(processed["paused"])
+            self.assertEqual(processed["reason"], "llm_budget_exhausted")
+            self.assertEqual(processed["claimed"], 0)
+            self.assertEqual(pending["count"], 1)
+            self.assertEqual(pending["jobs"][0]["attempts"], 0)
+            self.assertEqual(dead["count"], 0)
+
+    def test_async_review_queue_applies_backpressure_at_max_depth(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(
+                    llm_mode="mock",
+                    async_review_queue_max_depth=1,
+                ),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            first = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "first comment"},
+                }
+            )
+            second = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "second comment"},
+                }
+            )
+            pending = core.admin_async_reviews(status="pending")
+            queue = core.runtime_status()["async_review"]
+
+            self.assertEqual(first["llm_gateway"]["reason"], "async_review_queued")
+            self.assertEqual(second["llm_gateway"]["reason"], "async_review_backpressure")
+            self.assertEqual(second["decision"]["selected_action"], "allow")
+            self.assertEqual(second["async_review_queue"]["active_depth"], 1)
+            self.assertTrue(second["async_review_queue"]["backpressure"])
+            self.assertEqual(pending["count"], 1)
+            self.assertEqual(queue["max_depth"], 1)
+            self.assertEqual(queue["available_depth"], 0)
+
+    def test_manual_async_review_feature_ban_completes_job_and_records_action(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto", llm_mode="mock"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            queued = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "feature_scope": "comments",
+                    "user_id": "user-123",
+                    "body": {"text": "manual review candidate"},
+                }
+            )
+            job_id = queued["async_review_job"]["id"]
+            pending = core.admin_async_reviews(status="pending")
+
+            result = core.manual_review_async_job(
+                {
+                    "job_id": job_id,
+                    "duration_seconds": 7200,
+                    "admin_note": "confirmed abuse pattern",
+                },
+                actor={"id": "ops", "id_hash": "sha256:ops", "source_hash": "sha256:src"},
+            )
+            completed = core.admin_async_reviews(status="completed")
+            actions = core.admin_actions(status="active")["actions"]
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(pending["jobs"][0]["user_hash"], queued["async_review_job"]["user_hash"])
+            self.assertEqual(completed["count"], 1)
+            self.assertEqual(completed["jobs"][0]["result"]["reviewer_action"], "feature_ban")
+            self.assertEqual(len(actions), 1)
+            self.assertEqual(actions[0]["action"], "feature_ban")
+            self.assertEqual(actions[0]["target_scope"]["type"], "user_feature")
+            self.assertEqual(actions[0]["target_scope"]["user_hash"], queued["async_review_job"]["user_hash"])
+            self.assertEqual(actions[0]["target_scope"]["feature"], "comments")
+            self.assertIn("manual_async_review", result["ledger_record"]["summary"])
+            self.assertNotIn("user-123", json.dumps(result, ensure_ascii=False))
+
+    def test_read_only_blocks_manual_async_review_action(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="read_only", llm_mode="mock"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            queued = core.check(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "feature_scope": "comments",
+                    "user_id": "user-123",
+                    "body": {"text": "manual review candidate"},
+                }
+            )
+
+            result = core.manual_review_async_job({"job_id": queued["async_review_job"]["id"]})
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["status"], 423)
+            self.assertEqual(result["reason"], "read_only_mode_blocks_manual_review")
+            self.assertEqual(core.admin_async_reviews(status="pending")["count"], 1)
+            self.assertEqual(core.admin_actions(status="active")["count"], 0)
 
     def test_read_only_blocks_async_review_processing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -95,7 +95,7 @@ def _run_live_batch(config_path: Path, attempts: int, budget_cents: int) -> dict
             "reason": "remote_llm_not_configured",
         }
     drill_config = deepcopy(config)
-    drill_config.llm_daily_budget_cents = min(attempts, budget_cents)
+    drill_config.llm_daily_budget_cents = budget_cents
     gateway = RemoteLLMGateway(drill_config, base_dir=_infer_project_root(config_path))
     results = [gateway.test_connection() for _ in range(attempts)]
     return _summary(
@@ -120,12 +120,13 @@ def _summary(
     reasons = [str(result.get("reason") or "") for result in results]
     expected_remote_calls = min(attempts, budget_cents)
     expected_exhausted = attempts - expected_remote_calls
+    expected_remaining = budget_cents - expected_remote_calls
     reason_counts = _count_reasons(reasons)
     ok = (
         reason_counts.get("provider_json_decision", 0) == expected_remote_calls
         and reason_counts.get("llm_budget_exhausted", 0) == expected_exhausted
         and status["budget"]["daily_spend_cents"] == expected_remote_calls
-        and status["budget"]["daily_remaining_cents"] == 0
+        and status["budget"]["daily_remaining_cents"] == expected_remaining
         and not status["circuit"]["open"]
     )
     if provider_calls is not None:

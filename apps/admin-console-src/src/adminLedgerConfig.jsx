@@ -18,13 +18,18 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
+  Typography,
 } from "antd";
 import {
   GATEWAY_HELP,
   LabelWithHelp,
   SECRET_PLACEHOLDER,
+  pretty,
   tagForBoolean,
 } from "./adminSupport.jsx";
+
+const { Text } = Typography;
 
 export function LedgerTab({
   ledgerLimit,
@@ -39,8 +44,55 @@ export function LedgerTab({
         <InputNumber id="ledgerLimitInput" min={1} max={100} value={ledgerLimit} onChange={(value) => setLedgerLimit(value || 10)} />
         <Button id="ledgerBtn" icon={<DatabaseOutlined />} onClick={showLedger}>读取账本</Button>
       </Space>
-      <Table rowKey="id" columns={ledgerColumns} dataSource={ledgerRecords} pagination={{ pageSize: 5 }} />
+      <Table
+        rowKey="id"
+        columns={ledgerColumns}
+        dataSource={ledgerRecords}
+        pagination={{ pageSize: 5 }}
+        expandable={{
+          expandedRowRender: (record) => <LedgerDetail record={record} />,
+        }}
+      />
     </Card>
+  );
+}
+
+function LedgerDetail({ record }) {
+  const details = record.details || {};
+  const request = details.request || {};
+  const body = request.body_summary || {};
+  const scores = details.core_scores || details.core_decision?.scores || {};
+  const reasonCodes = details.core_decision?.reason_codes || [];
+  return (
+    <Space direction="vertical" size={10} style={{ width: "100%" }}>
+      <Descriptions size="small" column={{ xs: 1, md: 2 }}>
+        <Descriptions.Item label="路径">{request.path || "-"}</Descriptions.Item>
+        <Descriptions.Item label="方法">{request.method || "-"}</Descriptions.Item>
+        <Descriptions.Item label="用户哈希">{request.user_hash || "-"}</Descriptions.Item>
+        <Descriptions.Item label="IP 哈希">{request.ip_hash || "-"}</Descriptions.Item>
+        <Descriptions.Item label="行为预览">{body.preview || "-"}</Descriptions.Item>
+        <Descriptions.Item label="行为信号">
+          {(body.signals || []).length ? (body.signals || []).map((item) => <Tag key={item}>{item}</Tag>) : "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Core 评分">
+          {Object.keys(scores).length ? (
+            <Space wrap>
+              {Object.entries(scores).map(([key, value]) => (
+                <Tag key={key}>{key}: {value}</Tag>
+              ))}
+            </Space>
+          ) : "-"}
+        </Descriptions.Item>
+        <Descriptions.Item label="原因码">
+          {reasonCodes.length ? reasonCodes.map((item) => <Tag key={item}>{item}</Tag>) : "-"}
+        </Descriptions.Item>
+      </Descriptions>
+      <details className="json-details">
+        <summary>账本详情 JSON</summary>
+        <pre id={`ledgerDetail-${record.id}`}>{pretty(details)}</pre>
+      </details>
+      <Text type="secondary">详情来自脱敏后的 Prompt Packet，不展示原始请求体、Authorization 或完整 API key。</Text>
+    </Space>
   );
 }
 

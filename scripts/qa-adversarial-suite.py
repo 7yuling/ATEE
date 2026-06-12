@@ -204,7 +204,9 @@ def _permission_checks(core: CoreService, config_path: Path) -> list[dict[str, A
                     "正确 Token 访问管理配置",
                     "GET /v1/admin/config 使用正确 Bearer token。",
                     "返回 ok=true 且不回显密钥。",
-                    right.get("status") == 200 and right.get("data", {}).get("ok") and "api_key" not in json.dumps(right, ensure_ascii=False).lower(),
+                    right.get("status") == 200
+                    and right.get("data", {}).get("ok")
+                    and _admin_config_does_not_leak_secret(right, {"qa-admin-token"}),
                     f"status={right.get('status')}; ok={right.get('data', {}).get('ok')}",
                     "中",
                 ),
@@ -279,6 +281,22 @@ def _data_consistency_checks(core: CoreService) -> list[dict[str, Any]]:
             "高",
         ),
     ]
+
+
+def _admin_config_does_not_leak_secret(payload: dict[str, Any], forbidden_values: set[str] | None = None) -> bool:
+    text = json.dumps(payload, ensure_ascii=False).lower()
+    forbidden_markers = {
+        '"authorization"',
+        "bearer ",
+        '"llm_api_key_value"',
+        '"bypass_key":',
+        '"llm_api_base":',
+        '"llm_api_key_file":',
+        '"llm_proxy_url":',
+    }
+    if any(marker in text for marker in forbidden_markers):
+        return False
+    return not any(value and value.lower() in text for value in (forbidden_values or set()))
 
 
 def _flood_checks(core: CoreService, request_count: int, workers: int) -> dict[str, Any]:

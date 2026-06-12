@@ -27,6 +27,7 @@ class AdminConfig:
     async_review_worker_enabled: bool = False
     async_review_worker_interval_seconds: int = 5
     async_review_worker_batch_size: int = 5
+    async_review_queue_max_depth: int = 5000
     auto_ip_ban_enabled: bool = False
     admin_auth_enabled: bool = False
     admin_token_file: str | None = None
@@ -65,6 +66,7 @@ PERSISTED_FIELDS = {
     "async_review_worker_enabled",
     "async_review_worker_interval_seconds",
     "async_review_worker_batch_size",
+    "async_review_queue_max_depth",
     "auto_ip_ban_enabled",
     "admin_auth_enabled",
     "admin_token_file",

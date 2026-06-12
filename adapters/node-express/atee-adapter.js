@@ -29,7 +29,9 @@ export function createAteeAdapter({ coreUrl = "http://127.0.0.1:8787" } = {}) {
         remote_addr: req.ip || req.socket?.remoteAddress,
         event_type: eventType
       });
+    },
+    async featureAccess({ user_id, feature_scope }) {
+      return post("/v1/feature-access", { user_id, feature_scope });
     }
   };
 }
-

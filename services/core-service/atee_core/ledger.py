@@ -43,12 +43,13 @@ class SQLiteLedgerStore:
             row = conn.execute("SELECT COUNT(*) FROM ledger_records").fetchone()
             return int(row[0] if row else 0)
 
-    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recent(self, limit: int = 20, include_payload: bool = False) -> list[dict[str, Any]]:
+        payload_column = ", payload_json" if include_payload else ""
         with self._lock, closing(self._connect()) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                """
-                SELECT id, event_type, severity, ip_hash, rule_id, endpoint_type, action, summary, created_at
+                f"""
+                SELECT id, event_type, severity, ip_hash, rule_id, endpoint_type, action, summary, created_at{payload_column}
                 FROM ledger_records
                 ORDER BY id DESC
                 LIMIT ?
@@ -147,6 +148,7 @@ class SecurityLedgerLite:
             "endpoint_type": event.get("endpoint_type"),
             "action": event.get("action"),
             "summary": str(event.get("summary", ""))[:4096],
+            "details": event.get("details") if isinstance(event.get("details"), dict) else None,
             "created_at": now.isoformat(),
         }
         self.records.append(record)
@@ -169,10 +171,21 @@ class SecurityLedgerLite:
             "raw_request_body_storage": False,
         }
 
-    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def recent(self, limit: int = 20, include_details: bool = False) -> list[dict[str, Any]]:
         if self.store:
-            return self.store.recent(limit)
-        return list(reversed(self.records[-limit:]))
+            records = self.store.recent(limit, include_payload=include_details)
+            if include_details:
+                for record in records:
+                    payload = record.pop("payload_json", "")
+                    try:
+                        record["details"] = json.loads(payload or "{}").get("details")
+                    except json.JSONDecodeError:
+                        record["details"] = None
+            return records
+        records = list(reversed(self.records[-limit:]))
+        if not include_details:
+            return [{key: value for key, value in record.items() if key != "details"} for record in records]
+        return records
 
     def _trim_if_needed(self) -> None:
         rough_bytes = sum(len(str(record)) for record in self.records)

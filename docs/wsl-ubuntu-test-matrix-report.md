@@ -2,7 +2,7 @@
 
 - 报告日期：2026-06-01
 - 测试执行环境：Ubuntu 24.04.4 LTS on WSL2
-- 项目路径：`/mnt/c/Users/Pro16/Documents/Codex/2026-05-12/skills/atee`
+- 项目路径：`/mnt/c/Users/Pro16/Documents/Codex/ATEE`
 - 结论一句话：ATEE 在 Ubuntu 24.04 WSL 中完成了部署、功能、非功能、自动化与 CI/CD 相关测试；发现并修复了 Linux 灾备 fallback、release gate 测试夹具、WSL systemd+Nginx smoke 脚本三个生产化问题，当前矩阵主项通过。
 
 ## 总览

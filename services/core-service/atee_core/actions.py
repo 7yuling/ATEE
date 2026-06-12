@@ -157,7 +157,7 @@ class ActionExecutor:
         if self.store:
             record["id"] = self.store.insert(record)
         self.actions.append(record)
-        return {"executed": True, "record": record}
+        return {"executed": True, "record": self._decorate_record(record)}
 
     def list_actions(self, status: str = "active", *, cleanup_expired: bool = True) -> list[dict[str, Any]]:
         if cleanup_expired:
@@ -166,8 +166,30 @@ class ActionExecutor:
         if self.store:
             self.actions = self.store.load_all()
         if status == "all":
-            return list(self.actions)
-        return [record for record in self.actions if record.get("status", "active") == status]
+            return [self._decorate_record(record) for record in self.actions]
+        return [self._decorate_record(record) for record in self.actions if record.get("status", "active") == status]
+
+    def find_active_user_feature(self, user_hash: str, feature: str) -> dict[str, Any] | None:
+        user_hash = str(user_hash or "").strip()
+        feature = str(feature or "").strip()
+        if not user_hash or not feature:
+            return None
+        for record in self.list_actions(status="active"):
+            target = record.get("target_scope") or {}
+            if (
+                record.get("action") == "feature_ban"
+                and target.get("type") == "user_feature"
+                and str(target.get("user_hash") or "") == user_hash
+                and str(target.get("feature") or "") == feature
+            ):
+                return record
+        return None
+
+    def active_action(self, action_id: int) -> dict[str, Any] | None:
+        for record in self.list_actions(status="active"):
+            if int(record.get("id") or -1) == int(action_id):
+                return record
+        return None
 
     def revoke(self, action_id: int, reason: str = "") -> dict[str, Any]:
         self.cleanup_expired()
@@ -179,11 +201,13 @@ class ActionExecutor:
                 if self.store:
                     updated = self.store.update_status(action_id, "revoked", reason)
                     self.actions = self.store.load_all()
-                    return {"ok": True, "status": 200, "action": updated}
+                    if not updated:
+                        return {"ok": False, "status": 404, "reason": "active_action_not_found"}
+                    return {"ok": True, "status": 200, "action": self._decorate_record(updated)}
                 record["status"] = "revoked"
                 record["revoked_at"] = datetime.now(timezone.utc).isoformat()
                 record["revoke_reason_untrusted_text"] = reason
-                return {"ok": True, "status": 200, "action": record}
+                return {"ok": True, "status": 200, "action": self._decorate_record(record)}
         return {"ok": False, "status": 404, "reason": "active_action_not_found"}
 
     def cleanup_expired(self) -> int:
@@ -209,4 +233,12 @@ class ActionExecutor:
 
     def _idempotency_key(self, action: str, decision: dict[str, Any]) -> str:
         target = decision.get("target_scope") or {}
-        return f"{action}:{target.get('type')}:{target.get('hash') or target.get('name') or 'request'}"
+        if target.get("type") == "user_feature":
+            return f"{action}:user_feature:{target.get('user_hash') or 'unknown'}:{target.get('feature') or 'unknown'}"
+        return f"{action}:{target.get('type')}:{target.get('hash') or target.get('name') or target.get('user_hash') or 'request'}"
+
+    def _decorate_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        decorated = dict(record)
+        if decorated.get("action") == "feature_ban" and decorated.get("id") is not None:
+            decorated["punishment_id"] = f"action:{decorated['id']}"
+        return decorated

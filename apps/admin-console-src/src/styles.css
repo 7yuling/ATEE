@@ -114,6 +114,28 @@ body {
   max-width: 100%;
 }
 
+.compact-form {
+  gap: 8px;
+}
+
+.compact-form .ant-form-item {
+  margin-bottom: 0;
+}
+
+.legacy-token-panel {
+  width: 100%;
+}
+
+.legacy-token-panel summary {
+  cursor: pointer;
+  color: #344054;
+  font-weight: 600;
+}
+
+.legacy-token-fields {
+  margin-top: 10px;
+}
+
 .guard-alert {
   margin-bottom: 12px;
 }
@@ -324,6 +346,12 @@ pre {
   color: #f8fafc;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.secret-once {
+  min-height: 0;
+  max-height: 140px;
+  margin: 0;
 }
 
 .json-details pre {

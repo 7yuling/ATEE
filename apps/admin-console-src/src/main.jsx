@@ -3,10 +3,8 @@ import { createRoot } from "react-dom/client";
 import {
   Alert,
   Button,
-  Card,
   ConfigProvider,
   Form,
-  Input,
   Layout,
   Menu,
   Popconfirm,
@@ -24,6 +22,7 @@ import {
   DatabaseOutlined,
   EyeOutlined,
   FileSearchOutlined,
+  KeyOutlined,
   MessageOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -32,6 +31,7 @@ import {
   StopOutlined,
   ThunderboltOutlined,
   ToolOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import "antd/dist/reset.css";
 import "./styles.css";
@@ -53,6 +53,11 @@ import {
   AppealsTab,
   AsyncReviewsTab,
 } from "./adminReviewQueues.jsx";
+import {
+  AdminAccountsTab,
+  AdminLoginPanel,
+  ApiKeysTab,
+} from "./adminAccess.jsx";
 import {
   apiRequest,
   cspNonce,
@@ -88,6 +93,10 @@ function App() {
   const [adminToken, setAdminToken] = useState(readAdminToken());
   const [adminId, setAdminId] = useState(readAdminId());
   const [authRequired, setAuthRequired] = useState(false);
+  const [captcha, setCaptcha] = useState(null);
+  const [adminAccounts, setAdminAccounts] = useState([]);
+  const [apiKeys, setApiKeys] = useState([]);
+  const [createdApiKey, setCreatedApiKey] = useState(null);
   const [siteType, setSiteType] = useState("通用网站");
   const [adapterType, setAdapterType] = useState("HTTP API");
   const [preflightReport, setPreflightReport] = useState(null);
@@ -101,8 +110,13 @@ function App() {
   ]);
   const [appealForm] = Form.useForm();
   const [actionForm] = Form.useForm();
+  const [manualReviewForm] = Form.useForm();
   const [configForm] = Form.useForm();
   const [breakGlassForm] = Form.useForm();
+  const [loginForm] = Form.useForm();
+  const [createAdminForm] = Form.useForm();
+  const [passwordForm] = Form.useForm();
+  const [apiKeyForm] = Form.useForm();
 
   const gateway = status?.llm_gateway || {};
   const budget = gateway.budget || {};
@@ -363,10 +377,150 @@ function App() {
     });
   }
 
+  async function loadCaptcha() {
+    await run("admin-captcha", async () => {
+      const { data } = await apiRequest("/v1/auth/captcha");
+      setCaptcha(data.ok ? data : null);
+      return data;
+    });
+  }
+
+  async function loginAdmin() {
+    await run("admin-login", async () => {
+      const values = loginForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          username: String(values.username || "").trim(),
+          password: String(values.password || ""),
+          captcha_id: captcha?.captcha_id || "",
+          captcha_answer: String(values.captcha_answer || "").trim(),
+        }),
+      });
+      if (data.ok && data.token) {
+        writeAdminToken(data.token);
+        writeAdminId(data.username || values.username || "");
+        setAdminToken(data.token);
+        setAdminId(data.username || values.username || "");
+        setAuthRequired(false);
+        setCaptcha(null);
+        loginForm.setFieldsValue({ password: "", captcha_answer: "" });
+        await refresh();
+      }
+      return data;
+    });
+  }
+
+  async function registerAdmin() {
+    await run("admin-register", async () => {
+      const values = loginForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          username: String(values.username || "").trim(),
+          password: String(values.password || ""),
+          captcha_id: captcha?.captcha_id || "",
+          captcha_answer: String(values.captcha_answer || "").trim(),
+        }),
+      });
+      if (data.ok) {
+        setCaptcha(null);
+        loginForm.setFieldsValue({ password: "", captcha_answer: "" });
+        await refresh();
+      }
+      return data;
+    });
+  }
+
+  async function showAdminAccounts() {
+    await run("admin-accounts", async () => {
+      const { data } = await apiRequest("/v1/admin/accounts");
+      setAdminAccounts(data.admins || []);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function createAdminAccount() {
+    await run("create-admin-account", async () => {
+      const values = createAdminForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          username: String(values.username || "").trim(),
+          password: String(values.password || ""),
+        }),
+      });
+      if (data.ok) {
+        createAdminForm.resetFields();
+        await showAdminAccounts();
+      }
+      return data;
+    });
+  }
+
+  async function changeAdminPassword() {
+    await run("change-admin-password", async () => {
+      const values = passwordForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/accounts/password", {
+        method: "POST",
+        body: JSON.stringify({
+          username: String(values.username || "").trim(),
+          old_password: String(values.old_password || ""),
+          new_password: String(values.new_password || ""),
+        }),
+      });
+      if (data.ok) {
+        passwordForm.resetFields();
+      }
+      return data;
+    });
+  }
+
+  async function showApiKeys() {
+    await run("api-keys", async () => {
+      const { data } = await apiRequest("/v1/admin/api-keys");
+      setApiKeys(data.keys || []);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function createApiKey() {
+    await run("create-api-key", async () => {
+      const values = apiKeyForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/api-keys", {
+        method: "POST",
+        body: JSON.stringify({
+          name: String(values.name || "").trim(),
+          scope: values.scope || "backend",
+          env_name: String(values.env_name || "").trim(),
+          key_value: String(values.key_value || "").trim(),
+          activate_provider_key: Boolean(values.activate_provider_key),
+        }),
+      });
+      if (data.ok) {
+        setCreatedApiKey(data);
+        apiKeyForm.resetFields();
+        apiKeyForm.setFieldsValue({ scope: "backend", activate_provider_key: true });
+        await showApiKeys();
+      }
+      return data;
+    });
+  }
+
+  async function deleteApiKey(keyId) {
+    await run("delete-api-key", async () => {
+      const { data } = await apiRequest(`/v1/admin/api-keys/${keyId}`, { method: "DELETE" });
+      await showApiKeys();
+      return data;
+    });
+  }
+
   async function showLedger() {
     await run("ledger", async () => {
       const limit = Number(ledgerLimit) || 10;
-      const { data } = await apiRequest(`/v1/admin/ledger/recent?limit=${limit}`);
+      const { data } = await apiRequest(`/v1/admin/ledger/recent?limit=${limit}&details=1`);
       setLedgerRecords(data.records || []);
       await refresh();
       return {
@@ -428,6 +582,27 @@ function App() {
       });
       const { data: listData } = await apiRequest(`/v1/admin/async-reviews?status=${encodeURIComponent(asyncReviewStatus)}`);
       setAsyncReviews(listData.jobs || []);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function manualFeatureBan() {
+    await run("manual-feature-ban", async () => {
+      const values = manualReviewForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/async-reviews/manual-action", {
+        method: "POST",
+        body: JSON.stringify({
+          job_id: Number(values.job_id),
+          user_hash: String(values.user_hash || "").trim(),
+          feature_scope: String(values.feature_scope || "").trim(),
+          duration_seconds: Number(values.duration_seconds || 3600),
+          admin_note: String(values.admin_note || "").trim(),
+        }),
+      });
+      const { data: listData } = await apiRequest(`/v1/admin/async-reviews?status=${encodeURIComponent(asyncReviewStatus)}`);
+      setAsyncReviews(listData.jobs || []);
+      await showActions(actionStatus);
       await refresh();
       return data;
     });
@@ -561,8 +736,11 @@ function App() {
   const menuItems = useMemo(
     () => [
       { key: "dashboard", icon: <DatabaseOutlined />, label: "仪表盘" },
+      { key: "activity", icon: <ThunderboltOutlined />, label: "活动页" },
       { key: "agent", icon: <MessageOutlined />, label: "Agent 对话" },
       { key: "guide", icon: <CheckCircleOutlined />, label: "新手引导" },
+      { key: "admins", icon: <UserOutlined />, label: "管理员账号" },
+      { key: "apiKeys", icon: <KeyOutlined />, label: "API keys" },
       { key: "appeals", icon: <FileSearchOutlined />, label: "申诉处理" },
       { key: "asyncReviews", icon: <BranchesOutlined />, label: "异步 AI 审查" },
       { key: "actions", icon: <ToolOutlined />, label: "动作管理" },
@@ -584,6 +762,7 @@ function App() {
     { title: "ID", dataIndex: "id", key: "id", width: 80 },
     { title: "动作", dataIndex: "action", key: "action" },
     { title: "状态", dataIndex: "status", key: "status", render: (value) => <Tag>{value}</Tag> },
+    { title: "目标", key: "target", render: (_, record) => record.target_scope?.feature || record.target_scope?.type || "-" },
     { title: "原因", dataIndex: "reason", key: "reason", ellipsis: true },
     { title: "过期时间", dataIndex: "expires_at", key: "expires_at" },
   ];
@@ -593,6 +772,8 @@ function App() {
     { title: "状态", dataIndex: "status", key: "status", render: (value) => <Tag>{value}</Tag> },
     { title: "尝试", key: "attempts", render: (_, record) => `${record.attempts}/${record.max_attempts}` },
     { title: "事件", dataIndex: "event_type", key: "event_type" },
+    { title: "用户", dataIndex: "user_hash", key: "user_hash", ellipsis: true },
+    { title: "功能", dataIndex: "feature_scope", key: "feature_scope", ellipsis: true },
     { title: "最近错误", dataIndex: "last_error", key: "last_error", ellipsis: true },
     { title: "更新时间", dataIndex: "updated_at", key: "updated_at" },
   ];
@@ -662,47 +843,27 @@ function App() {
             <Title level={4}>{activeMenuLabel}</Title>
             <Text type="secondary">左侧菜单和下方工作区同步切换，当前只显示该模块需要的操作。</Text>
           </div>
-          <Card className="auth-panel" size="small">
-            <Space wrap>
-              <Text strong>管理令牌</Text>
-              <Input
-                id="adminIdInput"
-                value={adminId}
-                onChange={(event) => setAdminId(event.target.value)}
-                autoComplete="off"
-                placeholder="操作者 ID"
-                style={{ width: 180 }}
-              />
-              <Input.Password
-                id="adminTokenInput"
-                value={adminToken}
-                onChange={(event) => setAdminToken(event.target.value)}
-                autoComplete="off"
-                visibilityToggle={false}
-                placeholder="Admin Token"
-                style={{ width: 260 }}
-              />
-              <Button id="saveAdminTokenBtn" icon={<SafetyCertificateOutlined />} onClick={saveAdminToken}>
-                保存本机会话
-              </Button>
-              <Button id="clearAdminTokenBtn" onClick={clearAdminToken}>
-                清除
-              </Button>
-              <Tag id="adminAuthState" color={adminAuth.enabled ? (adminToken ? "success" : "warning") : "default"}>
-                {adminAuth.enabled ? (adminToken ? "认证已准备" : "需要令牌") : "认证未开启"}
-              </Tag>
-              <Tag color={adminAuth.token_configured ? "success" : "default"}>
-                {adminAuth.token_configured ? "服务端令牌已配置" : "服务端令牌未配置"}
-              </Tag>
-            </Space>
-          </Card>
+          <AdminLoginPanel
+            adminAuth={adminAuth}
+            adminId={adminId}
+            setAdminId={setAdminId}
+            adminToken={adminToken}
+            setAdminToken={setAdminToken}
+            captcha={captcha}
+            loadCaptcha={loadCaptcha}
+            loginForm={loginForm}
+            loginAdmin={loginAdmin}
+            registerAdmin={registerAdmin}
+            saveAdminToken={saveAdminToken}
+            clearAdminToken={clearAdminToken}
+          />
           {authRequired ? (
             <Alert
               id="adminAuthAlert"
               className="guard-alert"
               type="error"
               showIcon
-              message="管理接口需要有效令牌，当前请求未被执行。"
+              message="管理接口需要有效登录会话，当前请求未被执行。"
             />
           ) : null}
           {operationGuardMessage ? (
@@ -742,15 +903,23 @@ function App() {
               {
                 key: "dashboard",
                 label: "操作台",
+                children: null,
+              },
+              {
+                key: "activity",
+                label: "活动页",
                 children: (
-                  <DashboardTab
-                    display={display}
-                    gateway={gateway}
-                    testSafe={testSafe}
-                    testAttack={testAttack}
-                    testAppeal={testAppeal}
-                    testLlmGateway={testLlmGateway}
-                  />
+                  <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                    <DashboardTab
+                      display={display}
+                      gateway={gateway}
+                      testSafe={testSafe}
+                      testAttack={testAttack}
+                      testAppeal={testAppeal}
+                      testLlmGateway={testLlmGateway}
+                    />
+                    <JsonSummaryRow status={status} output={output} result={result} />
+                  </Space>
                 ),
               },
               {
@@ -786,6 +955,37 @@ function App() {
                     guideSteps={guideSteps}
                     runGuideAction={runGuideAction}
                     loading={loading}
+                    writeLocked={writeLocked}
+                  />
+                ),
+              },
+              {
+                key: "admins",
+                label: "管理员账号",
+                children: (
+                  <AdminAccountsTab
+                    adminAccounts={adminAccounts}
+                    showAdminAccounts={showAdminAccounts}
+                    createAdminForm={createAdminForm}
+                    createAdminAccount={createAdminAccount}
+                    passwordForm={passwordForm}
+                    changeAdminPassword={changeAdminPassword}
+                    writeLocked={writeLocked}
+                  />
+                ),
+              },
+              {
+                key: "apiKeys",
+                label: "API keys",
+                children: (
+                  <ApiKeysTab
+                    apiKeys={apiKeys}
+                    showApiKeys={showApiKeys}
+                    apiKeyForm={apiKeyForm}
+                    createApiKey={createApiKey}
+                    deleteApiKey={deleteApiKey}
+                    createdApiKey={createdApiKey}
+                    clearCreatedApiKey={() => setCreatedApiKey(null)}
                     writeLocked={writeLocked}
                   />
                 ),
@@ -833,6 +1033,8 @@ function App() {
                     showAsyncReviews={showAsyncReviews}
                     asyncReviewColumns={asyncReviewColumns}
                     asyncReviews={asyncReviews}
+                    manualReviewForm={manualReviewForm}
+                    manualFeatureBan={manualFeatureBan}
                     runAsyncReviews={runAsyncReviews}
                     writeLocked={writeLocked}
                   />
@@ -869,8 +1071,6 @@ function App() {
               },
             ]}
           />
-
-          <JsonSummaryRow status={status} output={output} result={result} />
         </Content>
       </Layout>
     </Layout>

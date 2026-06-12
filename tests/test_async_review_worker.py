@@ -14,6 +14,38 @@ from atee_core.core import CoreService  # noqa: E402
 
 
 class AsyncReviewWorkerTests(unittest.TestCase):
+    def test_worker_scales_batch_with_backlog_and_waits_on_budget_pause(self):
+        class FakeQueue:
+            def __init__(self, queued):
+                self.queued = queued
+
+            def status(self):
+                return {"queued": self.queued}
+
+        class FakeCore:
+            def __init__(self):
+                self.async_reviews = FakeQueue(250)
+                self.seen_limits = []
+
+            def process_async_reviews(self, limit):
+                self.seen_limits.append(limit)
+                return {
+                    "ok": True,
+                    "claimed": 0,
+                    "paused": True,
+                    "reason": "llm_budget_exhausted",
+                    "queue": {"queued": self.async_reviews.queued},
+                }
+
+        core = FakeCore()
+        worker = AsyncReviewWorker(core, interval_seconds=5, batch_size=5)
+
+        result = worker.run_once()
+
+        self.assertTrue(result["paused"])
+        self.assertEqual(core.seen_limits, [50])
+        self.assertEqual(worker._adaptive_wait_seconds(result), 60)
+
     def test_worker_processes_due_ai_review_jobs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(

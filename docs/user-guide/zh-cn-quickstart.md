@@ -5,7 +5,7 @@ ATEE P0 默认使用观察模式。观察模式会记录“如果开启自动模
 ## 1. 启动服务
 
 ```powershell
-cd C:\Users\Pro16\Documents\Codex\2026-05-12\skills\atee
+cd C:\Users\Pro16\Documents\Codex\ATEE
 python services\core-service\run_server.py
 ```
 
@@ -51,4 +51,3 @@ Prompt Packet 会脱敏常见中文字段，例如：
   }
 }
 ```
-

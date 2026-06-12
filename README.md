@@ -19,7 +19,7 @@ This version focuses on the production safety boundaries from the workflow:
 ## Run
 
 ```powershell
-cd C:\Users\Pro16\Documents\Codex\2026-05-12\skills\atee
+cd C:\Users\Pro16\Documents\Codex\ATEE
 python services\core-service\run_server.py
 ```
 
@@ -121,7 +121,7 @@ python scripts\backup-restore-drill.py --report reports\backup-restore-drill.md
 ## Test
 
 ```powershell
-cd C:\Users\Pro16\Documents\Codex\2026-05-12\skills\atee
+cd C:\Users\Pro16\Documents\Codex\ATEE
 python -m unittest discover -s tests
 ```
 
@@ -194,6 +194,7 @@ The browser script starts a temporary mock Core Service on a random localhost po
 
 - `POST /v1/check`
 - `POST /v1/event`
+- `POST /v1/feature-access`
 - `POST /v1/appeal`
 - `GET /v1/runtime/status`
 - `GET /v1/admin/config`
@@ -247,6 +248,8 @@ data/atee_ledger.sqlite3
 ```
 
 Low-risk skip events are aggregated in memory for the current minute and are not written to SQLite on every request. Accepted appeals and actually executed actions are loaded again when Core Service restarts. Admin APIs can review appeals, revoke ATEE action records, and mark expired actions. Recent persisted ledger summaries can be checked with `/v1/admin/ledger/recent?limit=10` or the admin console button.
+
+Feature bans created for a specific user and feature expose a public appeal id in the form `action:<action_id>`. A connected site can call `POST /v1/feature-access` with `user_id` and `feature_scope` to check whether that feature is currently blocked. If the user appeals with that `punishment_id` and an admin approves it, Core Service automatically revokes the active `feature_ban` action record; rejected appeals do not unban.
 
 ## Model Gateway
 

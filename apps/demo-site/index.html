@@ -3,51 +3,93 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ATEE Demo Site</title>
+  <title>ATEE Dining Hall Forum Demo</title>
   <link rel="stylesheet" href="/demo/styles.css">
   <script defer src="/demo/demo.js"></script>
 </head>
 <body>
   <main class="shell">
-    <section class="topbar" aria-label="ATEE Demo">
+    <section class="topbar" aria-label="ATEE Dining Hall Demo">
       <img class="brand-mark" src="/assets/flow.svg" alt="ATEE">
+      <div class="brand-copy">
+        <h1>Dining Hall Forum</h1>
+        <p id="statusText">ATEE Core: http://127.0.0.1:8787</p>
+      </div>
+      <a class="repo-link" href="https://github.com/chicken-123-oss/dining-hall" target="_blank" rel="noreferrer">chicken-123-oss/dining-hall</a>
+    </section>
+
+    <section class="summary" aria-label="演示统计">
       <div>
-        <h1>ATEE 业务演示站</h1>
-        <p id="statusText">Core Service: http://127.0.0.1:8787</p>
+        <span class="summary-label">话题</span>
+        <strong id="topicTotal">-</strong>
+      </div>
+      <div>
+        <span class="summary-label">发言</span>
+        <strong id="postTotal">-</strong>
+      </div>
+      <div>
+        <span class="summary-label">用户</span>
+        <strong id="userTotal">-</strong>
       </div>
     </section>
 
-    <section class="workspace" aria-label="业务操作区">
-      <form class="panel" id="loginForm">
-        <h2>登录</h2>
-        <label>用户名<input name="username" value="demo-user" autocomplete="username"></label>
-        <label>密码<input name="password" value="demo-pass" type="password" autocomplete="current-password"></label>
-        <button type="submit">提交登录</button>
-      </form>
+    <section class="layout" aria-label="食堂论坛演示区">
+      <section class="topics" aria-label="话题列表">
+        <div class="section-head">
+          <h2>食堂话题</h2>
+          <span id="topicCount" class="count-badge">0</span>
+        </div>
+        <div id="topicList" class="topic-list"></div>
+        <div class="section-head posts-head">
+          <h2>当前话题发言</h2>
+          <span id="activeTopicLabel" class="muted">请选择话题</span>
+        </div>
+        <div id="postList" class="post-list"></div>
+      </section>
 
-      <form class="panel" id="commentForm">
-        <h2>评论</h2>
-        <label>内容<textarea name="text" rows="5">这是一条正常评论</textarea></label>
-        <button type="submit">发布评论</button>
-      </form>
+      <section class="actions" aria-label="业务动作">
+        <form class="action-form" id="loginForm">
+          <h2>登录链路</h2>
+          <label>用户名<input name="username" value="demo-user" autocomplete="username"></label>
+          <label>密码<input name="password" value="demo-pass" type="password" autocomplete="current-password"></label>
+          <button type="submit">提交登录</button>
+        </form>
 
-      <form class="panel" id="uploadForm">
-        <h2>上传</h2>
-        <label>文件名<input name="filename" value="demo.txt"></label>
-        <label>文本摘要<textarea name="text" rows="5">普通文件内容摘要</textarea></label>
-        <button type="submit">提交上传</button>
-      </form>
+        <form class="action-form" id="topicForm">
+          <h2>发起话题</h2>
+          <label>标题<input name="title" value="今日新菜反馈"></label>
+          <label>描述<textarea name="description" rows="4">把食堂体验写成一个新话题。</textarea></label>
+          <button type="submit">发布话题</button>
+        </form>
 
-      <form class="panel" id="appealForm">
-        <h2>申诉</h2>
-        <label>处罚编号<input name="punishment_id" value="demo-punishment"></label>
-        <label>理由<textarea name="reason" rows="5">我认为这次处理可能有误，请管理员复核。</textarea></label>
-        <button type="submit">提交申诉</button>
-      </form>
+        <form class="action-form" id="commentForm">
+          <h2>发布发言</h2>
+          <label>话题编号<input name="topic_id" id="topicIdInput" value="1" inputmode="numeric"></label>
+          <label>内容<textarea name="text" rows="4">这是一条正常食堂评论</textarea></label>
+          <button type="submit">发布发言</button>
+        </form>
+
+        <form class="action-form" id="uploadForm">
+          <h2>上传菜单</h2>
+          <label>文件名<input name="filename" value="menu.txt"></label>
+          <label>文本摘要<textarea name="text" rows="4">普通菜单截图文字摘要</textarea></label>
+          <button type="submit">提交上传</button>
+        </form>
+
+        <form class="action-form" id="appealForm">
+          <h2>申诉复核</h2>
+          <label>处罚编号<input name="punishment_id" value="demo-punishment"></label>
+          <label>理由<textarea name="reason" rows="4">我认为这次处理可能有误，请管理员复核。</textarea></label>
+          <button type="submit">提交申诉</button>
+        </form>
+      </section>
     </section>
 
-    <section class="result" aria-label="结果">
-      <h2>结果</h2>
+    <section class="result" aria-label="ATEE 检查结果">
+      <div class="section-head">
+        <h2>ATEE 检查结果</h2>
+        <span class="muted">最新结果在最上方</span>
+      </div>
       <div id="resultList" class="result-list"></div>
     </section>
   </main>
