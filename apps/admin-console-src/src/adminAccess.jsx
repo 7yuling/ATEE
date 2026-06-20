@@ -15,6 +15,7 @@ import {
   Col,
   Form,
   Input,
+  message,
   Popconfirm,
   Row,
   Select,
@@ -43,10 +44,12 @@ export function AdminLoginPanel({
 }) {
   return (
     <Card className="auth-panel" size="small">
+      <details className="admin-auth-drawer" open={adminAuth.enabled && !adminToken}>
+        <summary>Admin Access</summary>
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
         <Form form={loginForm} layout="inline" className="compact-form">
           <Form.Item name="username">
-            <Input id="adminLoginUsernameInput" autoComplete="username" placeholder="管理员账号" style={{ width: 170 }} />
+            <Input id="adminLoginUsernameInput" autoComplete="username" placeholder="管理员账号" className="field-md" />
           </Form.Item>
           <Form.Item name="password">
             <Input.Password
@@ -54,11 +57,11 @@ export function AdminLoginPanel({
               autoComplete="current-password"
               visibilityToggle={false}
               placeholder="密码"
-              style={{ width: 190 }}
+              className="field-md"
             />
           </Form.Item>
           <Form.Item name="captcha_answer">
-            <Input id="adminCaptchaAnswerInput" autoComplete="off" placeholder={captcha?.question || "验证码"} style={{ width: 140 }} />
+            <Input id="adminCaptchaAnswerInput" autoComplete="off" placeholder={captcha?.question || "验证码"} className="field-sm" />
           </Form.Item>
           <Form.Item>
             <Space wrap>
@@ -97,7 +100,7 @@ export function AdminLoginPanel({
               onChange={(event) => setAdminId(event.target.value)}
               autoComplete="off"
               placeholder="操作者 ID"
-              style={{ width: 180 }}
+              className="field-md"
             />
             <Input.Password
               id="adminTokenInput"
@@ -106,7 +109,7 @@ export function AdminLoginPanel({
               autoComplete="off"
               visibilityToggle={false}
               placeholder="Admin Token 或登录会话"
-              style={{ width: 280 }}
+              className="field-lg"
             />
             <Button id="saveAdminTokenBtn" icon={<SafetyCertificateOutlined />} onClick={saveAdminToken}>
               保存本机会话
@@ -117,6 +120,7 @@ export function AdminLoginPanel({
           </Space>
         </details>
       </Space>
+      </details>
     </Card>
   );
 }
@@ -230,6 +234,17 @@ export function ApiKeysTab({
       ),
     },
   ];
+  async function copyCreatedApiKey() {
+    try {
+      if (!navigator.clipboard?.writeText || !createdApiKey?.key) {
+        throw new Error("Clipboard is unavailable");
+      }
+      await navigator.clipboard.writeText(createdApiKey.key);
+      message.success("API key 已复制");
+    } catch {
+      message.error("复制失败，请手动复制");
+    }
+  }
   return (
     <Row gutter={[16, 16]}>
       <Col xs={24} xl={15}>
@@ -257,7 +272,7 @@ export function ApiKeysTab({
                     <Button
                       id="copyCreatedApiKeyBtn"
                       icon={<CopyOutlined />}
-                      onClick={() => navigator.clipboard?.writeText(createdApiKey.key)}
+                      onClick={copyCreatedApiKey}
                     >
                       复制
                     </Button>

@@ -20,6 +20,7 @@ ADMIN_ASSET_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
     ".map": "application/json; charset=utf-8",
+    ".png": "image/png",
 }
 
 
@@ -29,7 +30,7 @@ class AteeHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return
-        if self.path in {"/", "/admin"}:
+        if self.path in {"/", "/admin", "/admin/"}:
             self._send_html(ADMIN_INDEX.read_text(encoding="utf-8"))
             return
         if self.path == "/favicon.ico":

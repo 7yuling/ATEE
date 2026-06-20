@@ -2,16 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Alert,
-  Button,
   ConfigProvider,
   Form,
-  Layout,
-  Menu,
-  Popconfirm,
   Space,
-  Tabs,
   Tag,
-  Typography,
   theme,
 } from "antd";
 import zhCN from "antd/locale/zh_CN";
@@ -20,15 +14,10 @@ import {
   BranchesOutlined,
   CheckCircleOutlined,
   DatabaseOutlined,
-  EyeOutlined,
   FileSearchOutlined,
   KeyOutlined,
   MessageOutlined,
-  PauseCircleOutlined,
-  PlayCircleOutlined,
-  ReloadOutlined,
   SafetyCertificateOutlined,
-  StopOutlined,
   ThunderboltOutlined,
   ToolOutlined,
   UserOutlined,
@@ -44,6 +33,10 @@ import {
   DashboardTab,
   JsonSummaryRow,
 } from "./adminDashboard.jsx";
+import {
+  GothicConsoleShell,
+  GothicPageFrame,
+} from "./adminGothicShell.jsx";
 import {
   GatewayConfigTab,
   LedgerTab,
@@ -69,11 +62,55 @@ import {
   writeAdminToken,
 } from "./adminSupport.jsx";
 
-const { Header, Sider, Content } = Layout;
-const { Title, Text } = Typography;
-
 const runtimeCspNonce = cspNonce();
 installStyleNonce(runtimeCspNonce);
+
+const PAGE_ARCHITECTURE_META = {
+  dashboard: {
+    domain: "Runtime Index / Status Constellation",
+    endpoints: ["GET /v1/runtime/status"],
+  },
+  activity: {
+    domain: "Drill / Result Domain",
+    endpoints: ["POST /v1/check", "POST /v1/appeal", "GET /v1/admin/llm/test"],
+  },
+  agent: {
+    domain: "Assistant / Context Domain",
+    endpoints: ["POST /v1/admin/agent/chat"],
+  },
+  guide: {
+    domain: "Onboarding / Preflight Domain",
+    endpoints: ["GET /v1/onboarding/steps", "GET /v1/admin/preflight", "POST /v1/admin/security-flow/run"],
+  },
+  admins: {
+    domain: "Access Control Domain",
+    endpoints: ["GET /v1/admin/accounts", "POST /v1/admin/accounts"],
+  },
+  apiKeys: {
+    domain: "Key Material / Invocation Domain",
+    endpoints: ["GET /v1/admin/api-keys", "POST /v1/admin/api-keys", "DELETE /v1/admin/api-keys/{id}"],
+  },
+  appeals: {
+    domain: "User Appeal Domain",
+    endpoints: ["GET /v1/admin/appeals?status=", "POST /v1/admin/appeals/review"],
+  },
+  asyncReviews: {
+    domain: "Queue / Manual Disposition Domain",
+    endpoints: ["GET /v1/admin/async-reviews?status=", "POST /v1/admin/async-reviews/run"],
+  },
+  actions: {
+    domain: "Action Lifecycle Domain",
+    endpoints: ["GET /v1/admin/actions?status=", "POST /v1/admin/actions/revoke"],
+  },
+  ledger: {
+    domain: "Audit Ledger Domain",
+    endpoints: ["GET /v1/admin/ledger/recent?limit=&details=1"],
+  },
+  config: {
+    domain: "Gateway Configuration Domain",
+    endpoints: ["GET /v1/admin/config", "POST /v1/admin/config", "POST /v1/admin/break-glass/status"],
+  },
+};
 
 function App() {
   const [activeMenu, setActiveMenu] = useState("dashboard");
@@ -321,7 +358,8 @@ function App() {
       if (!element) {
         return;
       }
-      element.scrollIntoView({ block: "center", behavior: "smooth" });
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+      element.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
       element.focus?.();
     }, 80);
   }
@@ -750,6 +788,173 @@ function App() {
     [],
   );
   const activeMenuLabel = menuItems.find((item) => item.key === activeMenu)?.label || "仪表盘";
+  const pageFrameTitle = (pageKey) => menuItems.find((item) => item.key === pageKey)?.label || pageKey;
+  const pageFrame = (pageKey, content) => (
+    <GothicPageFrame pageKey={pageKey} title={pageFrameTitle(pageKey)} {...PAGE_ARCHITECTURE_META[pageKey]}>
+      {content}
+    </GothicPageFrame>
+  );
+
+  function renderActivePage() {
+    if (activeMenu === "dashboard") {
+      return pageFrame(
+        "dashboard",
+        <DashboardMetrics
+          status={status}
+          display={display}
+          gateway={gateway}
+          gatewayConfigured={gatewayConfigured}
+          circuit={circuit}
+          budget={budget}
+        />,
+      );
+    }
+    if (activeMenu === "activity") {
+      return pageFrame("activity", (
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <DashboardTab
+            display={display}
+            gateway={gateway}
+            testSafe={testSafe}
+            testAttack={testAttack}
+            testAppeal={testAppeal}
+            testLlmGateway={testLlmGateway}
+          />
+          <JsonSummaryRow status={status} output={output} result={result} />
+        </Space>
+      ));
+    }
+    if (activeMenu === "agent") {
+      return pageFrame("agent", (
+        <AgentTab
+          siteType={siteType}
+          setSiteType={setSiteType}
+          adapterType={adapterType}
+          setAdapterType={setAdapterType}
+          chatMessages={chatMessages}
+          chatDraft={chatDraft}
+          setChatDraft={setChatDraft}
+          sendAgentChat={sendAgentChat}
+          loading={loading}
+        />
+      ));
+    }
+    if (activeMenu === "guide") {
+      return pageFrame("guide", (
+        <GuideTab
+          siteType={siteType}
+          setSiteType={setSiteType}
+          adapterType={adapterType}
+          setAdapterType={setAdapterType}
+          runPreflight={runPreflight}
+          preflightReport={preflightReport}
+          runSecurityFlow={runSecurityFlow}
+          securityFlowReport={securityFlowReport}
+          guideSteps={guideSteps}
+          runGuideAction={runGuideAction}
+          loading={loading}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "admins") {
+      return pageFrame("admins", (
+        <AdminAccountsTab
+          adminAccounts={adminAccounts}
+          showAdminAccounts={showAdminAccounts}
+          createAdminForm={createAdminForm}
+          createAdminAccount={createAdminAccount}
+          passwordForm={passwordForm}
+          changeAdminPassword={changeAdminPassword}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "apiKeys") {
+      return pageFrame("apiKeys", (
+        <ApiKeysTab
+          apiKeys={apiKeys}
+          showApiKeys={showApiKeys}
+          apiKeyForm={apiKeyForm}
+          createApiKey={createApiKey}
+          deleteApiKey={deleteApiKey}
+          createdApiKey={createdApiKey}
+          clearCreatedApiKey={() => setCreatedApiKey(null)}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "appeals") {
+      return pageFrame("appeals", (
+        <AppealsTab
+          appealStatus={appealStatus}
+          setAppealStatus={setAppealStatus}
+          showAppeals={showAppeals}
+          appealColumns={appealColumns}
+          appeals={appeals}
+          appealForm={appealForm}
+          reviewAppeal={reviewAppeal}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "actions") {
+      return pageFrame("actions", (
+        <ActionsTab
+          actionStatus={actionStatus}
+          setActionStatus={setActionStatus}
+          showActions={showActions}
+          actionColumns={actionColumns}
+          actions={actions}
+          actionForm={actionForm}
+          cleanupActions={cleanupActions}
+          revokeAction={revokeAction}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "asyncReviews") {
+      return pageFrame("asyncReviews", (
+        <AsyncReviewsTab
+          asyncReviewStatus={asyncReviewStatus}
+          setAsyncReviewStatus={setAsyncReviewStatus}
+          showAsyncReviews={showAsyncReviews}
+          asyncReviewColumns={asyncReviewColumns}
+          asyncReviews={asyncReviews}
+          manualReviewForm={manualReviewForm}
+          manualFeatureBan={manualFeatureBan}
+          runAsyncReviews={runAsyncReviews}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "ledger") {
+      return pageFrame("ledger", (
+        <LedgerTab
+          ledgerLimit={ledgerLimit}
+          setLedgerLimit={setLedgerLimit}
+          showLedger={showLedger}
+          ledgerColumns={ledgerColumns}
+          ledgerRecords={ledgerRecords}
+        />
+      ));
+    }
+    if (activeMenu === "config") {
+      return pageFrame("config", (
+        <GatewayConfigTab
+          configForm={configForm}
+          showConfig={showConfig}
+          saveConfig={saveConfig}
+          testLlmGateway={testLlmGateway}
+          writeLocked={writeLocked}
+          status={status}
+          breakGlassForm={breakGlassForm}
+          breakGlass={breakGlass}
+        />
+      ));
+    }
+    return null;
+  }
 
   const appealColumns = [
     { title: "处罚编号", dataIndex: "punishment_id", key: "punishment_id" },
@@ -787,62 +992,31 @@ function App() {
   ];
 
   return (
-    <Layout className="atee-shell">
-      <Sider width={216} className="atee-sider">
-        <div className="brand-block">
-          <Title level={3}>ATEE</Title>
-          <Text>管理控制台</Text>
-        </div>
-        <Menu mode="inline" selectedKeys={[activeMenu]} items={menuItems} onClick={({ key }) => setActiveMenu(key)} />
-      </Sider>
-      <Layout>
-        <Header className="atee-header">
-          <div className="header-title">
-            <Title level={2}>ATEE 管理控制台</Title>
-            <Text id="statusText" type={status ? "success" : "secondary"}>
-              {status ? `Core Service 已连接 · 当前页面：${activeMenuLabel}` : "正在连接"}
-            </Text>
-          </div>
-          <Space className="header-actions" wrap size={[8, 8]}>
-            <Button id="refreshBtn" size="small" icon={<ReloadOutlined />} onClick={() => run("refresh", refresh)} loading={loading}>
-              刷新
-            </Button>
-            <Button id="observeBtn" size="small" icon={<EyeOutlined />} onClick={() => setMode("observe")}>
-              观察模式
-            </Button>
-            <Popconfirm
-              title="切换到自动模式"
-              description="自动模式会允许后端执行符合策略的动作，请确认当前环境已经准备好。"
-              okText="确认切换"
-              cancelText="取消"
-              onConfirm={() => setMode("auto")}
-            >
-              <Button id="autoBtn" size="small" type="primary" icon={<ThunderboltOutlined />}>
-                自动模式
-              </Button>
-            </Popconfirm>
-            <Button id="degradedBtn" size="small" icon={<StopOutlined />} onClick={() => setMode("degraded")}>
-              降级模式
-            </Button>
-            <Button id="readOnlyBtn" size="small" icon={<SafetyCertificateOutlined />} onClick={() => setMode("read_only")}>
-              只读模式
-            </Button>
-            <Button id="pauseBtn" size="small" icon={status?.agent_paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />} onClick={pauseResume}>
-              {status?.agent_paused ? "恢复 Agent" : "暂停 Agent"}
-            </Button>
-          </Space>
-        </Header>
-        <Content className="atee-content">
-          <Alert
-            className="top-alert"
-            type="info"
-            showIcon
-            message="所有用户输入、Agent 输出和申诉理由都按纯文本渲染；管理台不保存原始 Prompt 或原始请求体。"
-          />
-          <div className="workspace-heading">
-            <Title level={4}>{activeMenuLabel}</Title>
-            <Text type="secondary">左侧菜单和下方工作区同步切换，当前只显示该模块需要的操作。</Text>
-          </div>
+    <GothicConsoleShell
+      activeMenu={activeMenu}
+      activeMenuLabel={activeMenuLabel}
+      menuItems={menuItems}
+      setActiveMenu={setActiveMenu}
+      status={status}
+      display={display}
+      gateway={gateway}
+      budget={budget}
+      circuit={circuit}
+      loading={loading}
+      onRefresh={() => run("refresh", refresh)}
+      onSetMode={setMode}
+      onPauseResume={pauseResume}
+    >
+          {activeMenu !== "dashboard" ? (
+            <>
+          {activeMenu === "guide" ? (
+            <Alert
+              className="top-alert"
+              type="info"
+              showIcon
+              message="所有用户输入、Agent 输出和申诉理由都按纯文本渲染；管理台不保存原始 Prompt 或原始请求体。"
+            />
+          ) : null}
           <AdminLoginPanel
             adminAuth={adminAuth}
             adminId={adminId}
@@ -883,201 +1057,24 @@ function App() {
               message="模型配置已接入，但最近一次连通检测未通过；请以“测试模型网关”的操作结果为准。"
             />
           ) : null}
-
-          {activeMenu === "dashboard" ? (
-            <DashboardMetrics
-              status={status}
-              display={display}
-              gateway={gateway}
-              gatewayConfigured={gatewayConfigured}
-              circuit={circuit}
-              budget={budget}
-            />
+            </>
           ) : null}
 
-          <Tabs
-            className="workspace-tabs"
-            activeKey={activeMenu}
-            onChange={setActiveMenu}
-            items={[
-              {
-                key: "dashboard",
-                label: "操作台",
-                children: null,
-              },
-              {
-                key: "activity",
-                label: "活动页",
-                children: (
-                  <Space direction="vertical" size={16} style={{ width: "100%" }}>
-                    <DashboardTab
-                      display={display}
-                      gateway={gateway}
-                      testSafe={testSafe}
-                      testAttack={testAttack}
-                      testAppeal={testAppeal}
-                      testLlmGateway={testLlmGateway}
-                    />
-                    <JsonSummaryRow status={status} output={output} result={result} />
-                  </Space>
-                ),
-              },
-              {
-                key: "agent",
-                label: "Agent 对话",
-                children: (
-                  <AgentTab
-                    siteType={siteType}
-                    setSiteType={setSiteType}
-                    adapterType={adapterType}
-                    setAdapterType={setAdapterType}
-                    chatMessages={chatMessages}
-                    chatDraft={chatDraft}
-                    setChatDraft={setChatDraft}
-                    sendAgentChat={sendAgentChat}
-                    loading={loading}
-                  />
-                ),
-              },
-              {
-                key: "guide",
-                label: "新手引导",
-                children: (
-                  <GuideTab
-                    siteType={siteType}
-                    setSiteType={setSiteType}
-                    adapterType={adapterType}
-                    setAdapterType={setAdapterType}
-                    runPreflight={runPreflight}
-                    preflightReport={preflightReport}
-                    runSecurityFlow={runSecurityFlow}
-                    securityFlowReport={securityFlowReport}
-                    guideSteps={guideSteps}
-                    runGuideAction={runGuideAction}
-                    loading={loading}
-                    writeLocked={writeLocked}
-                  />
-                ),
-              },
-              {
-                key: "admins",
-                label: "管理员账号",
-                children: (
-                  <AdminAccountsTab
-                    adminAccounts={adminAccounts}
-                    showAdminAccounts={showAdminAccounts}
-                    createAdminForm={createAdminForm}
-                    createAdminAccount={createAdminAccount}
-                    passwordForm={passwordForm}
-                    changeAdminPassword={changeAdminPassword}
-                    writeLocked={writeLocked}
-                  />
-                ),
-              },
-              {
-                key: "apiKeys",
-                label: "API keys",
-                children: (
-                  <ApiKeysTab
-                    apiKeys={apiKeys}
-                    showApiKeys={showApiKeys}
-                    apiKeyForm={apiKeyForm}
-                    createApiKey={createApiKey}
-                    deleteApiKey={deleteApiKey}
-                    createdApiKey={createdApiKey}
-                    clearCreatedApiKey={() => setCreatedApiKey(null)}
-                    writeLocked={writeLocked}
-                  />
-                ),
-              },
-              {
-                key: "appeals",
-                label: "申诉处理",
-                children: (
-                  <AppealsTab
-                    appealStatus={appealStatus}
-                    setAppealStatus={setAppealStatus}
-                    showAppeals={showAppeals}
-                    appealColumns={appealColumns}
-                    appeals={appeals}
-                    appealForm={appealForm}
-                    reviewAppeal={reviewAppeal}
-                    writeLocked={writeLocked}
-                  />
-                ),
-              },
-              {
-                key: "actions",
-                label: "动作管理",
-                children: (
-                  <ActionsTab
-                    actionStatus={actionStatus}
-                    setActionStatus={setActionStatus}
-                    showActions={showActions}
-                    actionColumns={actionColumns}
-                    actions={actions}
-                    actionForm={actionForm}
-                    cleanupActions={cleanupActions}
-                    revokeAction={revokeAction}
-                    writeLocked={writeLocked}
-                  />
-                ),
-              },
-              {
-                key: "asyncReviews",
-                label: "异步 AI 审查",
-                children: (
-                  <AsyncReviewsTab
-                    asyncReviewStatus={asyncReviewStatus}
-                    setAsyncReviewStatus={setAsyncReviewStatus}
-                    showAsyncReviews={showAsyncReviews}
-                    asyncReviewColumns={asyncReviewColumns}
-                    asyncReviews={asyncReviews}
-                    manualReviewForm={manualReviewForm}
-                    manualFeatureBan={manualFeatureBan}
-                    runAsyncReviews={runAsyncReviews}
-                    writeLocked={writeLocked}
-                  />
-                ),
-              },
-              {
-                key: "ledger",
-                label: "安全账本",
-                children: (
-                  <LedgerTab
-                    ledgerLimit={ledgerLimit}
-                    setLedgerLimit={setLedgerLimit}
-                    showLedger={showLedger}
-                    ledgerColumns={ledgerColumns}
-                    ledgerRecords={ledgerRecords}
-                  />
-                ),
-              },
-              {
-                key: "config",
-                label: "网关配置",
-                children: (
-                  <GatewayConfigTab
-                    configForm={configForm}
-                    showConfig={showConfig}
-                    saveConfig={saveConfig}
-                    testLlmGateway={testLlmGateway}
-                    writeLocked={writeLocked}
-                    status={status}
-                    breakGlassForm={breakGlassForm}
-                    breakGlass={breakGlass}
-                  />
-                ),
-              },
-            ]}
-          />
-        </Content>
-      </Layout>
-    </Layout>
+          <section key={activeMenu} className="page-transition-surface">
+            {renderActivePage()}
+          </section>
+
+
+    </GothicConsoleShell>
   );
 }
 
-createRoot(document.getElementById("root")).render(
+const rootElement = document.getElementById("root");
+if (!rootElement) {
+  throw new Error("Missing #root element for ATEE admin console");
+}
+
+createRoot(rootElement).render(
   <ConfigProvider
     locale={zhCN}
     csp={{ nonce: runtimeCspNonce }}
@@ -1085,7 +1082,7 @@ createRoot(document.getElementById("root")).render(
     theme={{
       algorithm: theme.defaultAlgorithm,
       token: {
-        colorPrimary: "#2563eb",
+        colorPrimary: "#e10600",
         colorSuccess: "#138a48",
         colorWarning: "#b7791f",
         colorError: "#c2410c",

@@ -56,6 +56,7 @@ class AdminConsoleTests(unittest.TestCase):
         main_source = (self.source_dir / "src" / "main.jsx").read_text(encoding="utf-8")
         agent_guide_source = (self.source_dir / "src" / "adminAgentGuide.jsx").read_text(encoding="utf-8")
         dashboard_source = (self.source_dir / "src" / "adminDashboard.jsx").read_text(encoding="utf-8")
+        gothic_shell_source = (self.source_dir / "src" / "adminGothicShell.jsx").read_text(encoding="utf-8")
         ledger_config_source = (self.source_dir / "src" / "adminLedgerConfig.jsx").read_text(encoding="utf-8")
         review_source = (self.source_dir / "src" / "adminReviewQueues.jsx").read_text(encoding="utf-8")
         access_source = (self.source_dir / "src" / "adminAccess.jsx").read_text(encoding="utf-8")
@@ -66,6 +67,8 @@ class AdminConsoleTests(unittest.TestCase):
             + agent_guide_source
             + "\n"
             + dashboard_source
+            + "\n"
+            + gothic_shell_source
             + "\n"
             + ledger_config_source
             + "\n"
@@ -172,6 +175,11 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("Popconfirm", source)
         self.assertIn("writeLocked", source)
         self.assertIn("MetricCard", source)
+        self.assertIn("InteractiveGothicBackdrop", source)
+        self.assertIn("GothicFallbackBackdrop", source)
+        self.assertIn("GothicPageFrame", source)
+        self.assertIn("gothic-console", source)
+        self.assertIn("navCollapseBtn", source)
         self.assertIn("RuntimeSummary", source)
         self.assertIn("OperationSummary", source)
         self.assertIn("PreflightSummary", source)

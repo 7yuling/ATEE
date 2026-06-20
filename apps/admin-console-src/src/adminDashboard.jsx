@@ -2,13 +2,11 @@ import {
   ApiOutlined,
   BranchesOutlined,
   CheckCircleOutlined,
-  ClockCircleOutlined,
   DatabaseOutlined,
   EyeOutlined,
   FileSearchOutlined,
   PauseCircleOutlined,
   StopOutlined,
-  ToolOutlined,
 } from "@ant-design/icons";
 import {
   Button,
@@ -23,7 +21,6 @@ import {
   MetricCard,
   OperationSummary,
   RuntimeSummary,
-  budgetLabel,
   modeLabel,
   pretty,
   providerLabel,
@@ -37,7 +34,6 @@ export function DashboardMetrics({
   gateway,
   gatewayConfigured,
   circuit,
-  budget,
 }) {
   return (
     <Row className="dashboard-metrics" gutter={[12, 12]}>
@@ -67,12 +63,6 @@ export function DashboardMetrics({
       </Col>
       <Col xs={24} md={12} xl={6}>
         <MetricCard id="circuitState" title="熔断状态" value={circuit.open ? "已熔断" : "正常"} icon={circuit.open ? <StopOutlined /> : <CheckCircleOutlined />} />
-      </Col>
-      <Col xs={24} md={12} xl={6}>
-        <MetricCard id="budgetState" title="预算余额" value={budgetLabel(budget)} icon={<ClockCircleOutlined />} />
-      </Col>
-      <Col xs={24} md={12} xl={6}>
-        <MetricCard id="activeActions" title="活跃动作" value={status?.active_actions ?? 0} icon={<ToolOutlined />} />
       </Col>
     </Row>
   );

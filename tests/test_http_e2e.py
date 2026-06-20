@@ -42,9 +42,16 @@ class AteeHttpE2ETests(unittest.TestCase):
 
     def test_admin_console_and_security_workflow_over_http(self):
         html = self._text("GET", "/")
+        admin_html = self._text("GET", "/admin/")
         admin_js = self._text("GET", "/admin/admin.js")
         chunk_path = re.search(r'href="(/admin/admin-[^"]+\.js)"', html).group(1)
         chunk_status, chunk_headers, chunk_body = self._response("GET", chunk_path)
+        admin_image_paths = [
+            "/admin/admin-gothic-console-bg.png",
+            "/admin/admin-admin-bg-wing-single.png",
+            "/admin/admin-admin-bg-wing-wide.png",
+        ]
+        admin_image_responses = [self._binary_response("GET", path) for path in admin_image_paths]
         favicon_status = self._status("GET", "/favicon.ico")
         status = self._json("GET", "/v1/runtime/status")
         safe = self._json(
@@ -135,11 +142,16 @@ class AteeHttpE2ETests(unittest.TestCase):
         security_flow = self._json("POST", "/v1/admin/security-flow/run", {})
 
         self.assertIn("ATEE 管理控制台", html)
+        self.assertIn('src="/admin/admin.js"', admin_html)
         self.assertIn("/v1/admin/actions/revoke", admin_js)
         self.assertIn("/v1/admin/security-flow/run", admin_js)
         self.assertEqual(chunk_status, 200)
         self.assertIn("application/javascript", chunk_headers["Content-Type"])
         self.assertTrue(chunk_body)
+        for image_status, image_headers, image_body in admin_image_responses:
+            self.assertEqual(image_status, 200)
+            self.assertEqual(image_headers["Content-Type"], "image/png")
+            self.assertTrue(image_body.startswith(b"\x89PNG"))
         self.assertEqual(favicon_status, 204)
         self.assertEqual(status["display"]["locale"], "zh-CN")
         self.assertEqual(safe["route"]["route"], "skip")
@@ -354,6 +366,11 @@ class AteeHttpE2ETests(unittest.TestCase):
         request = urllib.request.Request(self.base_url + path, method=method)
         with urllib.request.urlopen(request, timeout=10) as response:
             return int(response.status), dict(response.headers), response.read().decode("utf-8")
+
+    def _binary_response(self, method: str, path: str) -> tuple[int, dict[str, str], bytes]:
+        request = urllib.request.Request(self.base_url + path, method=method)
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return int(response.status), dict(response.headers), response.read()
 
     def _status(self, method: str, path: str) -> int:
         request = urllib.request.Request(self.base_url + path, method=method)

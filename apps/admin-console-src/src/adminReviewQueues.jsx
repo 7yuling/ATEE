@@ -18,6 +18,21 @@ import {
 
 const { Text } = Typography;
 
+function activatableRow(onActivate) {
+  return {
+    className: "clickable-row",
+    role: "button",
+    tabIndex: 0,
+    onClick: onActivate,
+    onKeyDown: (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onActivate();
+      }
+    },
+  };
+}
+
 export function AppealsTab({
   appealStatus,
   setAppealStatus,
@@ -44,7 +59,7 @@ export function AppealsTab({
             { value: "rejected", label: "已驳回" },
             { value: "all", label: "全部" },
           ]}
-          style={{ width: 128 }}
+          className="field-xs"
         />
         <Button id="appealsBtn" icon={<ReloadOutlined />} onClick={() => showAppeals(appealStatus)}>刷新申诉</Button>
       </Space>
@@ -67,10 +82,7 @@ export function AppealsTab({
             </Space>
           ),
         }}
-        onRow={(record) => ({
-          className: "clickable-row",
-          onClick: () => appealForm.setFieldsValue({ punishment_id: record.punishment_id }),
-        })}
+        onRow={(record) => activatableRow(() => appealForm.setFieldsValue({ punishment_id: record.punishment_id }))}
       />
       <Form form={appealForm} layout="inline" className="review-form">
         <Form.Item label="处罚编号" name="punishment_id">
@@ -135,7 +147,7 @@ export function ActionsTab({
             { value: "expired", label: "已过期" },
             { value: "all", label: "全部" },
           ]}
-          style={{ width: 128 }}
+          className="field-xs"
         />
         <Button id="actionsBtn" icon={<ReloadOutlined />} onClick={() => showActions(actionStatus)}>刷新动作</Button>
         <Popconfirm
@@ -154,10 +166,7 @@ export function ActionsTab({
         columns={actionColumns}
         dataSource={actions}
         pagination={{ pageSize: 5 }}
-        onRow={(record) => ({
-          className: "clickable-row",
-          onClick: () => actionForm.setFieldsValue({ action_id: record.id }),
-        })}
+        onRow={(record) => activatableRow(() => actionForm.setFieldsValue({ action_id: record.id }))}
       />
       <Form form={actionForm} layout="inline" className="review-form">
         <Form.Item label="动作编号" name="action_id">
@@ -218,7 +227,7 @@ export function AsyncReviewsTab({
             { value: "dead_letter", label: "死信" },
             { value: "all", label: "全部" },
           ]}
-          style={{ width: 128 }}
+          className="field-xs"
         />
         <Button id="asyncReviewsBtn" icon={<ReloadOutlined />} onClick={() => showAsyncReviews(asyncReviewStatus)}>
           刷新队列
@@ -232,15 +241,12 @@ export function AsyncReviewsTab({
         columns={asyncReviewColumns}
         dataSource={asyncReviews}
         pagination={{ pageSize: 5 }}
-        onRow={(record) => ({
-          className: "clickable-row",
-          onClick: () => manualReviewForm.setFieldsValue({
+        onRow={(record) => activatableRow(() => manualReviewForm.setFieldsValue({
             job_id: record.id,
             user_hash: record.user_hash,
             feature_scope: record.feature_scope || record.event_type,
             duration_seconds: 3600,
-          }),
-        })}
+          }))}
       />
       <Form form={manualReviewForm} layout="inline" className="review-form">
         <Form.Item label="审查任务" name="job_id">
