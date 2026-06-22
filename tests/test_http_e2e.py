@@ -140,11 +140,25 @@ class AteeHttpE2ETests(unittest.TestCase):
         active = self._json("GET", "/v1/admin/actions?status=active")
         revoked = self._json("POST", "/v1/admin/actions/revoke", {"action_id": action_id, "reason": "reviewed"})
         security_flow = self._json("POST", "/v1/admin/security-flow/run", {})
+        integration_plan = self._json(
+            "POST",
+            "/v1/admin/integration/plan",
+            {
+                "site_name": "http-e2e-site",
+                "site_url": "https://http-e2e.example",
+                "site_type": "API 服务",
+                "adapter_type": "HTTP API",
+                "core_url": self.base_url,
+                "appeal_path": "/security/appeal",
+                "protected_features": ["comments"],
+            },
+        )
 
         self.assertIn("ATEE 管理控制台", html)
         self.assertIn('src="/admin/admin.js"', admin_html)
         self.assertIn("/v1/admin/actions/revoke", admin_js)
         self.assertIn("/v1/admin/security-flow/run", admin_js)
+        self.assertIn("/v1/admin/integration/plan", admin_js)
         self.assertEqual(chunk_status, 200)
         self.assertIn("application/javascript", chunk_headers["Content-Type"])
         self.assertTrue(chunk_body)
@@ -174,6 +188,11 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertTrue(security_flow["ok"])
         self.assertGreaterEqual(len(security_flow["flow_steps"]), 7)
         self.assertNotIn("records", security_flow)
+        self.assertTrue(integration_plan["ok"])
+        self.assertEqual(
+            {item["core_endpoint"] for item in integration_plan["endpoint_mappings"]},
+            {"/v1/check", "/v1/event", "/v1/feature-access", "/v1/appeal"},
+        )
 
     def test_admin_console_csp_nonce_is_generated_per_response(self):
         status_one, headers_one, html_one = self._response("GET", "/")
@@ -203,9 +222,20 @@ class AteeHttpE2ETests(unittest.TestCase):
             http_server.CORE.update_config({"admin_auth_enabled": True, "admin_token_env": env_name})
 
             unauthorized = self._json("GET", "/v1/admin/config")
+            unauthorized_plan = self._json(
+                "POST",
+                "/v1/admin/integration/plan",
+                {"site_name": "blocked", "adapter_type": "HTTP API"},
+            )
             authorized = self._json(
                 "GET",
                 "/v1/admin/config",
+                headers={"Authorization": "Bearer http-e2e-admin-token"},
+            )
+            authorized_plan = self._json(
+                "POST",
+                "/v1/admin/integration/plan",
+                {"site_name": "authorized", "adapter_type": "HTTP API"},
                 headers={"Authorization": "Bearer http-e2e-admin-token"},
             )
             mode = self._json(
@@ -231,7 +261,10 @@ class AteeHttpE2ETests(unittest.TestCase):
 
             self.assertFalse(unauthorized["ok"])
             self.assertEqual(unauthorized["error"], "admin_auth_required")
+            self.assertFalse(unauthorized_plan["ok"])
+            self.assertEqual(unauthorized_plan["error"], "admin_auth_required")
             self.assertTrue(authorized["ok"])
+            self.assertTrue(authorized_plan["ok"])
             self.assertTrue(mode["ok"])
             self.assertTrue(header_authorized["ok"])
             self.assertTrue(public_status["admin_auth"]["enabled"])

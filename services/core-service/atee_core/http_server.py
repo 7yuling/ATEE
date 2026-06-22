@@ -152,6 +152,10 @@ class AteeHandler(BaseHTTPRequestHandler):
             result = CORE.agent_chat(payload, actor=self._admin_actor())
             self._send_json(result, status=int(result.get("status", 200)))
             return
+        if self.path == "/v1/admin/integration/plan":
+            result = CORE.integration_plan(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
         if self.path == "/v1/admin/llm/test":
             self._send_json(CORE.test_llm_gateway())
             return

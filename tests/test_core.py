@@ -227,6 +227,61 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(report["summary"]["total"], len(report["checks"]))
             self.assertNotIn("api_key_value", json.dumps(report, ensure_ascii=False).lower())
 
+    def test_integration_plan_generates_http_api_mapping(self):
+        core = CoreService()
+        plan = core.integration_plan(
+            {
+                "site_name": "Dining Hall",
+                "site_url": "https://dining.example/app",
+                "site_type": "论坛/社区",
+                "adapter_type": "HTTP API",
+                "core_url": "https://atee.example/core/",
+                "appeal_path": "security/appeal",
+                "protected_features": ["comments", "uploads"],
+            }
+        )
+        endpoints = {item["core_endpoint"] for item in plan["endpoint_mappings"]}
+        payload_urls = {item["url"].rsplit("/", 1)[-1] for item in plan["payload_examples"].values()}
+
+        self.assertTrue(plan["ok"])
+        self.assertEqual(plan["site"]["appeal_path"], "/security/appeal")
+        self.assertEqual(plan["site"]["protected_features"], ["comments", "uploads"])
+        self.assertEqual(endpoints, {"/v1/check", "/v1/event", "/v1/feature-access", "/v1/appeal"})
+        self.assertEqual(payload_urls, {"check", "event", "feature-access", "appeal"})
+        self.assertEqual(len(plan["verification_requests"]), 4)
+        self.assertFalse(plan["payload_examples"]["check"]["json"]["body"].get("password"))
+
+    def test_integration_plan_defaults_truncates_and_redacts_sensitive_fields(self):
+        core = CoreService()
+        plan = core.integration_plan(
+            {
+                "site_name": "x" * 120,
+                "site_url": "Authorization Bearer secret",
+                "adapter_type": "HTTP API",
+                "core_url": "https://core.example/v1?admin_token=secret",
+                "protected_features": "comments,api_key=secret," + ("u" * 80),
+            }
+        )
+        public_text = json.dumps(plan, ensure_ascii=False).lower()
+
+        self.assertTrue(plan["ok"])
+        self.assertEqual(len(plan["site"]["name"]), 80)
+        self.assertEqual(plan["site"]["url"], "https://target.example")
+        self.assertEqual(plan["core_url"], "http://127.0.0.1:8787")
+        self.assertEqual(plan["site"]["protected_features"], ["comments", "u" * 40])
+        for marker in ("authorization", "api_key", "admin_token", "proxy_url", "secret"):
+            self.assertNotIn(marker, public_text)
+
+    def test_integration_plan_rejects_non_http_api_adapter_without_examples(self):
+        core = CoreService()
+        plan = core.integration_plan({"adapter_type": "Node/Express Adapter"})
+
+        self.assertFalse(plan["ok"])
+        self.assertEqual(plan["status"], 422)
+        self.assertEqual(plan["reason"], "unsupported_adapter_type")
+        self.assertEqual(plan["payload_examples"], {})
+        self.assertEqual(plan["verification_requests"], [])
+
     def test_security_flow_rehearsal_returns_sanitized_steps(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(

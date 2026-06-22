@@ -68,6 +68,7 @@ For user-feature bans, use the `punishment_id` returned by `/v1/feature-access`,
 - `GET /v1/admin/preflight`
 - `POST /v1/admin/preflight`
 - `POST /v1/admin/agent/chat`
+- `POST /v1/admin/integration/plan`
 - `GET /v1/admin/llm/test`
 - `POST /v1/admin/llm/test`
 - `POST /v1/feature-access`
@@ -86,6 +87,34 @@ For user-feature bans, use the `punishment_id` returned by `/v1/feature-access`,
 `/v1/admin/preflight` returns local/server readiness checks for Python, config, admin assets, ledger write access, model gateway config, trusted proxy boundaries, and break-glass setup.
 
 `/v1/admin/agent/chat` accepts `message`, `site_type`, and `adapter_type`; it uses the configured LLM gateway when enabled, falls back to local mock advice otherwise, and does not return or persist secrets or raw prompts.
+
+## POST /v1/admin/integration/plan
+
+Generates a deterministic HTTP API integration plan for a target site. This endpoint is admin-authenticated, does not call the model gateway, and does not modify target-site code.
+
+Request:
+
+```json
+{
+  "site_name": "Dining Hall",
+  "site_url": "https://site.example",
+  "site_type": "论坛/社区",
+  "adapter_type": "HTTP API",
+  "core_url": "http://127.0.0.1:8787",
+  "appeal_path": "/atee-appeal",
+  "protected_features": ["comments", "uploads"]
+}
+```
+
+Response includes:
+
+- `steps`: onboarding steps for observe-mode HTTP API rollout.
+- `endpoint_mappings`: target-site routes mapped to `/v1/check`, `/v1/event`, `/v1/feature-access`, and `/v1/appeal`.
+- `payload_examples`: sanitized JSON examples for the four public Core endpoints.
+- `verification_requests`: copyable `curl` requests and expected outcomes.
+- `safety_notes_zh`: production safety notes for proxy boundaries, observe mode, and appeal access.
+
+Stage one supports only `adapter_type="HTTP API"`. Other adapter types return `ok=false`, `status=422`, and no payload examples.
 
 `async_agent` requests are queued before returning to the caller. When `async_review_worker_enabled` is true, Core Service runs a background worker that processes due jobs with the configured LLM gateway. Use `/v1/admin/async-reviews` to inspect queue summaries and `/v1/admin/async-reviews/run` for manual catch-up or operations checks. Failed remote reviews are retried up to the configured attempt limit and then moved to `dead_letter`.
 

@@ -103,13 +103,25 @@ export function installStyleNonce(nonce) {
   if (!nonce || window.__ateeStyleNonceInstalled) {
     return;
   }
-  const originalCreateElement = document.createElement.bind(document);
-  document.createElement = (tagName, options) => {
-    const element = originalCreateElement(tagName, options);
-    if (String(tagName).toLowerCase() === "style") {
+  const applyNonce = (element) => {
+    if (element?.tagName?.toLowerCase() === "style" && !element.nonce) {
       element.nonce = nonce;
     }
     return element;
+  };
+  document.querySelectorAll("style:not([nonce])").forEach(applyNonce);
+  const originalCreateElement = document.createElement.bind(document);
+  document.createElement = (tagName, options) => {
+    const element = originalCreateElement(tagName, options);
+    return String(tagName).toLowerCase() === "style" ? applyNonce(element) : element;
+  };
+  const originalAppendChild = Node.prototype.appendChild;
+  Node.prototype.appendChild = function appendChildWithStyleNonce(child) {
+    return originalAppendChild.call(this, applyNonce(child));
+  };
+  const originalInsertBefore = Node.prototype.insertBefore;
+  Node.prototype.insertBefore = function insertBeforeWithStyleNonce(child, referenceNode) {
+    return originalInsertBefore.call(this, applyNonce(child), referenceNode);
   };
   window.__ateeStyleNonceInstalled = true;
 }

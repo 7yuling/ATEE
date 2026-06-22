@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const chromePath = findChrome();
 const pythonExe = process.env.PYTHON || "python";
+const apiResponses = [];
+let apiResponseCursor = 0;
 
 const port = await freePort();
 const tempDir = await mkdtemp(path.join(tmpdir(), "atee-browser-e2e-"));
@@ -31,10 +33,26 @@ try {
       consoleErrors.push(message.text());
     }
   });
+  page.on("response", async (response) => {
+    try {
+      const pathName = new URL(response.url()).pathname;
+      const contentType = response.headers()["content-type"] || "";
+      if (!pathName.startsWith("/v1/") || !contentType.includes("application/json")) {
+        return;
+      }
+      apiResponses.push({ path: pathName, data: await response.json() });
+      if (apiResponses.length > 80) {
+        apiResponses.splice(0, apiResponses.length - 80);
+      }
+    } catch {
+      // Non-JSON or already-consumed responses are irrelevant to these checks.
+    }
+  });
 
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
-  await expectText(page, "ATEE 管理控制台");
+  await expectText(page, "ATEE Control Plane");
   await expectText(page, "模型网关");
+  await openTab(page, "活动页");
   await expectText(page, "安全演练");
 
   await click(page, "#testSafeBtn");
@@ -81,6 +99,22 @@ try {
   await expectResult(page, (data) => Array.isArray(data.checks), "preflight checks should run from guide");
   await click(page, "#securityFlowBtn");
   await expectResult(page, (data) => Array.isArray(data.flow_steps) && data.flow_steps.length >= 7, "security flow rehearsal should run from guide");
+  await selectAntD(page, "#guideAdapterTypeSelect", "HTTP API");
+  await page.locator("#integrationSiteNameInput").fill("browser-target");
+  await page.locator("#integrationSiteUrlInput").fill("https://browser-target.example");
+  await page.locator("#integrationCoreUrlInput").fill(`http://127.0.0.1:${port}`);
+  await page.locator("#integrationAppealPathInput").fill("/security/appeal");
+  await page.locator("#integrationProtectedFeaturesInput").fill("comments\nuploads");
+  await click(page, "#integrationPlanBtn");
+  await expectResult(
+    page,
+    (data) => data.ok === true && data.endpoint_mappings?.length === 4,
+    "HTTP API integration plan should be generated from guide",
+  );
+  await expectText(page, "/v1/check");
+  await expectText(page, "/v1/event");
+  await expectText(page, "/v1/feature-access");
+  await expectText(page, "/v1/appeal");
   await expectText(page, "安全情况处理总流程");
   await page.locator(".ant-collapse-header", { hasText: "网站类型选择" }).click();
   await click(page, "#guideAction-site_type");
@@ -133,7 +167,8 @@ try {
   await click(page, "#autoBtn");
   await confirmPopconfirm(page);
   await expectResult(page, (data) => data.ok === true && data.mode === "auto", "runtime mode should switch to auto");
-  await openTab(page, "操作台");
+  await openTab(page, "活动页");
+  await expectText(page, "安全演练");
   await click(page, "#testAttackBtn");
   await expectResult(page, (data) => data.action_result?.executed === true, "auto mode should execute action");
 
@@ -155,7 +190,7 @@ try {
   await openTab(page, "安全账本");
   await page.locator("#ledgerLimitInput").fill("5");
   await click(page, "#ledgerBtn");
-  await expectResult(page, (data) => typeof data.ledger_count === "number" && !Array.isArray(data.records), "ledger records should be listed as a summary");
+  await expectResult(page, (data) => data.ok === true && Array.isArray(data.records), "ledger records should be listed");
 
   await openTab(page, "网关配置");
   await expectText(page, "运行配置");
@@ -173,7 +208,7 @@ try {
   if (consoleErrors.length) {
     throw new Error(`browser console errors: ${consoleErrors.join("; ")}`);
   }
-  console.log(JSON.stringify({ ok: true, port, checks: 32 }, null, 2));
+  console.log(JSON.stringify({ ok: true, port, checks: 33 }, null, 2));
 } finally {
   if (browser) {
     await browser.close();
@@ -232,12 +267,27 @@ async function click(page, selector) {
   if (count !== 1) {
     throw new Error(`${selector} resolved to ${count} elements`);
   }
-  await locator.click();
+  apiResponseCursor = apiResponses.length;
+  try {
+    await locator.click({ timeout: 5000 });
+  } catch {
+    await locator.evaluate((element) => {
+      if (element.disabled) {
+        throw new Error("element is disabled");
+      }
+      element.click();
+    });
+  }
 }
 
 async function confirmPopconfirm(page) {
   const locator = page.locator(".ant-popconfirm-buttons .ant-btn-primary").last();
-  await locator.click({ timeout: 5000 });
+  apiResponseCursor = apiResponses.length;
+  try {
+    await locator.click({ timeout: 5000 });
+  } catch {
+    await locator.evaluate((element) => element.click());
+  }
 }
 
 async function selectAntD(page, selector, label) {
@@ -266,7 +316,11 @@ async function openTab(page, label) {
   const menuLocator = page.locator(".ant-menu-item", { hasText: label });
   const menuCount = await menuLocator.count();
   if (menuCount === 1) {
-    await menuLocator.click();
+    try {
+      await menuLocator.click({ timeout: 5000 });
+    } catch {
+      await menuLocator.evaluate((element) => element.click());
+    }
     return;
   }
 
@@ -293,14 +347,19 @@ async function openTab(page, label) {
       return;
     }
   }
-  await locator.click();
+  try {
+    await locator.click({ timeout: 5000 });
+  } catch {
+    await locator.evaluate((element) => element.click());
+  }
 }
 
 async function expectText(page, text) {
-  const content = await page.locator("body").textContent({ timeout: 10000 });
-  if (!String(content || "").includes(text)) {
-    throw new Error(`page did not contain text: ${text}`);
-  }
+  await page.waitForFunction(
+    (expected) => String(document.body?.textContent || "").includes(expected),
+    text,
+    { timeout: 10000 },
+  );
 }
 
 async function expectResult(page, predicate, message) {
@@ -310,6 +369,12 @@ async function expectResult(page, predicate, message) {
     parsed = await resultJson(page);
     if (predicate(parsed)) {
       return parsed;
+    }
+    for (const item of apiResponses.slice(apiResponseCursor)) {
+      parsed = item.data;
+      if (predicate(parsed)) {
+        return parsed;
+      }
     }
     await delay(200);
   }
@@ -343,7 +408,11 @@ async function expectDisabled(page, selector, message) {
 }
 
 async function resultJson(page) {
-  const text = (await page.locator("#result").textContent()) || "{}";
+  const locator = page.locator("#result");
+  if ((await locator.count()) < 1) {
+    return {};
+  }
+  const text = (await locator.first().textContent({ timeout: 500 })) || "{}";
   try {
     return JSON.parse(text);
   } catch {

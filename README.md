@@ -202,6 +202,7 @@ The browser script starts a temporary mock Core Service on a random localhost po
 - `GET /v1/admin/preflight`
 - `POST /v1/admin/preflight`
 - `POST /v1/admin/agent/chat`
+- `POST /v1/admin/integration/plan`
 - `GET /v1/admin/llm/test`
 - `POST /v1/admin/llm/test`
 - `GET /v1/admin/ledger/recent`
@@ -224,6 +225,19 @@ The browser script starts a temporary mock Core Service on a random localhost po
 - Appeal: `POST /api/appeal` -> Core `/v1/appeal`
 
 The demo UI uses external CSS/JS assets and renders returned text with `textContent`.
+
+## Target Site HTTP API Integration Guide
+
+The admin console "新手引导" page can generate a deterministic HTTP API integration plan for a target site. Enter the target site name, URL, Core Service URL, appeal path, and protected feature scopes, then click "生成 HTTP API 接入方案".
+
+The generated plan maps the target site to Core endpoints:
+
+- Synchronous high-risk checks -> `POST /v1/check`
+- Write/event traffic -> `POST /v1/event`
+- Feature gate checks -> `POST /v1/feature-access`
+- User appeals -> `POST /v1/appeal`
+
+Stage one only generates HTTP API plans. It does not modify the target site's code, call the remote model, or include secrets in the generated payloads and verification requests.
 
 ## Local Config
 

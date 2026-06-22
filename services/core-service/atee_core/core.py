@@ -7,6 +7,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from .actions import ActionExecutor
@@ -32,6 +33,17 @@ from .tool_gateway import ToolGateway
 
 ASYNC_REVIEW_PAUSE_REASONS = {"llm_budget_exhausted"}
 MANUAL_FEATURE_BAN_MAX_SECONDS = 7 * 24 * 3600
+INTEGRATION_PLAN_DEFAULT_FEATURES = ["comments"]
+INTEGRATION_PLAN_SENSITIVE_MARKERS = (
+    "authorization",
+    "bearer ",
+    "api_key",
+    "api key",
+    "admin_token",
+    "admin token",
+    "proxy_url",
+    "proxy url",
+)
 
 
 class AsyncReviewProcessingPaused(RuntimeError):
@@ -490,6 +502,191 @@ class CoreService:
             "display": {
                 "locale": "zh-CN",
                 "message_zh": "环境预检通过。" if ok else "环境预检发现需要处理的项目。",
+            },
+        }
+
+    def integration_plan(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        site_name = self._plan_text(payload.get("site_name"), "target-site", 80)
+        site_url = self._plan_url(payload.get("site_url"), "https://target.example")
+        site_type = self._plan_text(payload.get("site_type"), "通用网站", 80)
+        adapter_type = self._plan_text(payload.get("adapter_type"), "HTTP API", 80)
+        core_url = self._plan_url(payload.get("core_url"), "http://127.0.0.1:8787")
+        appeal_path = self._plan_path(payload.get("appeal_path"), "/atee-appeal")
+        protected_features = self._plan_features(payload.get("protected_features"))
+
+        self._record_admin_audit(
+            "admin_integration_plan",
+            "generate_integration_plan",
+            f"site_type={site_type} adapter_type={adapter_type} features={len(protected_features)}",
+            actor,
+        )
+
+        if adapter_type != "HTTP API":
+            return {
+                "ok": False,
+                "status": 422,
+                "reason": "unsupported_adapter_type",
+                "site": {
+                    "name": site_name,
+                    "url": site_url,
+                    "site_type": site_type,
+                    "adapter_type": adapter_type,
+                },
+                "steps": [],
+                "endpoint_mappings": [],
+                "payload_examples": {},
+                "verification_requests": [],
+                "safety_notes_zh": [
+                    "首版接入向导只生成 HTTP API 方案；请选择 HTTP API 后重新生成。",
+                    "Node/Express、Python/FastAPI 和反向代理方案保留给后续扩展。",
+                ],
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "当前首版只支持 HTTP API 接入方案。",
+                },
+            }
+
+        first_feature = protected_features[0]
+        check_payload = {
+            "method": "POST",
+            "path": "/login",
+            "headers": {"X-Forwarded-For": "203.0.113.10"},
+            "query": {},
+            "body": {"username": "demo-user"},
+            "remote_addr": "203.0.113.10",
+            "user_id": "site-user-123",
+            "session_id": "session-123",
+            "event_type": "login",
+        }
+        event_payload = {
+            "method": "POST",
+            "path": "/comment",
+            "headers": {"X-Forwarded-For": "203.0.113.10"},
+            "query": {},
+            "body": {"text": "normal comment"},
+            "remote_addr": "203.0.113.10",
+            "user_id": "site-user-123",
+            "session_id": "session-123",
+            "event_type": "comment_create",
+            "feature_scope": first_feature,
+        }
+        feature_payload = {
+            "user_id": "site-user-123",
+            "feature_scope": first_feature,
+        }
+        appeal_payload = {
+            "punishment_id": "action:123",
+            "reason": "please review this action",
+        }
+
+        return {
+            "ok": True,
+            "site": {
+                "name": site_name,
+                "url": site_url,
+                "site_type": site_type,
+                "adapter_type": adapter_type,
+                "appeal_path": appeal_path,
+                "protected_features": protected_features,
+            },
+            "core_url": core_url,
+            "steps": [
+                {
+                    "id": "preflight",
+                    "title_zh": "1. 先运行 ATEE 环境预检",
+                    "detail_zh": "确认 Core Service、账本目录、模型网关和可信代理边界都处于可用状态。",
+                },
+                {
+                    "id": "observe",
+                    "title_zh": "2. 先以观察模式接入目标网站",
+                    "detail_zh": f"在 {site_name} 的后端请求链路中调用 ATEE HTTP API，先记录结果，不直接改变业务数据。",
+                },
+                {
+                    "id": "wire",
+                    "title_zh": "3. 接入登录、写操作、功能访问和申诉入口",
+                    "detail_zh": "登录和高风险同步动作走 /v1/check；评论、上传等事件走 /v1/event；功能入口先查 /v1/feature-access；用户申诉提交到 /v1/appeal。",
+                },
+                {
+                    "id": "verify",
+                    "title_zh": "4. 用验证请求跑通闭环",
+                    "detail_zh": "确认正常请求通过、攻击样例被 Fast-Path 拦截、功能限制能展示 punishment_id，且申诉能进入管理台。",
+                },
+            ],
+            "endpoint_mappings": [
+                {
+                    "site_route": "/login",
+                    "core_endpoint": "/v1/check",
+                    "method": "POST",
+                    "purpose_zh": "登录、注册、支付等需要同步判断的高风险入口。",
+                    "when_zh": "业务后端准备执行动作前调用；根据 route 和 tool_gateway 结果决定是否继续。",
+                },
+                {
+                    "site_route": "/comment",
+                    "core_endpoint": "/v1/event",
+                    "method": "POST",
+                    "purpose_zh": "评论、发帖、上传等写入事件。",
+                    "when_zh": "业务事件发生前或刚发生后调用；普通内容可进入异步 AI 审查队列。",
+                },
+                {
+                    "site_route": f"/features/{first_feature}",
+                    "core_endpoint": "/v1/feature-access",
+                    "method": "POST",
+                    "purpose_zh": "检查指定用户是否被临时限制使用某个功能。",
+                    "when_zh": "渲染或执行受保护功能前调用；被限制时展示返回的 punishment_id 和申诉入口。",
+                },
+                {
+                    "site_route": appeal_path,
+                    "core_endpoint": "/v1/appeal",
+                    "method": "POST",
+                    "purpose_zh": "提交用户申诉。",
+                    "when_zh": "用户填写申诉理由后调用；管理台审核通过后可撤销可逆的功能限制。",
+                },
+            ],
+            "payload_examples": {
+                "check": {"url": f"{core_url}/v1/check", "json": check_payload},
+                "event": {"url": f"{core_url}/v1/event", "json": event_payload},
+                "feature_access": {"url": f"{core_url}/v1/feature-access", "json": feature_payload},
+                "appeal": {"url": f"{core_url}/v1/appeal", "json": appeal_payload},
+            },
+            "verification_requests": [
+                {
+                    "id": "safe_check",
+                    "title_zh": "正常登录预检",
+                    "command": self._curl_example(core_url, "/v1/check", check_payload),
+                    "expect_zh": "返回 route=skip 或 sync_agent，且不会出现 Fast-Path 拦截。",
+                },
+                {
+                    "id": "attack_event",
+                    "title_zh": "明显攻击样例",
+                    "command": self._curl_example(
+                        core_url,
+                        "/v1/event",
+                        {**event_payload, "body": {"text": "<script>alert(1)</script>"}},
+                    ),
+                    "expect_zh": "返回 route=fast_path_block，规则命中 FP_XSS_001。",
+                },
+                {
+                    "id": "feature_access",
+                    "title_zh": "功能访问检查",
+                    "command": self._curl_example(core_url, "/v1/feature-access", feature_payload),
+                    "expect_zh": "未限制时 allowed=true；存在功能限制时返回 punishment_id。",
+                },
+                {
+                    "id": "appeal",
+                    "title_zh": "申诉提交",
+                    "command": self._curl_example(core_url, "/v1/appeal", appeal_payload),
+                    "expect_zh": "返回 status=202，并能在管理台申诉列表中看到待处理记录。",
+                },
+            ],
+            "safety_notes_zh": [
+                "目标网站只转发最小请求上下文，不保存完整原始请求体到 ATEE 账本。",
+                "生产上线先保持 observe 模式，复核 24 小时账本摘要后再考虑自动化处置。",
+                "可信代理 CIDR 要填写代理节点网段，不要填写普通用户地址段。",
+                "申诉入口必须对被限制用户可访问，并按纯文本展示用户输入。",
+            ],
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "HTTP API 接入方案已生成。",
             },
         }
 
@@ -1482,6 +1679,60 @@ class CoreService:
                 "summary": self._admin_summary(summary, actor),
             }
         )
+
+    def _plan_text(self, value: Any, default: str, limit: int) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return default
+        if any(marker in text.lower() for marker in INTEGRATION_PLAN_SENSITIVE_MARKERS):
+            return "[redacted]"
+        return text[:limit]
+
+    def _plan_url(self, value: Any, default: str) -> str:
+        text = self._plan_text(value, default, 200)
+        if text == "[redacted]":
+            return default
+        try:
+            parsed = urlsplit(text)
+        except ValueError:
+            return default
+        if parsed.scheme and parsed.netloc:
+            hostname = parsed.hostname or parsed.netloc.rsplit("@", 1)[-1]
+            try:
+                port = parsed.port
+            except ValueError:
+                return default
+            netloc = f"{hostname}:{port}" if port else hostname
+            path = parsed.path.rstrip("/")
+            return urlunsplit((parsed.scheme, netloc, path, "", "")).rstrip("/") or default
+        return text.split("?", 1)[0].split("#", 1)[0].rstrip("/")[:160] or default
+
+    def _plan_path(self, value: Any, default: str) -> str:
+        text = self._plan_text(value, default, 120)
+        if text == "[redacted]":
+            return default
+        if not text.startswith("/"):
+            text = f"/{text}"
+        return text.split("?", 1)[0].split("#", 1)[0] or default
+
+    def _plan_features(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = str(value or "").replace(";", ",").replace("\n", ",").split(",")
+        features = []
+        for item in raw_items:
+            feature = self._plan_text(item, "", 40)
+            if feature and feature != "[redacted]" and feature not in features:
+                features.append(feature)
+            if len(features) >= 8:
+                break
+        return features or list(INTEGRATION_PLAN_DEFAULT_FEATURES)
+
+    def _curl_example(self, core_url: str, path: str, payload: dict[str, Any]) -> str:
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        escaped = body.replace('"', '\\"')
+        return f'curl -X POST "{core_url}{path}" -H "Content-Type: application/json" -d "{escaped}"'
 
     def _rebuild_llm_gateway(self) -> None:
         llm_gateway_state = self.llm_gateway.runtime_state()

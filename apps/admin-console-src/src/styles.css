@@ -1398,6 +1398,37 @@ body {
   width: 100%;
 }
 
+.integration-plan-result {
+  margin-top: 16px;
+}
+
+.integration-code-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.integration-code-block,
+.integration-command {
+  min-width: 0;
+}
+
+.integration-code-block pre,
+.integration-command {
+  max-width: 100%;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--gothic-line);
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--gothic-text);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .flow-card {
   margin-top: 16px;
 }

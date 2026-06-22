@@ -44,6 +44,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/config", js)
         self.assertIn("/v1/admin/preflight", js)
         self.assertIn("/v1/admin/security-flow/run", js)
+        self.assertIn("/v1/admin/integration/plan", js)
         self.assertIn("/v1/admin/agent/chat", js)
         self.assertIn("/v1/auth/captcha", js)
         self.assertIn("/v1/auth/login", js)
@@ -150,6 +151,17 @@ class AdminConsoleTests(unittest.TestCase):
             "preflightBtn",
             "preflightChecks",
             "securityFlowBtn",
+            "integrationSiteNameInput",
+            "integrationSiteUrlInput",
+            "integrationCoreUrlInput",
+            "integrationAppealPathInput",
+            "integrationProtectedFeaturesInput",
+            "integrationPlanBtn",
+            "integrationPlanResult",
+            "integrationPlanSteps",
+            "integrationEndpointMappings",
+            "integrationPayloadExamples",
+            "integrationVerificationRequests",
             "guideAction-${item.id}",
             "securityFlowList",
             "securityFlowResultList",
@@ -195,6 +207,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("atee-admin-auth-required", source)
         self.assertIn("POST\",", source)
         self.assertIn("/v1/admin/config", source)
+        self.assertIn("/v1/admin/integration/plan", source)
         self.assertIn("/v1/auth/captcha", source)
         self.assertIn("/v1/auth/login", source)
         self.assertIn("/v1/auth/register", source)

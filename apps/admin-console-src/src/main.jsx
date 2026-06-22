@@ -80,7 +80,12 @@ const PAGE_ARCHITECTURE_META = {
   },
   guide: {
     domain: "Onboarding / Preflight Domain",
-    endpoints: ["GET /v1/onboarding/steps", "GET /v1/admin/preflight", "POST /v1/admin/security-flow/run"],
+    endpoints: [
+      "GET /v1/onboarding/steps",
+      "GET /v1/admin/preflight",
+      "POST /v1/admin/integration/plan",
+      "POST /v1/admin/security-flow/run",
+    ],
   },
   admins: {
     domain: "Access Control Domain",
@@ -138,6 +143,7 @@ function App() {
   const [adapterType, setAdapterType] = useState("HTTP API");
   const [preflightReport, setPreflightReport] = useState(null);
   const [securityFlowReport, setSecurityFlowReport] = useState(null);
+  const [integrationPlan, setIntegrationPlan] = useState(null);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState([
     {
@@ -154,6 +160,7 @@ function App() {
   const [createAdminForm] = Form.useForm();
   const [passwordForm] = Form.useForm();
   const [apiKeyForm] = Form.useForm();
+  const [integrationForm] = Form.useForm();
 
   const gateway = status?.llm_gateway || {};
   const budget = gateway.budget || {};
@@ -319,6 +326,27 @@ function App() {
         body: "{}",
       });
       setSecurityFlowReport(data);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function generateIntegrationPlan() {
+    await run("integration-plan", async () => {
+      const values = integrationForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/integration/plan", {
+        method: "POST",
+        body: JSON.stringify({
+          site_name: values.site_name,
+          site_url: values.site_url,
+          site_type: siteType,
+          adapter_type: adapterType,
+          core_url: values.core_url,
+          appeal_path: values.appeal_path,
+          protected_features: splitListInput(values.protected_features),
+        }),
+      });
+      setIntegrationPlan(data);
       await refresh();
       return data;
     });
@@ -850,6 +878,9 @@ function App() {
           preflightReport={preflightReport}
           runSecurityFlow={runSecurityFlow}
           securityFlowReport={securityFlowReport}
+          integrationForm={integrationForm}
+          integrationPlan={integrationPlan}
+          generateIntegrationPlan={generateIntegrationPlan}
           guideSteps={guideSteps}
           runGuideAction={runGuideAction}
           loading={loading}
