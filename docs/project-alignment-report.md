@@ -1,11 +1,60 @@
 ﻿# ATEE 项目对齐报告
 
-报告日期：2026-05-14
+报告日期：2026-06-23
 对齐对象：
 
 - `ATEE_Agentic_Coding_Workflow_v3.3.md`
 - `ATEE_最终合并会议报告_v3.3_含小白引导.md`
 - 当前工程目录：`C:\Users\Pro16\Documents\Codex\ATEE`
+
+> 说明：本文件保留 2026-05 至 2026-06 的历史迭代记录；最新状态以本节和“2026-06-23 主干对齐快照”为准。
+
+## 0. 2026-06-23 主干对齐快照
+
+当前 `main` 已推送到 `origin/main`，最新提交为 `1d8eb56 feat: add page guard feature access controls`。该提交把 ATEE Page Guard、接入站点管理、用户级/站点级功能封禁、申诉通过自动解封、页面动作扫描、adapter feature access helper、管理台接入网站页，以及文件命名统一纳入主干。
+
+### 0.1 本轮已对齐能力
+
+| 能力 | 当前状态 | 说明 |
+|---|---:|---|
+| 接入网站功能访问检查 | 已对齐 | `POST /v1/feature-access` 支持 `site_id`、`user_id`、`feature_scope`，先查站点级 `site_feature` 锁，再查用户级 `user_feature` 锁。 |
+| 用户级功能封禁 | 已对齐 | AI/人工 `feature_ban` 可落到 `target_scope.type=user_feature`，返回 `punishment_id=action:<id>` 供用户申诉。 |
+| 申诉通过自动解封 | 已对齐 | 管理员审核 `approved` 后，只自动撤销 active、reversible、`user_feature` 类型 `feature_ban`；驳回不解封。 |
+| 站点全局功能熔断 | 已对齐 | 管理员可创建 `site_feature` 全局锁，阻断同一站点不同用户；用户申诉不会误解除全站熔断，需管理员撤销 action。 |
+| Page Guard 页面守护 | 已对齐 | `apps/page-guard/atee-page-guard.mjs` 可扫描页面控件并通过 `/v1/feature-access` 禁用受保护功能按钮。 |
+| 页面动作扫描 | 已对齐 | `scripts/page-action-scan.mjs` 复用共享分类器，可识别登录、注册、提交、搜索、保存、删除、菜单、分页、弹窗触发、上传等控件。 |
+| 接入站点管理台 | 已对齐 | 管理台新增接入网站、页面扫描、动作清单、受保护功能、站点熔断入口和全局熔断建议展示。 |
+| Python/Node adapter | 已对齐 | `feature_access` / `featureAccess` 支持 `site_id`，并增加上传、评论、发帖前置检查 helper。 |
+| 文件命名 | 已对齐 | 管理台 React 组件源码统一为 kebab-case；Windows 启动入口统一为 `run-atee-windows.cmd`。 |
+
+### 0.2 最新验证结果
+
+| 验证项 | 结果 |
+|---|---|
+| `python -m unittest discover -s tests` | 145 tests OK |
+| `npm.cmd run build:admin` | OK |
+| `npm.cmd run e2e:browser` | 62 checks OK |
+| Page Guard 分类器回归 | OK，`dropdown` 不再误判为 delete，`drop table` 仍识别为高危删除意图 |
+| 临时真实页面扫描 | OK，10 类控件全部识别 |
+| DeepSeek live provider drill | OK，返回 `provider_json_decision`，密钥未落盘 |
+| 功能封禁演练 | OK，用户级封禁可拦截并随申诉通过自动解封；站点级熔断需管理员撤销 |
+
+### 0.3 当前边界判断
+
+当前项目可以判定为：
+
+```text
+P0 工程骨架：通过
+P0 本地演示：通过
+接入网站功能管理：通过
+Page Guard / 页面扫描：通过
+AI 用户级功能接管：本地与受控 live 链路通过
+站点全局熔断：管理员确认路径通过
+生产部署：部分通过，仍需目标服务器域名、证书、SSO/反代和业务站点强制检查联调
+最终 v3.3 全链路生产验收：未通过
+```
+
+当前工作区曾残留一个未跟踪的 `docs/project-test-report-2026-06-15.md` 乱码报告草稿；该文件未纳入 `main` 提交，避免把不可读历史草稿误并入主干。
 
 ## 1. 对齐结论
 
@@ -26,7 +75,9 @@
 
 已验证：
 
-- 单元测试：86 个，通过。
+- 全量 Python 测试：145 个，通过。
+- 管理台生产构建：`npm.cmd run build:admin` 通过。
+- 浏览器 E2E：`npm.cmd run e2e:browser` 62 项检查通过。
 - Python 编译检查：通过。
 - 配置预检：通过。
 - 本地服务：`http://127.0.0.1:8787/` 临时 HTTP 验证通过。
@@ -38,8 +89,12 @@
 - `/v1/admin/ledger/recent` 可查看 SQLite 最近账本摘要。
 - `/v1/admin/appeals` 与 `/v1/admin/actions` 可处理申诉和 ATEE 动作记录。
 - `/v1/admin/async-reviews` 与 `/v1/admin/async-reviews/run` 可查看并处理异步 AI 审查队列，支持重试和死信状态。
+- `/v1/feature-access` 可检查接入网站用户级和站点级功能封禁状态。
+- `/v1/admin/sites`、`/v1/admin/site-scans`、`/v1/admin/site-actions`、`/v1/admin/site-feature-bans` 可管理接入站点、页面扫描、动作清单和全局功能熔断。
 - `/v1/onboarding/steps` 返回中文新手引导。
 - `apps/demo-site` 已验证登录、评论、上传、申诉通过 Python Thin Adapter 接入 Core。
+- `apps/page-guard` 已提供嵌入式页面守护脚本和共享页面动作分类器。
+- `scripts/page-action-scan.mjs` 已验证可扫描登录、注册、提交、搜索、保存、删除、菜单、分页、弹窗触发、上传等页面控件。
 - XSS 样例会被 Fast-Path 拦截，且 `llm_called=false`。
 - 混合负载与重启恢复测试已覆盖 skip/async/sync/Fast-Path 流量、SQLite 账本恢复、申诉审核状态恢复、动作撤销与过期恢复。
 - 本地供应商故障注入已覆盖 fake OpenAI-compatible provider 成功脱敏、HTTP 500 降级和熔断后停止远程请求。
@@ -96,9 +151,9 @@
 | 16 Admin Console | React + Ant Design 管理台 | 已完成 P0 最终形态：React + Ant Design + Vite，保留 CSP nonce、中文界面、申诉/动作/账本/网关入口 |
 | 17 Onboarding Wizard | 纯小白详细引导 | 部分完成，已有中文步骤展示 |
 | 18 Runtime Modes | observe/auto/degraded/read-only/pause | 已完成基础版 |
-| 19 Tests | Unit/API/Security/E2E/Load | 部分完成，当前 86 个单元测试，已补 HTTP E2E、Browser E2E、React 管理台构建验收、CSP nonce 验收、基础并发压测、混合负载重启恢复、本地供应商故障注入、供应商/代理故障演练脚本、预算限流演练、小批量 live 演练入口、Agent AI 全流程冒烟脚本、本地发布闸门、备份恢复联调演练、脱敏演练报告、可控 RPS 长时压测入口、部署资产测试、维护脚本测试、管理操作审计身份绑定测试、SSO 身份注入示例测试、生产反向代理冒烟测试和 Admin Token 轮换复验测试 |
+| 19 Tests | Unit/API/Security/E2E/Load | 部分完成，当前 145 个 Python 测试通过；已补 HTTP E2E、Browser E2E 62 项、React 管理台构建验收、CSP nonce 验收、功能封禁与申诉自动解封测试、Page Guard 分类器回归、页面动作扫描演练、基础并发压测、混合负载重启恢复、本地供应商故障注入、供应商/代理故障演练脚本、预算限流演练、小批量 live 演练入口、Agent AI 全流程冒烟脚本、本地发布闸门、备份恢复联调演练、脱敏演练报告、可控 RPS 长时压测入口、部署资产测试、维护脚本测试、管理操作审计身份绑定测试、SSO 身份注入示例测试、生产反向代理冒烟测试和 Admin Token 轮换复验测试 |
 | 20 Docs | 用户/开发/安全文档 | 部分完成 |
-| 21 Final Integration | 全链路验收报告 | 未完成 |
+| 21 Final Integration | 全链路验收报告 | 部分完成，主干已合入 Page Guard 和功能封禁闭环；生产现场全链路验收仍未完成 |
 
 ## 5. 架构边界对齐
 
