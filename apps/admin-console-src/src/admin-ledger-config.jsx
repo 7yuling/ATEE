@@ -27,7 +27,7 @@ import {
   SECRET_PLACEHOLDER,
   pretty,
   tagForBoolean,
-} from "./adminSupport.jsx";
+} from "./admin-support.jsx";
 
 const { Text } = Typography;
 

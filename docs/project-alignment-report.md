@@ -322,7 +322,7 @@ P0 生产部署：未通过
 - 检测到本机代理端口并完成脱敏记录。
 - 不带密钥的 Python 代理探测已到达 DeepSeek，并得到 HTTP 层响应。
 - Core Service 已通过 `HTTP_PROXY` / `HTTPS_PROXY` 注入本地代理重启。
-- `run_atee_windows.cmd` 已设置同样的本地代理环境变量，便于下次 Windows 启动复用。
+- `run-atee-windows.cmd` 已设置同样的本地代理环境变量，便于下次 Windows 启动复用。
 - DeepSeek base 保持为已配置的 HTTPS OpenAI-compatible endpoint。
 - 远程超时从 `3s/5s` 调整为 `10s/20s`，适配当前模型约 6 秒的响应延迟。
 - `/v1/admin/llm/test` 已通过：`ok=true`，reason 为 `provider_json_decision`。
@@ -354,7 +354,7 @@ P0 生产部署：未通过
 
 - 审查本轮问题链路后，将“密钥相对路径依赖启动目录”的隐患生产化修复：`llm_api_key_file`、`bypass_key_file` 和 `ledger_sqlite_path` 等相对路径统一按项目根目录解析。
 - 新增 `services/core-service/check_config.py`，启动前验证远程模型配置、HTTPS base、密钥文件可读性和 DPAPI CurrentUser 解密上下文；失败时不打开服务端口。
-- `run_atee_windows.cmd` 已接入配置预检，避免服务启动后才发现 DeepSeek 密钥或服务账号上下文不可用。
+- `run-atee-windows.cmd` 已接入配置预检，避免服务启动后才发现 DeepSeek 密钥或服务账号上下文不可用。
 - 新增单元测试覆盖项目根目录相对密钥路径解析，防止不同启动目录导致 `api_key_configured=false`。
 - 清理旧运行残留：删除 `server*.log`、`demo*.log` 和所有 `__pycache__` 目录；未删除 `config/config.json` 或 `data/atee_ledger.sqlite3`。
 - 加密密钥文件存在后，删除旧的 `config/secrets/<provider-key-input>.txt` 输入文件，避免本地密钥目录里残留迁移标记或明文风险。
@@ -876,7 +876,7 @@ P0 生产部署：未通过
 
 - 问题一句话：`apps/admin-console-src/src/main.jsx` 已膨胀到 1700 行以上，继续在单文件里追加控制台能力会降低定位效率并增加误改风险。
 - 最小解决方案：先只抽离无状态支持代码，不重构页面状态、不引入路由、不拆复杂组件，避免在前端拆分上偏离 P0 主线。
-- 拆分范围：新增 `apps/admin-console-src/src/adminSupport.jsx`，承载 CSP nonce、Admin Token 会话读写、API 请求封装、敏感 JSON 脱敏、固定选项、帮助文案、运行摘要和操作摘要等纯支持能力。
+- 拆分范围：新增 `apps/admin-console-src/src/admin-support.jsx`，承载 CSP nonce、Admin Token 会话读写、API 请求封装、敏感 JSON 脱敏、固定选项、帮助文案、运行摘要和操作摘要等纯支持能力。
 - 保留范围：`main.jsx` 继续保留页面状态、业务动作、表格列和 Tabs 布局；本轮不继续做页面级组件拆分。
 - 管理台入口：异步 AI 审查队列的菜单、状态筛选、刷新和“处理到期任务”按钮已接入源码，并纳入前端源码断言。
 - 卡点规则：后续单点问题超过 10 分钟未解决时，记录问题、尝试路径和降级方案；优先保证项目可运行，再继续拆分或优化。
@@ -953,34 +953,34 @@ P0 生产部署：未通过
 ### 2026-05-31 Step 76：管理台仪表盘组件拆分
 
 - 问题一句话：`main.jsx` 仍承担大量页面展示 JSX，后续继续在单文件编辑容易卡顿，也不利于定位控制台布局问题。
-- 最小解决方案：只抽离无状态仪表盘展示，不移动请求函数、不改接口、不改状态流；新增 `apps/admin-console-src/src/adminDashboard.jsx` 承载指标卡、操作台卡片和底部 JSON 摘要。
-- 拆分结果：`main.jsx` 从约 1347 行降到约 1283 行；`adminDashboard.jsx` 约 138 行，集中管理 `DashboardMetrics`、`DashboardTab` 和 `JsonSummaryRow`。
-- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminDashboard.jsx`，继续检查 e2e ID、敏感 JSON 脱敏和纯文本渲染边界。
+- 最小解决方案：只抽离无状态仪表盘展示，不移动请求函数、不改接口、不改状态流；新增 `apps/admin-console-src/src/admin-dashboard.jsx` 承载指标卡、操作台卡片和底部 JSON 摘要。
+- 拆分结果：`main.jsx` 从约 1347 行降到约 1283 行；`admin-dashboard.jsx` 约 138 行，集中管理 `DashboardMetrics`、`DashboardTab` 和 `JsonSummaryRow`。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `admin-dashboard.jsx`，继续检查 e2e ID、敏感 JSON 脱敏和纯文本渲染边界。
 - 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
 
 ### 2026-05-31 Step 77：管理台 Agent 与新手引导组件拆分
 
 - 问题一句话：`main.jsx` 仍包含 Agent 对话和新手引导的大块 JSX，继续迭代这些模块时容易再次出现单文件编辑卡顿。
-- 最小解决方案：只抽离展示组件，不移动 `sendAgentChat()`、`runPreflight()`、`runGuideAction()` 等业务动作；新增 `apps/admin-console-src/src/adminAgentGuide.jsx` 承载 `AgentTab` 和 `GuideTab`。
-- 拆分结果：`main.jsx` 从约 1283 行降到约 1184 行；`adminAgentGuide.jsx` 约 175 行，集中管理 Agent 对话窗口、网站类型/接入方式选择、环境预检、新手引导折叠面板和安全情况处理总流程。
-- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminAgentGuide.jsx`，继续覆盖 Agent/Guide 的 e2e ID、纯文本渲染和新手引导流程标识。
+- 最小解决方案：只抽离展示组件，不移动 `sendAgentChat()`、`runPreflight()`、`runGuideAction()` 等业务动作；新增 `apps/admin-console-src/src/admin-agent-guide.jsx` 承载 `AgentTab` 和 `GuideTab`。
+- 拆分结果：`main.jsx` 从约 1283 行降到约 1184 行；`admin-agent-guide.jsx` 约 175 行，集中管理 Agent 对话窗口、网站类型/接入方式选择、环境预检、新手引导折叠面板和安全情况处理总流程。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `admin-agent-guide.jsx`，继续覆盖 Agent/Guide 的 e2e ID、纯文本渲染和新手引导流程标识。
 - 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
 
 ### 2026-05-31 Step 78：管理台列表模块拆分与测试摘要重整
 
 - 问题一句话：申诉、动作和异步 AI 审查仍在 `main.jsx` 内形成大块列表/表单 JSX，同时用户需要重新理解当前测试到底覆盖了哪些项目。
-- 最小解决方案：只抽离列表展示组件，不移动表格列定义、状态和业务动作；新增 `apps/admin-console-src/src/adminReviewQueues.jsx` 承载 `AppealsTab`、`ActionsTab` 和 `AsyncReviewsTab`，并新增 `docs/test-summary.md` 汇总测试项目与详细覆盖内容。
-- 拆分结果：`main.jsx` 从约 1184 行降到约 1057 行；`adminReviewQueues.jsx` 约 218 行，集中管理申诉审核、动作撤销、异步 AI 审查队列三个列表面板。
+- 最小解决方案：只抽离列表展示组件，不移动表格列定义、状态和业务动作；新增 `apps/admin-console-src/src/admin-review-queues.jsx` 承载 `AppealsTab`、`ActionsTab` 和 `AsyncReviewsTab`，并新增 `docs/test-summary.md` 汇总测试项目与详细覆盖内容。
+- 拆分结果：`main.jsx` 从约 1184 行降到约 1057 行；`admin-review-queues.jsx` 约 218 行，集中管理申诉审核、动作撤销、异步 AI 审查队列三个列表面板。
 - 测试摘要：`docs/test-summary.md` 记录本轮已执行的管理台单测、Vite 构建、浏览器 20 项端到端检查、diff 检查、quick 发布闸门覆盖范围和全部 Python 测试模块地图。
-- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminReviewQueues.jsx`，继续覆盖申诉、动作和异步 AI 审查的 e2e ID 与安全渲染边界。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `admin-review-queues.jsx`，继续覆盖申诉、动作和异步 AI 审查的 e2e ID 与安全渲染边界。
 - 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
 
 ### 2026-05-31 Step 79：管理台账本与网关配置组件拆分
 
 - 问题一句话：`main.jsx` 剩余最大块来自安全账本和网关配置表单，继续放在主文件会影响后续定位配置问题和界面迭代速度。
-- 最小解决方案：只抽离账本与配置展示组件，不移动 `showLedger()`、`showConfig()`、`saveConfig()`、`testLlmGateway()`、`breakGlass()` 等业务动作；新增 `apps/admin-console-src/src/adminLedgerConfig.jsx` 承载 `LedgerTab` 和 `GatewayConfigTab`。
-- 拆分结果：`main.jsx` 从约 1057 行降到约 856 行；`adminLedgerConfig.jsx` 约 263 行，集中管理账本读取、运行配置表单、模型网关配置、密钥/环境变量输入、可信代理、申诉入口、紧急旁路状态和旁路验证。
-- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `adminLedgerConfig.jsx`，继续覆盖账本、网关配置、LLM 测试、紧急旁路和敏感字段不回显等 e2e ID 与安全边界。
+- 最小解决方案：只抽离账本与配置展示组件，不移动 `showLedger()`、`showConfig()`、`saveConfig()`、`testLlmGateway()`、`breakGlass()` 等业务动作；新增 `apps/admin-console-src/src/admin-ledger-config.jsx` 承载 `LedgerTab` 和 `GatewayConfigTab`。
+- 拆分结果：`main.jsx` 从约 1057 行降到约 856 行；`admin-ledger-config.jsx` 约 263 行，集中管理账本读取、运行配置表单、模型网关配置、密钥/环境变量输入、可信代理、申诉入口、紧急旁路状态和旁路验证。
+- 测试适配：`tests/test_admin_console.py` 的源码断言范围加入 `admin-ledger-config.jsx`，继续覆盖账本、网关配置、LLM 测试、紧急旁路和敏感字段不回显等 e2e ID 与安全边界。
 - 验证：`python -m unittest tests.test_admin_console` 4 个测试通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 20 项浏览器检查通过；`git diff --check` 通过。
 
 ### 2026-05-31 Step 80：管理台拆分后全量回归与发布闸门
@@ -1060,7 +1060,7 @@ P0 生产部署：未通过
 ### 2026-06-02 Step 90：板块 1 全局状态、认证与运行控制检查
 
 - 问题一句话：需要先确认控制台最外层的连接状态、Admin Token 会话、模式切换和暂停恢复是否真实落到后端，避免后续板块建立在错误运行态上。
-- 最小解决方案：核对 `main.jsx`、`adminSupport.jsx`、`http_server.py`、`core.py` 和既有测试，确认 `GET /v1/runtime/status`、`POST /v1/admin/mode`、`POST /v1/admin/pause-agent` 与 Admin Token 鉴权闭合。
+- 最小解决方案：核对 `main.jsx`、`admin-support.jsx`、`http_server.py`、`core.py` 和既有测试，确认 `GET /v1/runtime/status`、`POST /v1/admin/mode`、`POST /v1/admin/pause-agent` 与 Admin Token 鉴权闭合。
 - 检查结论：刷新、模式切换、暂停/恢复均真实接入后端；Admin Token 与操作者 ID 只保存在本地会话，并仅随 `/v1/admin/*` 请求发送；后端所有管理接口先做鉴权，公开运行状态保持可读。
 - 修复情况：未发现需要修改的产品代码问题；仅将板块检查记录写入 `docs/admin-console-function-audit.md`。
 - 验证：`python -m unittest tests.test_admin_console tests.test_http_e2e` 通过，8 个测试 OK；`python -m unittest tests.test_core` 通过，37 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过。
@@ -1078,7 +1078,7 @@ P0 生产部署：未通过
 - 问题一句话：Agent 对话和环境预检已经有真实后端链路，但新手引导动作仍偏跳转，缺少字段级聚焦和可直接发送给 Agent 的上下文问题。
 - 最小解决方案：不改 Core 决策逻辑，只给引导动作按钮补稳定 ID，让 `runGuideAction(stepId)` 聚焦对应控件，并对网站类型/接入方式预填不含密钥的 Agent 问题。
 - 检查结论：`POST /v1/admin/agent/chat`、`GET /v1/onboarding/steps`、`GET /v1/admin/preflight` 均真实闭合；引导步骤现在能从说明进入对应功能控件。
-- 修复情况：`adminAgentGuide.jsx` 新增动态 `guideAction-*` ID；`main.jsx` 新增引导动作聚焦和 Agent 问题预填；`scripts/browser-e2e.mjs` 新增新手引导动作真实点击断言，浏览器检查数更新为 22。
+- 修复情况：`admin-agent-guide.jsx` 新增动态 `guideAction-*` ID；`main.jsx` 新增引导动作聚焦和 Agent 问题预填；`scripts/browser-e2e.mjs` 新增新手引导动作真实点击断言，浏览器检查数更新为 22。
 - 验证：`python -m unittest tests.test_admin_console tests.test_core` 通过，41 个测试 OK；`python -m unittest tests.test_http_e2e` 通过，4 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，22 项检查 OK。
 
 ### 2026-06-02 Step 93：板块 4 申诉处理检查
@@ -1094,7 +1094,7 @@ P0 生产部署：未通过
 - 问题一句话：异步 AI 审查处理会写队列状态、可能调用模型并写审计，但原先没有受只读模式保护。
 - 最小解决方案：在后端 `process_async_reviews()` 统一拒绝 read_only 处理，在前端给 `AsyncReviewsTab` 传入 `writeLocked` 并禁用 `runAsyncReviewsBtn`，再补单测和浏览器断言。
 - 检查结论：队列刷新、状态筛选、手动处理、后台 worker、重试/死信和脱敏列表均闭合；只读模式现在不会消费 pending 队列。
-- 修复情况：`core.py` 新增 read_only 423 返回；`adminReviewQueues.jsx` 和 `main.jsx` 新增只读禁用传递；`tests/test_core.py` 新增只读阻断单测；`scripts/browser-e2e.mjs` 新增只读按钮禁用断言，浏览器检查数更新为 24。
+- 修复情况：`core.py` 新增 read_only 423 返回；`admin-review-queues.jsx` 和 `main.jsx` 新增只读禁用传递；`tests/test_core.py` 新增只读阻断单测；`scripts/browser-e2e.mjs` 新增只读按钮禁用断言，浏览器检查数更新为 24。
 - 验证：`python -m unittest tests.test_core tests.test_async_review_worker tests.test_http_e2e tests.test_admin_console` 通过，47 个测试 OK；`node --check scripts\browser-e2e.mjs` 通过；`npm.cmd run build:admin` 通过；`npm.cmd run e2e:browser` 通过，24 项检查 OK。
 
 ### 2026-06-02 Step 95：板块 6 动作管理检查

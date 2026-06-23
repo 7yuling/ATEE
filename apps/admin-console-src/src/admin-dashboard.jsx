@@ -26,7 +26,7 @@ import {
   providerLabel,
   tagForBoolean,
   tagForNullableBoolean,
-} from "./adminSupport.jsx";
+} from "./admin-support.jsx";
 
 export function DashboardMetrics({
   status,

@@ -8,13 +8,19 @@ class AgentDecisionEngine:
         parsed = self._parse_agent_json(agent_json)
         scores = self._score(packet, route, parsed)
         action = parsed.get("selected_action") or self._select_action(scores, route)
+        target_scope = self._target_scope(action, packet)
+        reason_codes = self._reason_codes(packet, route, scores)
+        if action == "feature_ban" and target_scope.get("type") != "user_feature":
+            action = "challenge"
+            target_scope = {"type": "request", "reason": "feature_ban_requires_user_and_feature"}
+            reason_codes.append("feature_ban:missing_user_or_feature")
         return {
             "selected_action": action,
             "scores": scores,
-            "reason_codes": self._reason_codes(packet, route, scores),
+            "reason_codes": reason_codes,
             "admin_explanation": self._safe_explanation(action, scores),
             "duration_seconds": self._duration_for(action),
-            "target_scope": self._target_scope(action, packet),
+            "target_scope": target_scope,
         }
 
     def _parse_agent_json(self, agent_json: dict[str, Any] | None) -> dict[str, Any]:
@@ -54,6 +60,14 @@ class AgentDecisionEngine:
             + 0.20 * reputation
             + 0.15 * ai_confidence
         )
+        if (
+            parsed.get("selected_action") == "feature_ban"
+            and packet.get("user_hash")
+            and packet.get("feature_scope")
+            and evidence >= 0.35
+            and ai_confidence >= 0.70
+        ):
+            final_confidence = max(final_confidence, 0.65)
         return {
             "evidence_score": round(evidence, 4),
             "behavior_score": round(behavior, 4),
@@ -107,5 +121,16 @@ class AgentDecisionEngine:
         if action in {"account_ban_short", "adjust_trust_score", "adjust_single_user_trust_score"}:
             return {"type": "user", "hash": packet.get("user_hash")}
         if action == "feature_ban":
-            return {"type": "feature", "name": packet.get("endpoint_type") or "unknown"}
+            user_hash = packet.get("user_hash")
+            feature = packet.get("feature_scope")
+            if user_hash and feature:
+                target = {
+                    "type": "user_feature",
+                    "user_hash": user_hash,
+                    "feature": feature,
+                }
+                if packet.get("site_id"):
+                    target["site_id"] = packet.get("site_id")
+                return target
+            return {"type": "invalid_feature_ban", "reason": "missing_user_or_feature"}
         return {"type": "request"}

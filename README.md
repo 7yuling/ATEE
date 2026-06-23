@@ -26,7 +26,7 @@ python services\core-service\run_server.py
 On Windows, you can also double-click or run:
 
 ```powershell
-.\run_atee_windows.cmd
+.\run-atee-windows.cmd
 ```
 
 The Windows launcher runs `services\core-service\check_config.py` before starting the service. It verifies remote model config and confirms encrypted key files are readable in the current Windows user context.
@@ -203,6 +203,12 @@ The browser script starts a temporary mock Core Service on a random localhost po
 - `POST /v1/admin/preflight`
 - `POST /v1/admin/agent/chat`
 - `POST /v1/admin/integration/plan`
+- `GET /v1/admin/sites`
+- `POST /v1/admin/sites`
+- `POST /v1/admin/site-scans`
+- `GET /v1/admin/site-scans`
+- `GET /v1/admin/site-actions`
+- `POST /v1/admin/site-feature-bans`
 - `GET /v1/admin/llm/test`
 - `POST /v1/admin/llm/test`
 - `GET /v1/admin/ledger/recent`
@@ -239,6 +245,20 @@ The generated plan maps the target site to Core endpoints:
 
 Stage one only generates HTTP API plans. It does not modify the target site's code, call the remote model, or include secrets in the generated payloads and verification requests.
 
+## External Site Action Inventory
+
+ATEE can register connected test/staging sites and scan their pages for actionable controls. Use the admin console "接入网站" page or the admin APIs:
+
+- `POST /v1/admin/sites` registers a site with `name`, `base_url`, `environment`, `allowed_domains`, `auth_mode`, and optional `session_state_ref`.
+- `POST /v1/admin/site-scans` records a scan. Without inline `actions`, Core invokes `scripts/page-action-scan.mjs` with Playwright and the configured site boundaries.
+- `GET /v1/admin/site-actions` lists detected controls such as login, register, submit, search, save, delete, menu, pagination, dialog trigger, upload, and navigation actions.
+
+High-risk real clicking is off by default and should be used only in test/staging environments. Production high-risk scans require explicit confirmation. The inventory records selectors, labels, page URLs, risk levels, suggested ATEE event types, suggested `feature_scope`, and recommended smoke/regression test type so later test generation can build on structured data instead of rescanning blindly.
+
+Connected sites can also embed `apps/page-guard/atee-page-guard.mjs`, which Core serves at `/page-guard/atee-page-guard.mjs`. The guard reuses the shared classifier in `apps/page-guard/page-action-classifier.mjs`, identifies login/register/submit/search/save/delete/menu/pagination/dialog/upload controls, and calls `/v1/feature-access` through the site's own proxy before disabling protected upload, comment, or post controls. Use registered site `protected_features` and `page_guard_enabled` to keep the admin console and runtime guard aligned.
+
+Administrators can confirm a site-wide feature fuse with `POST /v1/admin/site-feature-bans` using `site_id`, `feature_scope`, and `duration_seconds`. Core stores it as a reversible `feature_ban` with `target_scope.type=site_feature`; revoke it through `/v1/admin/actions/revoke`. AI-generated global fuse suggestions are advisory by default and are returned by `GET /v1/admin/sites`.
+
 ## Local Config
 
 When the Core Service starts through `run_server.py`, it creates and loads:
@@ -263,7 +283,7 @@ data/atee_ledger.sqlite3
 
 Low-risk skip events are aggregated in memory for the current minute and are not written to SQLite on every request. Accepted appeals and actually executed actions are loaded again when Core Service restarts. Admin APIs can review appeals, revoke ATEE action records, and mark expired actions. Recent persisted ledger summaries can be checked with `/v1/admin/ledger/recent?limit=10` or the admin console button.
 
-Feature bans created for a specific user and feature expose a public appeal id in the form `action:<action_id>`. A connected site can call `POST /v1/feature-access` with `user_id` and `feature_scope` to check whether that feature is currently blocked. If the user appeals with that `punishment_id` and an admin approves it, Core Service automatically revokes the active `feature_ban` action record; rejected appeals do not unban.
+Feature bans created for a specific user and feature expose a public appeal id in the form `action:<action_id>`. A connected site can call `POST /v1/feature-access` with `site_id`, `user_id`, and `feature_scope` to check whether that feature is currently blocked. If the user appeals with that `punishment_id` and an admin approves it, Core Service automatically revokes the active user-level `feature_ban` action record; rejected appeals do not unban. Site-wide feature fuses return `reason=active_site_feature_ban` and no user appeal id.
 
 ## Model Gateway
 

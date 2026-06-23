@@ -30,8 +30,17 @@ export function createAteeAdapter({ coreUrl = "http://127.0.0.1:8787" } = {}) {
         event_type: eventType
       });
     },
-    async featureAccess({ user_id, feature_scope }) {
-      return post("/v1/feature-access", { user_id, feature_scope });
+    async featureAccess({ user_id, feature_scope, site_id }) {
+      return post("/v1/feature-access", { user_id, feature_scope, site_id });
+    },
+    async guardUpload({ user_id, site_id }) {
+      return post("/v1/feature-access", { user_id, site_id, feature_scope: "uploads" });
+    },
+    async guardComment({ user_id, site_id }) {
+      return post("/v1/feature-access", { user_id, site_id, feature_scope: "comments" });
+    },
+    async guardPost({ user_id, site_id }) {
+      return post("/v1/feature-access", { user_id, site_id, feature_scope: "posts" });
     }
   };
 }

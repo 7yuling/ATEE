@@ -1,12 +1,28 @@
+import json
+import subprocess
 import unittest
 from pathlib import Path
 
 
 class AdminConsoleTests(unittest.TestCase):
     def setUp(self):
-        root = Path(__file__).resolve().parents[1]
-        self.admin_dir = root / "apps" / "admin-console"
-        self.source_dir = root / "apps" / "admin-console-src"
+        self.root = Path(__file__).resolve().parents[1]
+        self.admin_dir = self.root / "apps" / "admin-console"
+        self.source_dir = self.root / "apps" / "admin-console-src"
+
+    def test_react_source_component_files_use_kebab_case(self):
+        component_files = [
+            path.name
+            for path in (self.source_dir / "src").glob("*.jsx")
+            if path.name != "main.jsx"
+        ]
+
+        self.assertTrue(component_files)
+        for filename in component_files:
+            stem = filename.removesuffix(".jsx")
+            self.assertEqual(stem, stem.lower())
+            self.assertNotIn("_", stem)
+            self.assertNotIn(" ", stem)
 
     def test_html_uses_vite_external_assets_for_csp(self):
         html = (self.admin_dir / "index.html").read_text(encoding="utf-8")
@@ -50,18 +66,25 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/auth/login", js)
         self.assertIn("/v1/admin/accounts", js)
         self.assertIn("/v1/admin/api-keys", js)
+        self.assertIn("/v1/admin/sites", js)
+        self.assertIn("/v1/admin/site-scans", js)
+        self.assertIn("/v1/admin/site-actions", js)
+        self.assertIn("/v1/admin/site-feature-bans", js)
         self.assertIn("<script>alert(1)<\\/script>", js)
         self.assertIn("ATEE 管理控制台", js)
 
     def test_react_source_keeps_e2e_ids_and_plain_text_rendering(self):
         main_source = (self.source_dir / "src" / "main.jsx").read_text(encoding="utf-8")
-        agent_guide_source = (self.source_dir / "src" / "adminAgentGuide.jsx").read_text(encoding="utf-8")
-        dashboard_source = (self.source_dir / "src" / "adminDashboard.jsx").read_text(encoding="utf-8")
-        gothic_shell_source = (self.source_dir / "src" / "adminGothicShell.jsx").read_text(encoding="utf-8")
-        ledger_config_source = (self.source_dir / "src" / "adminLedgerConfig.jsx").read_text(encoding="utf-8")
-        review_source = (self.source_dir / "src" / "adminReviewQueues.jsx").read_text(encoding="utf-8")
-        access_source = (self.source_dir / "src" / "adminAccess.jsx").read_text(encoding="utf-8")
-        support_source = (self.source_dir / "src" / "adminSupport.jsx").read_text(encoding="utf-8")
+        agent_guide_source = (self.source_dir / "src" / "admin-agent-guide.jsx").read_text(encoding="utf-8")
+        dashboard_source = (self.source_dir / "src" / "admin-dashboard.jsx").read_text(encoding="utf-8")
+        gothic_shell_source = (self.source_dir / "src" / "admin-gothic-shell.jsx").read_text(encoding="utf-8")
+        ledger_config_source = (self.source_dir / "src" / "admin-ledger-config.jsx").read_text(encoding="utf-8")
+        review_source = (self.source_dir / "src" / "admin-review-queues.jsx").read_text(encoding="utf-8")
+        access_source = (self.source_dir / "src" / "admin-access.jsx").read_text(encoding="utf-8")
+        site_source = (self.source_dir / "src" / "admin-site-management.jsx").read_text(encoding="utf-8")
+        support_source = (self.source_dir / "src" / "admin-support.jsx").read_text(encoding="utf-8")
+        page_guard = (self.source_dir.parent / "page-guard" / "atee-page-guard.mjs").read_text(encoding="utf-8")
+        page_classifier = (self.source_dir.parent / "page-guard" / "page-action-classifier.mjs").read_text(encoding="utf-8")
         source = (
             main_source
             + "\n"
@@ -77,7 +100,13 @@ class AdminConsoleTests(unittest.TestCase):
             + "\n"
             + access_source
             + "\n"
+            + site_source
+            + "\n"
             + support_source
+            + "\n"
+            + page_guard
+            + "\n"
+            + page_classifier
         )
 
         for element_id in [
@@ -169,9 +198,36 @@ class AdminConsoleTests(unittest.TestCase):
             "asyncReviewStatusSelect",
             "asyncReviewsBtn",
             "runAsyncReviewsBtn",
+            "managedSitesBtn",
+            "managedSiteNameInput",
+            "managedSiteBaseUrlInput",
+            "managedSiteEnvironmentSelect",
+            "managedSiteAllowedDomainsInput",
+            "managedSiteProtectedFeaturesInput",
+            "managedSiteAuthModeSelect",
+            "managedSiteSessionStateInput",
+            "managedSitePageGuardSwitch",
+            "registerManagedSiteBtn",
+            "siteScanSiteSelect",
+            "siteScanStartUrlInput",
+            "siteScanMaxPagesInput",
+            "siteScanMaxActionsInput",
+            "siteScanTimeoutInput",
+            "siteScanHighRiskSwitch",
+            "startSiteScanBtn",
+            "siteScansBtn",
+            "siteActionSiteSelect",
+            "siteActionRiskSelect",
+            "siteActionTypeSelect",
+            "siteActionsBtn",
+            "siteFeatureBanSiteSelect",
+            "siteFeatureBanFeatureInput",
+            "siteFeatureBanDurationInput",
+            "siteFeatureBanReasonInput",
+            "createSiteFeatureBanBtn",
         ]:
             self.assertIn(element_id, source)
-        self.assertIn('from "./adminSupport.jsx"', main_source)
+        self.assertIn('from "./admin-support.jsx"', main_source)
         self.assertLess(len(main_source.splitlines()), 1500)
         self.assertIn("SECRET_JSON_KEYS", source)
         self.assertIn("REDACTED_VALUE", source)
@@ -213,11 +269,66 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/auth/register", source)
         self.assertIn("/v1/admin/accounts", source)
         self.assertIn("/v1/admin/api-keys", source)
+        self.assertIn("/v1/admin/sites", source)
+        self.assertIn("/v1/admin/site-scans", source)
+        self.assertIn("/v1/admin/site-actions", source)
+        self.assertIn("/v1/admin/site-feature-bans", source)
+        self.assertIn("startPageGuard", source)
+        self.assertIn("classifyControl", source)
         self.assertIn("details=1", source)
         self.assertIn("installStyleNonce(runtimeCspNonce)", source)
         self.assertIn("csp={{ nonce: runtimeCspNonce }}", source)
         self.assertIn("wave={{ disabled: true }}", source)
         self.assertNotIn("dangerouslySetInnerHTML", source)
+
+    def test_page_guard_classifier_keeps_menu_and_delete_distinct(self):
+        script = """
+import { classifyControl } from "./apps/page-guard/page-action-classifier.mjs";
+const pageUrl = "https://example.test/posts";
+const make = (overrides) => ({
+  selector: "#control",
+  tag_name: "button",
+  role: "",
+  input_type: "",
+  text: "",
+  aria_label: "",
+  title: "",
+  id: "",
+  name: "",
+  class_name: "",
+  href: "",
+  form_method: "",
+  form_action: "",
+  ...overrides,
+});
+const samples = [
+  ["login", make({ text: "Login", id: "login" })],
+  ["register", make({ text: "Register", id: "register" })],
+  ["submit", make({ input_type: "submit", text: "Submit", form_method: "POST", form_action: "/submit" })],
+  ["search", make({ tag_name: "input", input_type: "search", aria_label: "Search", name: "q" })],
+  ["save", make({ text: "Save", id: "save" })],
+  ["delete", make({ text: "Delete", id: "delete" })],
+  ["delete", make({ text: "Drop table", id: "drop-table" })],
+  ["menu", make({ text: "More", id: "menu", class_name: "dropdown", aria_haspopup: "menu" })],
+  ["pagination", make({ tag_name: "a", text: "Next", href: "https://example.test/posts?page=2" })],
+  ["dialog_trigger", make({ text: "Open dialog", id: "modal" })],
+  ["upload", make({ tag_name: "input", input_type: "file", aria_label: "Upload avatar", name: "file" })],
+];
+const results = samples.map(([expected, raw]) => ({ expected, actual: classifyControl(raw, pageUrl).action_type }));
+console.log(JSON.stringify(results));
+if (results.some((item) => item.expected !== item.actual)) {
+  process.exit(1);
+}
+"""
+        completed = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        results = json.loads(completed.stdout)
+        self.assertEqual([item["expected"] for item in results], [item["actual"] for item in results])
 
 
 if __name__ == "__main__":

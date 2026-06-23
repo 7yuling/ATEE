@@ -16,6 +16,8 @@ ADMIN_DIR = ROOT / "apps" / "admin-console"
 ADMIN_INDEX = ADMIN_DIR / "index.html"
 ADMIN_STYLES = ADMIN_DIR / "styles.css"
 ADMIN_JS = ADMIN_DIR / "admin.js"
+PAGE_GUARD_DIR = ROOT / "apps" / "page-guard"
+EMPTY_STYLE_HASH = "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='"
 ADMIN_ASSET_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
@@ -35,6 +37,9 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/favicon.ico":
             self._send_text("", "image/x-icon", status=204)
+            return
+        if self.path in {"/page-guard/atee-page-guard.mjs", "/page-guard/page-action-classifier.mjs"}:
+            self._send_text((PAGE_GUARD_DIR / Path(self.path).name).read_text(encoding="utf-8"), "application/javascript; charset=utf-8")
             return
         if self.path == "/admin/styles.css":
             self._send_text(ADMIN_STYLES.read_text(encoding="utf-8"), "text/css; charset=utf-8")
@@ -63,6 +68,28 @@ class AteeHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/v1/admin/api-keys"):
             include_revoked = self._query_value("include_revoked", "0") == "1"
             self._send_json(CORE.admin_api_keys(include_revoked=include_revoked))
+            return
+        if self.path.startswith("/v1/admin/site-actions"):
+            self._send_json(
+                CORE.admin_site_actions(
+                    site_id=self._query_optional_int("site_id"),
+                    scan_id=self._query_optional_int("scan_id"),
+                    risk_level=self._query_value("risk_level", "all"),
+                    action_type=self._query_value("action_type", "all"),
+                    limit=self._query_limit(default=100),
+                )
+            )
+            return
+        if self.path.startswith("/v1/admin/site-scans"):
+            self._send_json(
+                CORE.admin_site_scans(
+                    site_id=self._query_optional_int("site_id"),
+                    limit=self._query_limit(default=50),
+                )
+            )
+            return
+        if self.path == "/v1/admin/sites":
+            self._send_json(CORE.admin_sites())
             return
         if self.path == "/v1/admin/preflight":
             self._send_json(CORE.environment_preflight())
@@ -139,6 +166,18 @@ class AteeHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/admin/api-keys":
             result = CORE.create_api_key(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/sites":
+            result = CORE.register_site(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/site-feature-bans":
+            result = CORE.create_site_feature_ban(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if self.path == "/v1/admin/site-scans":
+            result = CORE.create_site_scan(payload, actor=self._admin_actor())
             self._send_json(result, status=int(result.get("status", 200)))
             return
         if self.path == "/v1/admin/preflight":
@@ -234,6 +273,15 @@ class AteeHandler(BaseHTTPRequestHandler):
         except ValueError:
             return default
 
+    def _query_optional_int(self, name: str) -> int | None:
+        value = self._query_value(name, "")
+        if not value:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
     def _query_value(self, name: str, default: str = "") -> str:
         if "?" not in self.path:
             return default
@@ -295,8 +343,8 @@ class AteeHandler(BaseHTTPRequestHandler):
 
     def _content_security_policy(self, nonce: str | None = None) -> str:
         script_src = "script-src 'self'"
-        style_src = "style-src 'self'"
-        style_src_elem = "style-src-elem 'self'"
+        style_src = f"style-src 'self' {EMPTY_STYLE_HASH}"
+        style_src_elem = f"style-src-elem 'self' {EMPTY_STYLE_HASH}"
         if nonce:
             script_src += f" 'nonce-{nonce}'"
             style_src += f" 'nonce-{nonce}'"

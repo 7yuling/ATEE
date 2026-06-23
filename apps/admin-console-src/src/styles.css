@@ -633,6 +633,7 @@ body {
 }
 
 .gothic-workspace {
+  position: relative;
   grid-column: 1;
   grid-row: 2;
   align-self: stretch;
@@ -952,6 +953,7 @@ body {
 
 .page-frame-admins,
 .page-frame-apiKeys,
+.page-frame-sites,
 .page-frame-ledger,
 .page-frame-asyncReviews {
   --page-alpha: 0.08;
@@ -986,6 +988,8 @@ body {
 }
 
 .page-transition-surface {
+  position: relative;
+  z-index: 3;
   min-width: 0;
   width: 100%;
   view-transition-name: atee-page;
@@ -1015,6 +1019,7 @@ body {
 
 .gothic-page-body > .ant-row > .ant-col,
 .gothic-page-body > .ant-space-vertical > .ant-space-item > .ant-row > .ant-col {
+  align-self: stretch;
   min-width: 0;
   width: auto !important;
   max-width: none !important;
@@ -1026,6 +1031,11 @@ body {
 
 .gothic-page-body > .ant-row > .ant-col > .ant-card,
 .gothic-page-body > .ant-space-vertical > .ant-space-item > .ant-row > .ant-col > .ant-card {
+  height: auto;
+}
+
+.gothic-page-body > .ant-row > .ant-col > .ant-card:only-child,
+.gothic-page-body > .ant-space-vertical > .ant-space-item > .ant-row > .ant-col > .ant-card:only-child {
   height: 100%;
 }
 

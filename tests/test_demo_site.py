@@ -115,8 +115,14 @@ class DemoSiteTests(unittest.TestCase):
         node_adapter = (ROOT / "adapters" / "node-express" / "atee-adapter.js").read_text(encoding="utf-8")
 
         self.assertIn("def feature_access", python_adapter)
+        self.assertIn("def guard_upload", python_adapter)
+        self.assertIn("def guard_comment", python_adapter)
+        self.assertIn("def guard_post", python_adapter)
         self.assertIn('"/v1/feature-access"', python_adapter)
         self.assertIn("featureAccess", node_adapter)
+        self.assertIn("guardUpload", node_adapter)
+        self.assertIn("guardComment", node_adapter)
+        self.assertIn("guardPost", node_adapter)
         self.assertIn('"/v1/feature-access"', node_adapter)
 
     def test_python_adapter_timeout_is_configurable(self):

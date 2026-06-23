@@ -15,6 +15,7 @@ import {
   CheckCircleOutlined,
   DatabaseOutlined,
   FileSearchOutlined,
+  GlobalOutlined,
   KeyOutlined,
   MessageOutlined,
   SafetyCertificateOutlined,
@@ -27,30 +28,33 @@ import "./styles.css";
 import {
   AgentTab,
   GuideTab,
-} from "./adminAgentGuide.jsx";
+} from "./admin-agent-guide.jsx";
 import {
   DashboardMetrics,
   DashboardTab,
   JsonSummaryRow,
-} from "./adminDashboard.jsx";
+} from "./admin-dashboard.jsx";
 import {
   GothicConsoleShell,
   GothicPageFrame,
-} from "./adminGothicShell.jsx";
+} from "./admin-gothic-shell.jsx";
 import {
   GatewayConfigTab,
   LedgerTab,
-} from "./adminLedgerConfig.jsx";
+} from "./admin-ledger-config.jsx";
 import {
   ActionsTab,
   AppealsTab,
   AsyncReviewsTab,
-} from "./adminReviewQueues.jsx";
+} from "./admin-review-queues.jsx";
 import {
   AdminAccountsTab,
   AdminLoginPanel,
   ApiKeysTab,
-} from "./adminAccess.jsx";
+} from "./admin-access.jsx";
+import {
+  SiteManagementTab,
+} from "./admin-site-management.jsx";
 import {
   apiRequest,
   cspNonce,
@@ -60,7 +64,7 @@ import {
   splitListInput,
   writeAdminId,
   writeAdminToken,
-} from "./adminSupport.jsx";
+} from "./admin-support.jsx";
 
 const runtimeCspNonce = cspNonce();
 installStyleNonce(runtimeCspNonce);
@@ -86,6 +90,10 @@ const PAGE_ARCHITECTURE_META = {
       "POST /v1/admin/integration/plan",
       "POST /v1/admin/security-flow/run",
     ],
+  },
+  sites: {
+    domain: "External Site / Action Inventory Domain",
+    endpoints: ["GET /v1/admin/sites", "POST /v1/admin/sites", "POST /v1/admin/site-scans", "GET /v1/admin/site-actions", "POST /v1/admin/site-feature-bans"],
   },
   admins: {
     domain: "Access Control Domain",
@@ -139,6 +147,13 @@ function App() {
   const [adminAccounts, setAdminAccounts] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
   const [createdApiKey, setCreatedApiKey] = useState(null);
+  const [managedSites, setManagedSites] = useState([]);
+  const [siteFuseSuggestions, setSiteFuseSuggestions] = useState([]);
+  const [siteScans, setSiteScans] = useState([]);
+  const [siteActions, setSiteActions] = useState([]);
+  const [siteActionRisk, setSiteActionRisk] = useState("all");
+  const [siteActionType, setSiteActionType] = useState("all");
+  const [siteActionSiteId, setSiteActionSiteId] = useState(null);
   const [siteType, setSiteType] = useState("通用网站");
   const [adapterType, setAdapterType] = useState("HTTP API");
   const [preflightReport, setPreflightReport] = useState(null);
@@ -161,6 +176,9 @@ function App() {
   const [passwordForm] = Form.useForm();
   const [apiKeyForm] = Form.useForm();
   const [integrationForm] = Form.useForm();
+  const [managedSiteForm] = Form.useForm();
+  const [siteScanForm] = Form.useForm();
+  const [siteFeatureBanForm] = Form.useForm();
 
   const gateway = status?.llm_gateway || {};
   const budget = gateway.budget || {};
@@ -583,6 +601,108 @@ function App() {
     });
   }
 
+  async function showManagedSites() {
+    await run("managed-sites", async () => {
+      const { data } = await apiRequest("/v1/admin/sites");
+      setManagedSites(data.sites || []);
+      setSiteFuseSuggestions(data.global_fuse_suggestions || []);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function registerManagedSite() {
+    await run("register-managed-site", async () => {
+      const values = managedSiteForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/sites", {
+        method: "POST",
+        body: JSON.stringify({
+          name: String(values.name || "").trim(),
+          base_url: String(values.base_url || "").trim(),
+          environment: values.environment || "staging",
+          allowed_domains: splitListInput(values.allowed_domains),
+          auth_mode: values.auth_mode || "none",
+          session_state_ref: String(values.session_state_ref || "").trim(),
+          protected_features: splitListInput(values.protected_features),
+          page_guard_enabled: Boolean(values.page_guard_enabled),
+        }),
+      });
+      if (data.ok) {
+        await showManagedSites();
+      }
+      return data;
+    });
+  }
+
+  async function createSiteFeatureBan() {
+    await run("site-feature-ban", async () => {
+      const values = siteFeatureBanForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/site-feature-bans", {
+        method: "POST",
+        body: JSON.stringify({
+          site_id: Number(values.site_id),
+          feature_scope: String(values.feature_scope || "").trim(),
+          duration_seconds: Number(values.duration_seconds || 3600),
+          reason: String(values.reason || "").trim(),
+        }),
+      });
+      if (data.ok) {
+        await showManagedSites();
+        await showActions(actionStatus);
+      }
+      return data;
+    });
+  }
+
+  async function startSiteScan() {
+    await run("site-scan", async () => {
+      const values = siteScanForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/site-scans", {
+        method: "POST",
+        body: JSON.stringify({
+          site_id: Number(values.site_id),
+          start_url: String(values.start_url || "").trim(),
+          max_pages: Number(values.max_pages || 5),
+          max_actions: Number(values.max_actions || 80),
+          timeout_ms: Number(values.timeout_ms || 30000),
+          allow_high_risk_actions: Boolean(values.allow_high_risk_actions),
+        }),
+      });
+      await showSiteScans();
+      await showSiteActions();
+      await refresh();
+      return data;
+    });
+  }
+
+  async function showSiteScans() {
+    await run("site-scans", async () => {
+      const { data } = await apiRequest("/v1/admin/site-scans?limit=50");
+      setSiteScans(data.scans || []);
+      await refresh();
+      return data;
+    });
+  }
+
+  async function showSiteActions() {
+    await run("site-actions", async () => {
+      const params = new URLSearchParams({ limit: "100" });
+      if (siteActionSiteId) {
+        params.set("site_id", String(siteActionSiteId));
+      }
+      if (siteActionRisk && siteActionRisk !== "all") {
+        params.set("risk_level", siteActionRisk);
+      }
+      if (siteActionType && siteActionType !== "all") {
+        params.set("action_type", siteActionType);
+      }
+      const { data } = await apiRequest(`/v1/admin/site-actions?${params.toString()}`);
+      setSiteActions(data.actions || []);
+      await refresh();
+      return data;
+    });
+  }
+
   async function showLedger() {
     await run("ledger", async () => {
       const limit = Number(ledgerLimit) || 10;
@@ -806,6 +926,7 @@ function App() {
       { key: "agent", icon: <MessageOutlined />, label: "Agent 对话" },
       { key: "guide", icon: <CheckCircleOutlined />, label: "新手引导" },
       { key: "admins", icon: <UserOutlined />, label: "管理员账号" },
+      { key: "sites", icon: <GlobalOutlined />, label: "接入网站" },
       { key: "apiKeys", icon: <KeyOutlined />, label: "API keys" },
       { key: "appeals", icon: <FileSearchOutlined />, label: "申诉处理" },
       { key: "asyncReviews", icon: <BranchesOutlined />, label: "异步 AI 审查" },
@@ -884,6 +1005,32 @@ function App() {
           guideSteps={guideSteps}
           runGuideAction={runGuideAction}
           loading={loading}
+          writeLocked={writeLocked}
+        />
+      ));
+    }
+    if (activeMenu === "sites") {
+      return pageFrame("sites", (
+        <SiteManagementTab
+          sites={managedSites}
+          siteScans={siteScans}
+          siteActions={siteActions}
+          siteFuseSuggestions={siteFuseSuggestions}
+          siteForm={managedSiteForm}
+          siteScanForm={siteScanForm}
+          siteFeatureBanForm={siteFeatureBanForm}
+          registerManagedSite={registerManagedSite}
+          createSiteFeatureBan={createSiteFeatureBan}
+          showManagedSites={showManagedSites}
+          startSiteScan={startSiteScan}
+          showSiteScans={showSiteScans}
+          showSiteActions={showSiteActions}
+          siteActionRisk={siteActionRisk}
+          setSiteActionRisk={setSiteActionRisk}
+          siteActionType={siteActionType}
+          setSiteActionType={setSiteActionType}
+          siteActionSiteId={siteActionSiteId}
+          setSiteActionSiteId={setSiteActionSiteId}
           writeLocked={writeLocked}
         />
       ));

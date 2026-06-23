@@ -169,7 +169,7 @@ class ActionExecutor:
             return [self._decorate_record(record) for record in self.actions]
         return [self._decorate_record(record) for record in self.actions if record.get("status", "active") == status]
 
-    def find_active_user_feature(self, user_hash: str, feature: str) -> dict[str, Any] | None:
+    def find_active_user_feature(self, user_hash: str, feature: str, site_id: int | None = None) -> dict[str, Any] | None:
         user_hash = str(user_hash or "").strip()
         feature = str(feature or "").strip()
         if not user_hash or not feature:
@@ -180,6 +180,23 @@ class ActionExecutor:
                 record.get("action") == "feature_ban"
                 and target.get("type") == "user_feature"
                 and str(target.get("user_hash") or "") == user_hash
+                and str(target.get("feature") or "") == feature
+                and self._site_matches(target, site_id)
+            ):
+                return record
+        return None
+
+    def find_active_site_feature(self, site_id: int | None, feature: str) -> dict[str, Any] | None:
+        site_id = self._clean_site_id(site_id)
+        feature = str(feature or "").strip()
+        if site_id is None or not feature:
+            return None
+        for record in self.list_actions(status="active"):
+            target = record.get("target_scope") or {}
+            if (
+                record.get("action") == "feature_ban"
+                and target.get("type") == "site_feature"
+                and self._clean_site_id(target.get("site_id")) == site_id
                 and str(target.get("feature") or "") == feature
             ):
                 return record
@@ -234,7 +251,12 @@ class ActionExecutor:
     def _idempotency_key(self, action: str, decision: dict[str, Any]) -> str:
         target = decision.get("target_scope") or {}
         if target.get("type") == "user_feature":
-            return f"{action}:user_feature:{target.get('user_hash') or 'unknown'}:{target.get('feature') or 'unknown'}"
+            return (
+                f"{action}:user_feature:{target.get('site_id') or 'global'}:"
+                f"{target.get('user_hash') or 'unknown'}:{target.get('feature') or 'unknown'}"
+            )
+        if target.get("type") == "site_feature":
+            return f"{action}:site_feature:{target.get('site_id') or 'unknown'}:{target.get('feature') or 'unknown'}"
         return f"{action}:{target.get('type')}:{target.get('hash') or target.get('name') or target.get('user_hash') or 'request'}"
 
     def _decorate_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -242,3 +264,17 @@ class ActionExecutor:
         if decorated.get("action") == "feature_ban" and decorated.get("id") is not None:
             decorated["punishment_id"] = f"action:{decorated['id']}"
         return decorated
+
+    def _site_matches(self, target: dict[str, Any], site_id: int | None) -> bool:
+        site_id = self._clean_site_id(site_id)
+        target_site_id = self._clean_site_id(target.get("site_id"))
+        if site_id is None:
+            return target_site_id is None
+        return target_site_id in {None, site_id}
+
+    def _clean_site_id(self, value: Any) -> int | None:
+        try:
+            site_id = int(value)
+        except (TypeError, ValueError):
+            return None
+        return site_id if site_id > 0 else None

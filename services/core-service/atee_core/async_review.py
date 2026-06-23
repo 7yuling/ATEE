@@ -260,6 +260,7 @@ class AsyncReviewQueue:
             "max_attempts": int(row["max_attempts"] or self.max_attempts),
             "event_type": row["event_type"],
             "route": row["route"],
+            "site_id": packet.get("site_id"),
             "user_hash": packet.get("user_hash"),
             "ip_hash": row["ip_hash"],
             "rule_id": row["rule_id"],

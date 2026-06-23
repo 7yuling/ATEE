@@ -196,7 +196,9 @@ class RemoteLLMGateway:
                         {
                             "route": route,
                             "packet_summary": {
+                                "site_id": packet.get("site_id"),
                                 "endpoint_type": packet.get("endpoint_type"),
+                                "feature_scope": packet.get("feature_scope"),
                                 "method": packet.get("method"),
                                 "path": packet.get("path"),
                                 "body_summary": packet.get("body_summary"),

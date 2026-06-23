@@ -10,7 +10,7 @@ import {
   StopOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
-import { budgetLabel, providerLabel } from "./adminSupport.jsx";
+import { budgetLabel, providerLabel } from "./admin-support.jsx";
 
 const PARTICLE_COUNT = 34;
 const ORBIT_COUNT = 9;

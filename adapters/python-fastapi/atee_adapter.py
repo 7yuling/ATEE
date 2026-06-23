@@ -23,6 +23,15 @@ class AteeThinAdapter:
     def feature_access(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/feature-access", payload)
 
+    def guard_upload(self, user_id: str, site_id: int | None = None) -> dict[str, Any]:
+        return self.feature_access({"user_id": user_id, "site_id": site_id, "feature_scope": "uploads"})
+
+    def guard_comment(self, user_id: str, site_id: int | None = None) -> dict[str, Any]:
+        return self.feature_access({"user_id": user_id, "site_id": site_id, "feature_scope": "comments"})
+
+    def guard_post(self, user_id: str, site_id: int | None = None) -> dict[str, Any]:
+        return self.feature_access({"user_id": user_id, "site_id": site_id, "feature_scope": "posts"})
+
     def appeal(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/v1/appeal", payload)
 
@@ -60,6 +69,9 @@ def build_context(
     body: Any,
     remote_addr: str,
     event_type: str | None = None,
+    user_id: str | None = None,
+    site_id: int | None = None,
+    feature_scope: str | None = None,
 ) -> dict[str, Any]:
     context = {
         "method": method,
@@ -70,4 +82,10 @@ def build_context(
     }
     if event_type:
         context["event_type"] = event_type
+    if user_id:
+        context["user_id"] = user_id
+    if site_id:
+        context["site_id"] = site_id
+    if feature_scope:
+        context["feature_scope"] = feature_scope
     return context

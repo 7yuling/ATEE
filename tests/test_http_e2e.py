@@ -44,6 +44,7 @@ class AteeHttpE2ETests(unittest.TestCase):
         html = self._text("GET", "/")
         admin_html = self._text("GET", "/admin/")
         admin_js = self._text("GET", "/admin/admin.js")
+        page_guard_js = self._text("GET", "/page-guard/atee-page-guard.mjs")
         chunk_path = re.search(r'href="(/admin/admin-[^"]+\.js)"', html).group(1)
         chunk_status, chunk_headers, chunk_body = self._response("GET", chunk_path)
         admin_image_paths = [
@@ -153,12 +154,75 @@ class AteeHttpE2ETests(unittest.TestCase):
                 "protected_features": ["comments"],
             },
         )
+        registered_site = self._json(
+            "POST",
+            "/v1/admin/sites",
+            {
+                "name": "http-e2e-managed-site",
+                "base_url": "https://managed.example/app",
+                "environment": "staging",
+                "allowed_domains": ["managed.example"],
+                "protected_features": ["uploads"],
+                "page_guard_enabled": True,
+            },
+        )
+        site_fuse = self._json(
+            "POST",
+            "/v1/admin/site-feature-bans",
+            {
+                "site_id": registered_site["site"]["id"],
+                "feature_scope": "uploads",
+                "duration_seconds": 3600,
+                "reason": "http e2e fuse",
+            },
+        )
+        site_global_blocked = self._json(
+            "POST",
+            "/v1/feature-access",
+            {"site_id": registered_site["site"]["id"], "user_id": "global-user", "feature_scope": "uploads"},
+        )
+        site_fuse_revoked = self._json(
+            "POST",
+            "/v1/admin/actions/revoke",
+            {"action_id": site_fuse["action_result"]["record"]["id"], "reason": "http e2e restore"},
+        )
+        site_global_restored = self._json(
+            "POST",
+            "/v1/feature-access",
+            {"site_id": registered_site["site"]["id"], "user_id": "global-user", "feature_scope": "uploads"},
+        )
+        site_scan = self._json(
+            "POST",
+            "/v1/admin/site-scans",
+            {
+                "site_id": registered_site["site"]["id"],
+                "start_url": "https://managed.example/app",
+                "actions": [
+                    {
+                        "page_url": "https://managed.example/app",
+                        "action_type": "delete",
+                        "risk_level": "critical",
+                        "label": "Delete account",
+                        "selector": "#deleteAccount",
+                    }
+                ],
+            },
+        )
+        managed_sites = self._json("GET", "/v1/admin/sites")
+        site_scans = self._json("GET", f"/v1/admin/site-scans?site_id={registered_site['site']['id']}")
+        site_actions = self._json("GET", "/v1/admin/site-actions?risk_level=critical")
 
         self.assertIn("ATEE 管理控制台", html)
         self.assertIn('src="/admin/admin.js"', admin_html)
         self.assertIn("/v1/admin/actions/revoke", admin_js)
         self.assertIn("/v1/admin/security-flow/run", admin_js)
         self.assertIn("/v1/admin/integration/plan", admin_js)
+        self.assertIn("/v1/admin/sites", admin_js)
+        self.assertIn("/v1/admin/site-scans", admin_js)
+        self.assertIn("/v1/admin/site-actions", admin_js)
+        self.assertIn("/v1/admin/site-feature-bans", admin_js)
+        self.assertIn("startPageGuard", page_guard_js)
+        self.assertIn("/v1/feature-access", page_guard_js)
         self.assertEqual(chunk_status, 200)
         self.assertIn("application/javascript", chunk_headers["Content-Type"])
         self.assertTrue(chunk_body)
@@ -193,6 +257,20 @@ class AteeHttpE2ETests(unittest.TestCase):
             {item["core_endpoint"] for item in integration_plan["endpoint_mappings"]},
             {"/v1/check", "/v1/event", "/v1/feature-access", "/v1/appeal"},
         )
+        self.assertTrue(registered_site["ok"])
+        self.assertEqual(registered_site["site"]["protected_features"], ["uploads"])
+        self.assertTrue(registered_site["site"]["page_guard_enabled"])
+        self.assertTrue(site_fuse["ok"])
+        self.assertFalse(site_global_blocked["allowed"])
+        self.assertEqual(site_global_blocked["reason"], "active_site_feature_ban")
+        self.assertTrue(site_fuse_revoked["ok"])
+        self.assertTrue(site_global_restored["allowed"])
+        self.assertTrue(site_scan["ok"])
+        self.assertEqual(site_scan["scan"]["summary"]["high_risk_actions"], 1)
+        self.assertEqual(managed_sites["count"], 1)
+        self.assertEqual(site_scans["count"], 1)
+        self.assertEqual(site_actions["count"], 1)
+        self.assertEqual(site_actions["actions"][0]["action_type"], "delete")
 
     def test_admin_console_csp_nonce_is_generated_per_response(self):
         status_one, headers_one, html_one = self._response("GET", "/")

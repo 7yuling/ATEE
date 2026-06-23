@@ -37,12 +37,15 @@ Request:
 
 ```json
 {
+  "site_id": 1,
   "user_id": "site-user-123",
   "feature_scope": "comments"
 }
 ```
 
-Core hashes `user_id` internally and does not return the raw value. If an active `user_feature` `feature_ban` matches the hashed user and feature, the response includes `allowed=false`, `reason=active_feature_ban`, `active_action`, `punishment_id` in the form `action:<action_id>`, and `expires_at`. Otherwise it returns `allowed=true` with `reason=no_active_feature_ban`.
+Core hashes `user_id` internally and does not return the raw value. `site_id` is optional for legacy integrations. When it is present, Core first checks active site-level `site_feature` locks, then active user-level `user_feature` `feature_ban` records for the same hashed user and feature.
+
+User-feature bans return `allowed=false`, `reason=active_feature_ban`, `active_action`, `punishment_id` in the form `action:<action_id>`, and `expires_at`. Site-feature locks return `allowed=false`, `reason=active_site_feature_ban`, `active_action`, `punishment_id=null`, and `expires_at`. Otherwise the response returns `allowed=true` with `reason=no_active_feature_ban`.
 
 ## POST /v1/appeal
 
@@ -58,7 +61,7 @@ Request:
 
 Appeal POST is limited to one submission per `punishment_id` and `banned_ip_hash` per hour. Rate-limited appeals return `429` and do not create a record. Accepted pending appeals are persisted to SQLite and loaded again on Core Service restart.
 
-For user-feature bans, use the `punishment_id` returned by `/v1/feature-access`, for example `action:12`. When an admin approves that appeal, Core Service automatically revokes the active reversible `feature_ban` action record. Rejected appeals do not unban.
+For user-feature bans, use the `punishment_id` returned by `/v1/feature-access`, for example `action:12`. When an admin approves that appeal, Core Service automatically revokes the active reversible `user_feature` `feature_ban` action record. Rejected appeals do not unban. Site-level `site_feature` locks are not auto-revoked by user appeals; administrators revoke them through action management.
 
 ## Runtime
 
@@ -69,6 +72,12 @@ For user-feature bans, use the `punishment_id` returned by `/v1/feature-access`,
 - `POST /v1/admin/preflight`
 - `POST /v1/admin/agent/chat`
 - `POST /v1/admin/integration/plan`
+- `GET /v1/admin/sites`
+- `POST /v1/admin/sites`
+- `POST /v1/admin/site-scans`
+- `GET /v1/admin/site-scans`
+- `GET /v1/admin/site-actions`
+- `POST /v1/admin/site-feature-bans`
 - `GET /v1/admin/llm/test`
 - `POST /v1/admin/llm/test`
 - `POST /v1/feature-access`
@@ -115,6 +124,88 @@ Response includes:
 - `safety_notes_zh`: production safety notes for proxy boundaries, observe mode, and appeal access.
 
 Stage one supports only `adapter_type="HTTP API"`. Other adapter types return `ok=false`, `status=422`, and no payload examples.
+
+## External Site Action Inventory
+
+Register a connected site:
+
+```json
+POST /v1/admin/sites
+
+{
+  "name": "staging-forum",
+  "base_url": "https://staging.example/app",
+  "environment": "staging",
+  "allowed_domains": ["staging.example"],
+  "auth_mode": "storage_state",
+  "session_state_ref": "config/sessions/staging.json",
+  "protected_features": ["comments", "uploads"],
+  "page_guard_enabled": true
+}
+```
+
+`GET /v1/admin/sites` returns registered sites plus `global_fuse_suggestions`. A suggestion is produced when repeated active user-level feature bans for the same `site_id + feature_scope` cross the site's `global_fuse_policy.threshold`; it is advisory and requires admin confirmation.
+
+Create a page scan:
+
+```json
+POST /v1/admin/site-scans
+
+{
+  "site_id": 1,
+  "start_url": "https://staging.example/app",
+  "max_pages": 10,
+  "max_actions": 100,
+  "timeout_ms": 30000,
+  "allow_high_risk_actions": false
+}
+```
+
+If `actions` is included in the request, Core records those structured actions directly. Otherwise Core invokes `scripts/page-action-scan.mjs`, which uses Playwright and the site's allowed domains/session state. High-risk real clicks are disabled unless `allow_high_risk_actions=true`; production high-risk scans also require `production_confirmed=true`.
+
+List scan history and action assets:
+
+```text
+GET /v1/admin/site-scans?site_id=1&limit=50
+GET /v1/admin/site-actions?site_id=1&risk_level=high&action_type=delete
+```
+
+Action inventory rows include page URL, selector, label, action type, risk level, dialog/navigation/form flags, suggested ATEE event type, suggested `feature_scope`, recommended test type, and whether admin review is recommended. The first action taxonomy covers `login`, `register`, `submit`, `search`, `save`, `delete`, `menu`, `pagination`, `dialog_trigger`, `dialog_confirm`, `upload`, `navigation`, `form_field`, and `unknown`.
+
+Create an admin-confirmed global feature fuse:
+
+```json
+POST /v1/admin/site-feature-bans
+
+{
+  "site_id": 1,
+  "feature_scope": "uploads",
+  "duration_seconds": 3600,
+  "reason": "confirmed incident spike"
+}
+```
+
+The action is stored as a reversible `feature_ban` with `target_scope.type=site_feature`. Revoke it with `POST /v1/admin/actions/revoke`.
+
+## ATEE Page Guard
+
+`apps/page-guard/atee-page-guard.mjs` is an embeddable browser-side guard for connected sites and is also served by Core at `/page-guard/atee-page-guard.mjs`. It scans visible controls, reuses the shared action classifier from `apps/page-guard/page-action-classifier.mjs`, and calls `/v1/feature-access` before disabling protected upload/comment/post controls.
+
+Example:
+
+```html
+<script type="module">
+  import { startPageGuard } from "/page-guard/atee-page-guard.mjs";
+  startPageGuard({
+    siteId: 1,
+    userId: window.currentUserId,
+    featureAccessUrl: "/security/atee/feature-access",
+    protectedFeatures: ["comments", "uploads", "posts"]
+  });
+</script>
+```
+
+For production, route `featureAccessUrl` through the connected site's backend or trusted proxy so browser clients do not receive admin credentials. `actionReportUrl` is optional and should also point to a site-owned proxy if scan results are reported back.
 
 `async_agent` requests are queued before returning to the caller. When `async_review_worker_enabled` is true, Core Service runs a background worker that processes due jobs with the configured LLM gateway. Use `/v1/admin/async-reviews` to inspect queue summaries and `/v1/admin/async-reviews/run` for manual catch-up or operations checks. Failed remote reviews are retried up to the configured attempt limit and then moved to `dead_letter`.
 
@@ -408,6 +499,7 @@ The same SQLite file currently contains:
 - `appeals`: accepted pending appeals keyed by `punishment_id`.
 - `async_review_jobs`: sanitized async AI review jobs, retry metadata, final decision summaries, and dead-letter state.
 - `action_records`: actions that passed Tool Gateway and were actually executed.
+- `managed_sites`, `site_scan_runs`, and `site_action_inventory`: external site registry, page scan history, and structured action assets.
 
 The async AI review queue stores the sanitized Prompt Packet generated by Core Service, not raw request bodies, raw prompts, API keys, proxy URLs, or authorization headers. Appeal rate-limit hit windows remain in memory for stage one. Observe-mode `would_have_action` results are not action records because nothing was executed.
 

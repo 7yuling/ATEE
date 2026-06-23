@@ -43,6 +43,7 @@ class PromptPacketCompiler:
             "headers": clean_headers,
             "query_keys": sorted(str(k) for k in ctx.query.keys()),
             "body_summary": body_summary,
+            "site_id": ctx.site_id,
             "user_hash": self._hash(ctx.user_id),
             "session_hash": self._hash(ctx.session_id),
             "ip_hash": self._hash(real_ip.get("client_ip")),

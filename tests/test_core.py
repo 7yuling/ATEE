@@ -29,17 +29,21 @@ class AteeCoreTests(unittest.TestCase):
         user_id: str = "feature-user",
         feature_scope: str = "comments",
         duration_seconds: int = 3600,
+        site_id: int | None = None,
     ) -> dict:
         user_hash = core.packet_compiler._hash(user_id)
+        target_scope = {
+            "type": "user_feature",
+            "user_hash": user_hash,
+            "feature": feature_scope,
+        }
+        if site_id:
+            target_scope["site_id"] = site_id
         return core.executor.execute(
             {
                 "selected_action": "feature_ban",
                 "duration_seconds": duration_seconds,
-                "target_scope": {
-                    "type": "user_feature",
-                    "user_hash": user_hash,
-                    "feature": feature_scope,
-                },
+                "target_scope": target_scope,
             },
             {"executed": True, "effective_action": "feature_ban"},
         )
@@ -281,6 +285,109 @@ class AteeCoreTests(unittest.TestCase):
         self.assertEqual(plan["reason"], "unsupported_adapter_type")
         self.assertEqual(plan["payload_examples"], {})
         self.assertEqual(plan["verification_requests"], [])
+
+    def test_managed_site_scan_records_action_inventory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "staging-forum",
+                    "base_url": "https://staging.example/app",
+                    "environment": "staging",
+                    "allowed_domains": ["staging.example"],
+                    "auth_mode": "storage_state",
+                    "session_state_ref": "config/sessions/staging.json",
+                }
+            )
+            scan = core.create_site_scan(
+                {
+                    "site_id": site["site"]["id"],
+                    "start_url": "https://staging.example/app",
+                    "allow_high_risk_actions": True,
+                    "actions": [
+                        {
+                            "page_url": "https://staging.example/app",
+                            "action_type": "delete",
+                            "risk_level": "critical",
+                            "label": "Delete post",
+                            "selector": "#deletePost",
+                            "suggested_feature_scope": "posts_delete",
+                        },
+                        {
+                            "page_url": "https://staging.example/app",
+                            "action_type": "search",
+                            "risk_level": "low",
+                            "label": "Search",
+                            "selector": "#search",
+                        },
+                    ],
+                }
+            )
+            sites = core.admin_sites()
+            scans = core.admin_site_scans(site_id=site["site"]["id"])
+            critical_actions = core.admin_site_actions(site_id=site["site"]["id"], risk_level="critical")
+            search_actions = core.admin_site_actions(action_type="search")
+
+            self.assertTrue(site["ok"])
+            self.assertEqual(site["site"]["allowed_domains"], ["staging.example"])
+            self.assertTrue(scan["ok"])
+            self.assertEqual(scan["scan"]["summary"]["actions"], 2)
+            self.assertEqual(scan["scan"]["summary"]["high_risk_actions"], 1)
+            self.assertEqual(sites["sites"][0]["scan_count"], 1)
+            self.assertEqual(sites["sites"][0]["action_count"], 2)
+            self.assertEqual(scans["count"], 1)
+            self.assertEqual(critical_actions["count"], 1)
+            self.assertEqual(critical_actions["actions"][0]["recommended_test_type"], "approval_regression")
+            self.assertTrue(critical_actions["actions"][0]["requires_admin_review"])
+            self.assertEqual(search_actions["count"], 1)
+
+    def test_production_high_risk_site_scan_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "prod-site",
+                    "base_url": "https://prod.example/",
+                    "environment": "production",
+                }
+            )
+
+            blocked = core.create_site_scan(
+                {
+                    "site_id": site["site"]["id"],
+                    "allow_high_risk_actions": True,
+                    "actions": [{"action_type": "delete", "risk_level": "critical", "label": "Delete"}],
+                }
+            )
+            confirmed = core.create_site_scan(
+                {
+                    "site_id": site["site"]["id"],
+                    "allow_high_risk_actions": True,
+                    "production_confirmed": True,
+                    "actions": [{"action_type": "delete", "risk_level": "critical", "label": "Delete"}],
+                }
+            )
+
+            self.assertFalse(blocked["ok"])
+            self.assertEqual(blocked["status"], 409)
+            self.assertEqual(blocked["reason"], "production_high_risk_scan_requires_confirmation")
+            self.assertTrue(confirmed["ok"])
+            self.assertEqual(core.admin_site_actions(risk_level="critical")["count"], 1)
+
+    def test_read_only_blocks_managed_site_mutations(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="read_only"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+
+            site = core.register_site({"name": "blocked", "base_url": "https://blocked.example"})
+            scan = core.create_site_scan({"site_id": 1, "actions": [{"label": "Search"}]})
+
+            self.assertFalse(site["ok"])
+            self.assertEqual(site["status"], 423)
+            self.assertFalse(scan["ok"])
+            self.assertEqual(scan["status"], 423)
 
     def test_security_flow_rehearsal_returns_sanitized_steps(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -552,6 +659,119 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(reviewed["auto_unban"]["reason"], "appeal_not_approved")
             self.assertFalse(access["allowed"])
             self.assertEqual(core.admin_actions(status="active")["count"], 1)
+
+    def test_async_ai_feature_ban_targets_site_user_feature(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto", llm_mode="mock"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            queued = core.event(
+                {
+                    "method": "POST",
+                    "path": "/upload",
+                    "site_id": 7,
+                    "user_id": "upload-user",
+                    "event_type": "upload",
+                    "feature_scope": "uploads",
+                    "body": {"text": "spam upload payload"},
+                }
+            )
+            llm_result = {
+                "ok": True,
+                "llm_called": True,
+                "reason": "test_feature_ban",
+                "agent_decision": {"selected_action": "feature_ban", "ai_confidence": 0.92},
+            }
+
+            with patch.object(core.llm_gateway, "review", return_value=llm_result):
+                processed = core.process_async_reviews(limit=1)
+            action = core.admin_actions(status="active")["actions"][0]
+            access = core.feature_access({"site_id": 7, "user_id": "upload-user", "feature_scope": "uploads"})
+
+            self.assertEqual(queued["route"]["route"], "async_agent")
+            self.assertEqual(processed["processed"][0]["effective_action"], "feature_ban")
+            self.assertEqual(action["target_scope"]["type"], "user_feature")
+            self.assertEqual(action["target_scope"]["site_id"], 7)
+            self.assertEqual(action["target_scope"]["feature"], "uploads")
+            self.assertFalse(access["allowed"])
+            self.assertEqual(access["reason"], "active_feature_ban")
+
+    def test_feature_ban_without_user_or_feature_downgrades_to_challenge(self):
+        core = CoreService(config=AdminConfig(runtime_mode="auto"))
+        result = core.check(
+            {
+                "method": "POST",
+                "path": "/login",
+                "event_type": "login",
+                "body": {"text": "spam login attempt"},
+                "agent_decision": {"selected_action": "feature_ban", "ai_confidence": 0.95},
+            }
+        )
+
+        self.assertEqual(result["decision"]["selected_action"], "challenge")
+        self.assertIn("feature_ban:missing_user_or_feature", result["decision"]["reason_codes"])
+        self.assertEqual(result["action_result"]["record"]["action"], "challenge")
+
+    def test_site_feature_ban_blocks_all_users_and_is_not_auto_unbanned_by_user_appeal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            site = core.register_site(
+                {
+                    "name": "managed",
+                    "base_url": "https://managed.example",
+                    "protected_features": ["uploads"],
+                    "page_guard_enabled": True,
+                }
+            )["site"]
+            fuse = core.create_site_feature_ban(
+                {"site_id": site["id"], "feature_scope": "uploads", "duration_seconds": 3600, "reason": "confirmed spike"}
+            )
+            punishment_id = f"action:{fuse['action_result']['record']['id']}"
+            user_one = core.feature_access({"site_id": site["id"], "user_id": "one", "feature_scope": "uploads"})
+            user_two = core.feature_access({"site_id": site["id"], "user_id": "two", "feature_scope": "uploads"})
+            core.appeal({"punishment_id": punishment_id, "reason": "please review"})
+
+            reviewed = core.review_appeal({"punishment_id": punishment_id, "resolution": "approved"})
+            still_blocked = core.feature_access({"site_id": site["id"], "user_id": "one", "feature_scope": "uploads"})
+            revoked = core.revoke_action({"action_id": fuse["action_result"]["record"]["id"], "reason": "incident over"})
+            restored = core.feature_access({"site_id": site["id"], "user_id": "one", "feature_scope": "uploads"})
+
+            self.assertTrue(fuse["ok"])
+            self.assertFalse(user_one["allowed"])
+            self.assertFalse(user_two["allowed"])
+            self.assertEqual(user_one["reason"], "active_site_feature_ban")
+            self.assertIsNone(user_one["punishment_id"])
+            self.assertEqual(reviewed["auto_unban"]["reason"], "action_is_not_user_feature_ban")
+            self.assertFalse(still_blocked["allowed"])
+            self.assertTrue(revoked["ok"])
+            self.assertTrue(restored["allowed"])
+
+    def test_admin_sites_returns_global_fuse_suggestion_after_repeated_user_feature_bans(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            site = core.register_site(
+                {
+                    "name": "managed",
+                    "base_url": "https://managed.example",
+                    "protected_features": ["comments"],
+                    "global_fuse_policy": {"threshold": 3, "window_seconds": 3600},
+                }
+            )["site"]
+            for index in range(3):
+                self._execute_user_feature_ban(core, user_id=f"user-{index}", feature_scope="comments", site_id=site["id"])
+
+            sites = core.admin_sites()
+
+            self.assertEqual(sites["global_fuse_suggestions"][0]["site_id"], site["id"])
+            self.assertEqual(sites["global_fuse_suggestions"][0]["feature_scope"], "comments")
+            self.assertEqual(sites["global_fuse_suggestions"][0]["active_user_bans"], 3)
 
     def test_approved_appeal_with_invalid_or_non_feature_action_keeps_review_saved(self):
         with tempfile.TemporaryDirectory() as temp_dir:

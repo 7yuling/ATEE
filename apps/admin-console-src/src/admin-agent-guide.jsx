@@ -27,7 +27,7 @@ import {
   PreflightSummary,
   SECURITY_FLOW_STEPS,
   SITE_TYPE_OPTIONS,
-} from "./adminSupport.jsx";
+} from "./admin-support.jsx";
 
 const { Text } = Typography;
 const { TextArea } = Input;

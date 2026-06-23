@@ -30,6 +30,9 @@ class ToolGateway:
         if action == "ip_ban_short" and not (real_ip.get("can_ip_ban") and config.auto_ip_ban_enabled):
             return self._reject("ip_ban_requires_trusted_real_ip_and_admin_enablement")
 
+        if action == "feature_ban" and (decision.get("target_scope") or {}).get("type") != "user_feature":
+            return self._reject("feature_ban_requires_user_feature_scope")
+
         if not self._meets_threshold(action, scores):
             return self._reject("confidence_threshold_not_met")
 
@@ -74,4 +77,3 @@ class ToolGateway:
             "would_have_action": action,
             "reason": reason,
         }
-

@@ -3,8 +3,10 @@ import hashlib
 import hmac
 import os
 import platform
+import subprocess
 import sys
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -28,6 +30,7 @@ from .prompt_packet import PromptPacketCompiler
 from .router import RequestRouter
 from .runtime import RuntimeController, VALID_MODES
 from .secret_store import SecretStoreError, load_secret_file
+from .site_inventory import SiteInventory
 from .tool_gateway import ToolGateway
 
 
@@ -44,6 +47,7 @@ INTEGRATION_PLAN_SENSITIVE_MARKERS = (
     "proxy_url",
     "proxy url",
 )
+SITE_SCAN_DEFAULT_TIMEOUT_MS = 30000
 
 
 class AsyncReviewProcessingPaused(RuntimeError):
@@ -79,6 +83,7 @@ class CoreService:
         self.admin_auth = AdminAuthService(state_sqlite_path)
         self.api_keys = ApiKeyRegistry(state_sqlite_path)
         self.async_reviews = self._make_async_review_queue(state_sqlite_path)
+        self.site_inventory = SiteInventory(state_sqlite_path)
         self.runtime = RuntimeController(self.config)
 
     def check(self, payload: dict[str, Any], remote_addr: str = "127.0.0.1") -> dict[str, Any]:
@@ -184,6 +189,7 @@ class CoreService:
     def feature_access(self, payload: dict[str, Any]) -> dict[str, Any]:
         user_id = str(payload.get("user_id") or "").strip()
         feature = str(payload.get("feature_scope") or payload.get("feature") or "").strip()
+        site_id = self._optional_site_id(payload.get("site_id"))
         if not user_id:
             return {
                 "ok": False,
@@ -200,13 +206,35 @@ class CoreService:
             }
 
         user_hash = self.packet_compiler._hash(user_id)
-        active_action = self.executor.find_active_user_feature(str(user_hash or ""), feature)
+        active_site_action = self.executor.find_active_site_feature(site_id, feature)
+        if active_site_action:
+            public_action = dict(active_site_action)
+            public_action.pop("punishment_id", None)
+            return {
+                "ok": True,
+                "status": 200,
+                "allowed": False,
+                "reason": "active_site_feature_ban",
+                "site_id": site_id,
+                "user_hash": user_hash,
+                "feature_scope": feature,
+                "active_action": public_action,
+                "punishment_id": None,
+                "expires_at": active_site_action.get("expires_at"),
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "Feature access is blocked by an active ATEE site feature_ban.",
+                },
+            }
+
+        active_action = self.executor.find_active_user_feature(str(user_hash or ""), feature, site_id)
         if active_action:
             return {
                 "ok": True,
                 "status": 200,
                 "allowed": False,
                 "reason": "active_feature_ban",
+                "site_id": site_id,
                 "user_hash": user_hash,
                 "feature_scope": feature,
                 "active_action": active_action,
@@ -222,6 +250,7 @@ class CoreService:
             "status": 200,
             "allowed": True,
             "reason": "no_active_feature_ban",
+            "site_id": site_id,
             "user_hash": user_hash,
             "feature_scope": feature,
             "active_action": None,
@@ -241,6 +270,8 @@ class CoreService:
             "active_actions": len(self.executor.list_actions(status="active")),
             "pending_appeals": sum(1 for appeal in self.appeals.appeals.values() if appeal["status"] == "pending"),
             "async_review": self.async_reviews.status() if self.async_reviews else {"sqlite_enabled": False},
+            "managed_sites": len(self.site_inventory.list_sites()),
+            "site_actions": len(self.site_inventory.list_actions(limit=500)),
             "async_review_worker": self.async_review_worker_status(),
             "llm_gateway": self.llm_gateway.status(),
             "admin_auth": self.admin_auth_status(),
@@ -377,6 +408,7 @@ class CoreService:
                     self.appeals = AppealService(state_sqlite_path)
                     self.admin_auth = AdminAuthService(state_sqlite_path)
                     self.api_keys = ApiKeyRegistry(state_sqlite_path)
+                    self.site_inventory = SiteInventory(state_sqlite_path)
                 if "ledger_sqlite_path" in changed or "async_review_queue_max_depth" in changed:
                     self.async_reviews = self._make_async_review_queue(state_sqlite_path)
             self._save_config()
@@ -688,6 +720,170 @@ class CoreService:
                 "locale": "zh-CN",
                 "message_zh": "HTTP API 接入方案已生成。",
             },
+        }
+
+    def register_site(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_site_registration",
+                "display": {"locale": "zh-CN", "message_zh": "只读模式下不会登记或更新接入网站。"},
+            }
+        site = self.site_inventory.register_site(payload)
+        if not site:
+            return {
+                "ok": False,
+                "status": 404,
+                "reason": "site_not_found",
+                "display": {"locale": "zh-CN", "message_zh": "未找到要更新的接入网站。"},
+            }
+        self._record_admin_audit(
+            "admin_site_registry",
+            "register_site",
+            f"site_id={site.get('id')} environment={site.get('environment')}",
+            actor,
+        )
+        return {
+            "ok": True,
+            "site": site,
+            "display": {"locale": "zh-CN", "message_zh": "接入网站已登记。"},
+        }
+
+    def admin_sites(self) -> dict[str, Any]:
+        sites = self.site_inventory.list_sites()
+        return {
+            "ok": True,
+            "sites": sites,
+            "count": len(sites),
+            "global_fuse_suggestions": self._site_feature_fuse_suggestions(sites),
+            "display": {"locale": "zh-CN", "message_zh": "接入网站列表已加载。"},
+        }
+
+    def create_site_scan(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_site_scan",
+                "display": {"locale": "zh-CN", "message_zh": "只读模式下不会创建页面扫描任务。"},
+            }
+        scanner_result = None
+        if "actions" not in payload and payload.get("execute_scan", True):
+            scanner_result = self._run_page_action_scan(payload)
+        result = self.site_inventory.record_scan(payload, scanner_result=scanner_result)
+        if result.get("ok"):
+            scan = result.get("scan") or {}
+            self._record_admin_audit(
+                "admin_site_scan",
+                "create_site_scan",
+                f"site_id={scan.get('site_id')} scan_id={scan.get('id')} actions={result.get('count', 0)}",
+                actor,
+            )
+            result["display"] = {"locale": "zh-CN", "message_zh": "页面扫描结果已写入动作台账。"}
+        elif (result.get("scan") or {}).get("status") == "failed":
+            result["status"] = 502
+            result["display"] = {"locale": "zh-CN", "message_zh": "页面扫描执行失败，失败记录已保留。"}
+        return result
+
+    def admin_site_scans(self, site_id: int | None = None, limit: int = 50) -> dict[str, Any]:
+        scans = self.site_inventory.list_scans(site_id=site_id, limit=limit)
+        return {
+            "ok": True,
+            "scans": scans,
+            "count": len(scans),
+            "display": {"locale": "zh-CN", "message_zh": "页面扫描历史已加载。"},
+        }
+
+    def admin_site_actions(
+        self,
+        site_id: int | None = None,
+        scan_id: int | None = None,
+        risk_level: str = "all",
+        action_type: str = "all",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        actions = self.site_inventory.list_actions(
+            site_id=site_id,
+            scan_id=scan_id,
+            risk_level=risk_level,
+            action_type=action_type,
+            limit=limit,
+        )
+        return {
+            "ok": True,
+            "actions": actions,
+            "count": len(actions),
+            "display": {"locale": "zh-CN", "message_zh": "接入网站动作台账已加载。"},
+        }
+
+    def create_site_feature_ban(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_site_feature_ban",
+                "display": {"locale": "zh-CN", "message_zh": "Read-only mode blocks site feature fuse creation."},
+            }
+        site_id = self._optional_site_id(payload.get("site_id"))
+        feature = str(payload.get("feature_scope") or payload.get("feature") or "").strip()
+        if site_id is None:
+            return {"ok": False, "status": 400, "reason": "site_id_required"}
+        if not feature:
+            return {"ok": False, "status": 400, "reason": "feature_scope_required"}
+        site = self.site_inventory.get_site(site_id)
+        if not site:
+            return {"ok": False, "status": 404, "reason": "site_not_found"}
+        try:
+            duration_seconds = int(payload.get("duration_seconds") or 3600)
+        except (TypeError, ValueError):
+            duration_seconds = 3600
+        duration_seconds = max(60, min(duration_seconds, MANUAL_FEATURE_BAN_MAX_SECONDS))
+        reason = str(payload.get("reason") or "admin confirmed site feature fuse").strip()[:1000]
+        decision = {
+            "selected_action": "feature_ban",
+            "scores": {
+                "evidence_score": 1.0,
+                "behavior_score": 1.0,
+                "reputation_score": 1.0,
+                "ai_confidence": 0.0,
+                "final_confidence": 1.0,
+            },
+            "reason_codes": ["admin_confirmed_site_feature_fuse"],
+            "admin_explanation": "Admin confirmed a global site feature ban suggested by ATEE.",
+            "duration_seconds": duration_seconds,
+            "target_scope": {
+                "type": "site_feature",
+                "site_id": site_id,
+                "feature": feature,
+            },
+        }
+        gateway = {
+            "allowed": True,
+            "executed": True,
+            "effective_action": "feature_ban",
+            "reason": "admin_confirmed_site_feature_fuse",
+        }
+        action_record = self.executor.execute(decision, gateway)
+        ledger_record = self.ledger.record(
+            {
+                "severity": "high",
+                "event_type": "site_feature_fuse",
+                "endpoint_type": "admin",
+                "action": "feature_ban",
+                "summary": self._admin_summary(
+                    f"site_feature_fuse site_id={site_id} feature={feature} duration_seconds={duration_seconds} reason={reason}",
+                    actor,
+                ),
+            }
+        )
+        return {
+            "ok": True,
+            "status": 200,
+            "site": site,
+            "action_result": action_record,
+            "ledger_record": ledger_record,
+            "display": {"locale": "zh-CN", "message_zh": "Site feature fuse has been created."},
         }
 
     def security_flow_rehearsal(self, actor: dict[str, str] | None = None) -> dict[str, Any]:
@@ -1061,6 +1257,7 @@ class CoreService:
         packet = job.get("packet") or {}
         user_hash = str(payload.get("user_hash") or packet.get("user_hash") or "").strip()
         feature = str(payload.get("feature_scope") or packet.get("feature_scope") or packet.get("endpoint_type") or "").strip()
+        site_id = self._optional_site_id(payload.get("site_id") or packet.get("site_id"))
         if not user_hash:
             return {"ok": False, "status": 400, "reason": "user_hash_required"}
         if not feature:
@@ -1071,6 +1268,13 @@ class CoreService:
             duration_seconds = 3600
         duration_seconds = max(60, min(duration_seconds, MANUAL_FEATURE_BAN_MAX_SECONDS))
         admin_note = str(payload.get("admin_note") or "").strip()[:1000]
+        target_scope = {
+            "type": "user_feature",
+            "user_hash": user_hash,
+            "feature": feature,
+        }
+        if site_id:
+            target_scope["site_id"] = site_id
         decision = {
             "selected_action": "feature_ban",
             "scores": {
@@ -1083,11 +1287,7 @@ class CoreService:
             "reason_codes": ["manual_review", f"async_review_job:{job_id}"],
             "admin_explanation": "Manual reviewer applied a feature ban from an async review queue item.",
             "duration_seconds": duration_seconds,
-            "target_scope": {
-                "type": "user_feature",
-                "user_hash": user_hash,
-                "feature": feature,
-            },
+            "target_scope": target_scope,
         }
         gateway = {
             "allowed": True,
@@ -1107,7 +1307,7 @@ class CoreService:
                 "summary": self._admin_summary(
                     (
                         f"manual_async_review job_id={job_id} action=feature_ban "
-                        f"user_hash={user_hash} feature={feature} duration_seconds={duration_seconds} note={admin_note}"
+                        f"site_id={site_id or ''} user_hash={user_hash} feature={feature} duration_seconds={duration_seconds} note={admin_note}"
                     ),
                     actor,
                 ),
@@ -1519,6 +1719,76 @@ class CoreService:
         if self.config_store:
             self.config_store.save(self.config)
 
+    def _run_page_action_scan(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            site_id = int(payload.get("site_id") or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "status": "failed", "error": "invalid_site_id"}
+        site = self.site_inventory.get_site(site_id)
+        if not site:
+            return {"ok": False, "status": "failed", "error": "site_not_found"}
+        scanner = self.project_root / "scripts" / "page-action-scan.mjs"
+        if not scanner.is_file():
+            return {"ok": False, "status": "failed", "error": "scanner_script_not_found"}
+        start_url = str(payload.get("start_url") or site.get("base_url") or "").strip()
+        max_pages = self._bounded_scan_int(payload.get("max_pages"), 1, 100, 10)
+        max_actions = self._bounded_scan_int(payload.get("max_actions"), 1, 1000, 100)
+        timeout_ms = self._bounded_scan_int(payload.get("timeout_ms"), 1000, 120000, SITE_SCAN_DEFAULT_TIMEOUT_MS)
+        command = [
+            "node",
+            str(scanner),
+            "--url",
+            start_url,
+            "--max-pages",
+            str(max_pages),
+            "--max-actions",
+            str(max_actions),
+            "--timeout-ms",
+            str(timeout_ms),
+        ]
+        for domain in site.get("allowed_domains") or []:
+            command.extend(["--allowed-domain", str(domain)])
+        if payload.get("allow_high_risk_actions"):
+            command.append("--allow-high-risk-actions")
+        if site.get("auth_mode") == "storage_state" and site.get("session_state_ref"):
+            session_path = self._resolve_project_path(site["session_state_ref"]) or Path(str(site["session_state_ref"]))
+            command.extend(["--storage-state", str(session_path)])
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self.project_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=max(2, (timeout_ms // 1000) + 10),
+                check=False,
+            )
+        except FileNotFoundError:
+            return {"ok": False, "status": "failed", "error": "node_runtime_not_found"}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "status": "failed", "error": "scanner_timeout"}
+        if completed.returncode != 0:
+            stderr = (completed.stderr or "").strip().splitlines()
+            return {
+                "ok": False,
+                "status": "failed",
+                "error": (stderr[-1] if stderr else "scanner_failed")[:500],
+            }
+        try:
+            result = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError:
+            return {"ok": False, "status": "failed", "error": "scanner_returned_invalid_json"}
+        if not isinstance(result, dict):
+            return {"ok": False, "status": "failed", "error": "scanner_returned_invalid_result"}
+        return result
+
+    def _bounded_scan_int(self, value: Any, minimum: int, maximum: int, default: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            number = default
+        return max(minimum, min(maximum, number))
+
     def _make_async_review_queue(self, state_sqlite_path: Path | None) -> AsyncReviewQueue | None:
         if not state_sqlite_path:
             return None
@@ -1860,6 +2130,14 @@ class CoreService:
                 "punishment_id": punishment_id,
                 "action_id": action_id,
             }
+        if (action.get("target_scope") or {}).get("type") != "user_feature":
+            return {
+                "ok": False,
+                "executed": False,
+                "reason": "action_is_not_user_feature_ban",
+                "punishment_id": punishment_id,
+                "action_id": action_id,
+            }
         if not action.get("reversible"):
             return {
                 "ok": False,
@@ -1910,6 +2188,66 @@ class CoreService:
         if action_id <= 0:
             return None, "invalid_action_punishment_id"
         return action_id, "ok"
+
+    def _optional_site_id(self, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            site_id = int(value)
+        except (TypeError, ValueError):
+            return None
+        return site_id if site_id > 0 else None
+
+    def _site_feature_fuse_suggestions(self, sites: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        site_policies = {
+            int(site.get("id")): site.get("global_fuse_policy") or {}
+            for site in sites
+            if self._optional_site_id(site.get("id")) is not None
+        }
+        now = datetime.now(timezone.utc)
+        counts: dict[tuple[int, str], int] = {}
+        for action in self.executor.list_actions(status="active", cleanup_expired=self.config.runtime_mode != "read_only"):
+            if action.get("action") != "feature_ban":
+                continue
+            target = action.get("target_scope") or {}
+            if target.get("type") != "user_feature":
+                continue
+            site_id = self._optional_site_id(target.get("site_id"))
+            feature = str(target.get("feature") or "").strip()
+            if site_id is None or not feature:
+                continue
+            policy = site_policies.get(site_id) or {}
+            if policy.get("auto_suggest", True) is False:
+                continue
+            window_seconds = int(policy.get("window_seconds") or 3600)
+            created_at = action.get("created_at")
+            if created_at:
+                try:
+                    age_seconds = (now - datetime.fromisoformat(str(created_at))).total_seconds()
+                except (TypeError, ValueError):
+                    age_seconds = 0
+                if age_seconds > window_seconds:
+                    continue
+            key = (site_id, feature)
+            counts[key] = counts.get(key, 0) + 1
+
+        suggestions: list[dict[str, Any]] = []
+        for (site_id, feature), active_user_bans in sorted(counts.items()):
+            policy = site_policies.get(site_id) or {}
+            threshold = int(policy.get("threshold") or 3)
+            if active_user_bans < threshold:
+                continue
+            suggestions.append(
+                {
+                    "site_id": site_id,
+                    "feature_scope": feature,
+                    "active_user_bans": active_user_bans,
+                    "threshold": threshold,
+                    "requires_admin_confirmation": True,
+                    "recommended_action": "create_site_feature_ban",
+                }
+            )
+        return suggestions
 
     def break_glass_status(self, headers: dict[str, str] | None = None, actor: dict[str, str] | None = None) -> dict[str, Any]:
         headers = {k.lower(): v for k, v in (headers or {}).items()}
