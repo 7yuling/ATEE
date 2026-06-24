@@ -97,7 +97,26 @@ class DeploymentAssetTests(unittest.TestCase):
         self.assertIn("llm_daily_budget_cents: budgetCents", script)
         self.assertIn("ATEE_ADMIN_TOKEN", script)
         self.assertIn("remaining !== null && remaining !== undefined", script)
+        self.assertIn("Dining Hall Forum", script)
+        self.assertIn('expectSelector(page, "#topicForm")', script)
+        self.assertIn('submitAndRead("/posts", "#commentForm button")', script)
+        self.assertIn("/v1/admin/agent/chat", script)
+        self.assertIn("raw_reply_omitted", script)
+        self.assertNotIn("ATEE 业务演示站", script)
+        self.assertNotIn('submitAndRead("/api/comment"', script)
         self.assertNotRegex(script, r"sk-[A-Za-z0-9]")
+
+    def test_frontend_ai_rehearsal_scripts_match_current_demo_routes(self):
+        for script_name in (
+            "frontend-live-production-rehearsal.mjs",
+            "frontend-budget-circuit-recovery-rehearsal.mjs",
+            "frontend-budget-overrun-intrusion-rehearsal.mjs",
+        ):
+            script = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+            self.assertNotIn("ATEE 业务演示站", script, msg=script_name)
+            self.assertNotIn('submitAndRead("/api/comment"', script, msg=script_name)
+            self.assertIn("/posts", script, msg=script_name)
+            self.assertNotRegex(script, r"sk-[A-Za-z0-9]", msg=script_name)
 
     def test_windows_install_task_uses_scheduled_task_wrapper(self):
         script = (ROOT / "scripts" / "windows" / "install-atee-task.ps1").read_text(encoding="utf-8")

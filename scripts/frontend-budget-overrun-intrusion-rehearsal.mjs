@@ -349,7 +349,7 @@ async function submitLogin(username, password) {
 
 async function submitComment(text) {
   await page.locator('#commentForm textarea[name="text"]').fill(String(text));
-  return submitAndRead("/api/comment", "#commentForm button");
+  return submitAndRead("/posts", "#commentForm button");
 }
 
 async function submitUpload(filename, text) {
@@ -402,7 +402,7 @@ async function submitIntrusionBatch(cycle, size, concurrency) {
         if (index % 3 === 0) {
           return { name: "async_upload_noise", path: "/api/upload", body: { filename: `invoice-${id}.txt`, text: `large post recovery upload ${id}` } };
         }
-        return { name: "async_comment_noise", path: "/api/comment", body: { text: `post recovery high volume comment ${id}` } };
+        return { name: "async_comment_noise", path: "/api/topics/1/posts", body: { content: `post recovery high volume comment ${id}` } };
       });
       const started = performance.now();
       const results = [];
@@ -736,7 +736,7 @@ function markdownReport() {
   ];
   if (!data.issues.length) lines.push("No frontend failure was found.");
   for (const issue of data.issues) lines.push(`- [${issue.risk}] ${issue.title}: ${issue.detail}`);
-  lines.push("", "## Security Notes", "", "- API keys, key file paths, proxy URLs, API base URLs, Authorization headers, raw prompts, and raw request bodies are intentionally omitted.");
+  lines.push("", "## Security Notes", "", "- API keys, key file paths, proxy URLs, API base URLs, auth headers, raw prompts, and raw request bodies are intentionally omitted.");
   return `${lines.join("\n")}\n`;
 }
 

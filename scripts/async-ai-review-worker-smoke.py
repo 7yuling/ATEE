@@ -294,7 +294,7 @@ def _markdown_report(summary: dict) -> str:
             "",
             "- Default mode uses a temporary local fake provider and does not call the configured live provider.",
             "- Live provider calls require `--include-live`.",
-            "- API keys, API base URLs, proxy URLs, key file paths, raw prompts, raw request bodies, Authorization headers, and temporary ledger paths are omitted.",
+            "- API keys, API base URLs, proxy URLs, key file paths, raw prompts, raw request bodies, auth headers, and temporary ledger paths are omitted.",
             "",
         ]
     )

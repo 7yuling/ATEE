@@ -51,6 +51,7 @@ const summary = {
   rule_counts: {},
   action_counts: {},
   llm_reason_counts: {},
+  admin_ai_checks: [],
   async_review: {},
   llm_budget: {},
   llm_circuit: {},
@@ -86,6 +87,7 @@ try {
   await waitForHealth(`http://127.0.0.1:${demoPort}/health`, "demo");
 
   await assertRuntimeConfig(corePort);
+  await verifyAdminAiFunctions(corePort);
 
   browser = await chromium.launch({
     executablePath: chromePath,
@@ -94,10 +96,11 @@ try {
   });
   page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.goto(`http://127.0.0.1:${demoPort}/`, { waitUntil: "domcontentloaded" });
-  await expectText(page, "ATEE 业务演示站");
-  await expectText(page, "登录");
-  await expectText(page, "评论");
-  await expectText(page, "上传");
+  await expectText(page, "Dining Hall Forum");
+  await expectSelector(page, "#loginForm");
+  await expectSelector(page, "#topicForm");
+  await expectSelector(page, "#commentForm");
+  await expectSelector(page, "#uploadForm");
 
   summary.started_at = new Date().toISOString();
   await writeStatus("running");
@@ -134,7 +137,7 @@ try {
   summary.elapsed_seconds = Math.round((Date.now() - Date.parse(summary.started_at)) / 1000);
   const finalRuntime = await runtimeStatus(corePort);
   updateRuntimeSummary(finalRuntime);
-  summary.ok = summary.frontend_failures === 0 && summary.stop_reason !== "llm_circuit_open";
+  summary.ok = summary.frontend_failures === 0 && adminAiChecksOk() && summary.stop_reason !== "llm_circuit_open";
   await writeStatus("completed");
   await writeReport();
   console.log(JSON.stringify(publicSummary(), null, 2));
@@ -215,9 +218,15 @@ async function runCycle(cycle, corePort) {
     return submitAndRead("/api/login", "#loginForm button");
   });
 
+  await submitScenario("normal_topic", async () => {
+    await page.locator('#topicForm input[name="title"]').fill(`Production topic ${cycle}`);
+    await page.locator('#topicForm textarea[name="description"]').fill(`Normal production topic ${cycle}: live AI rehearsal.`);
+    return submitAndRead("/api/topics", "#topicForm button");
+  });
+
   await submitScenario("normal_comment", async () => {
     await page.locator('#commentForm textarea[name="text"]').fill(`Normal production comment ${cycle}: zh-CN English emoji ok.`);
-    return submitAndRead("/api/comment", "#commentForm button");
+    return submitAndRead("/posts", "#commentForm button");
   });
 
   await submitScenario("normal_upload", async () => {
@@ -240,7 +249,7 @@ async function submitAttack(cycle) {
   if (selector === "xss_comment") {
     await submitScenario("attack_xss_comment", async () => {
       await page.locator('#commentForm textarea[name="text"]').fill("<script>alert(1)</script>");
-      return submitAndRead("/api/comment", "#commentForm button");
+      return submitAndRead("/posts", "#commentForm button");
     });
     return;
   }
@@ -313,7 +322,7 @@ function scenarioExpectation(name, payload) {
         reason: `expected successful sync live login, got status=${status}; ok=${payload.ok}; route=${route || "-"}; llm_reason=${llmReason || "-"}; error=${payload.error || "-"}`,
       };
     }
-  } else if (name === "normal_comment" || name === "normal_upload") {
+  } else if (name === "normal_topic" || name === "normal_comment" || name === "normal_upload") {
     if (status !== 200 || !payload.ok || route !== "async_agent") {
       return {
         ok: false,
@@ -329,6 +338,61 @@ function scenarioExpectation(name, payload) {
     }
   }
   return { ok: true, reason: "expected" };
+}
+
+async function verifyAdminAiFunctions(corePort) {
+  const checks = [
+    aiCheck(
+      "admin_llm_test_get",
+      await fetchJson(`http://127.0.0.1:${corePort}/v1/admin/llm/test`, adminHeaders()),
+      "provider_json_decision",
+    ),
+    aiCheck(
+      "admin_llm_test_post",
+      await postJson(`http://127.0.0.1:${corePort}/v1/admin/llm/test`, {}, adminHeaders()),
+      "provider_json_decision",
+    ),
+    aiCheck(
+      "admin_agent_chat",
+      await postJson(
+        `http://127.0.0.1:${corePort}/v1/admin/agent/chat`,
+        {
+          message: "Confirm ATEE live AI connectivity in one short sentence.",
+          site_type: "Dining Hall Forum",
+          adapter_type: "HTTP API",
+        },
+        adminHeaders(),
+      ),
+      "provider_chat",
+    ),
+  ];
+  summary.admin_ai_checks = checks;
+  for (const check of checks) {
+    if (!check.ok) {
+      summary.issues.push({
+        title: `${check.name}_unexpected_result`,
+        detail: `expected reason=${check.expected_reason}; got ok=${check.ok}; reason=${check.reason || "-"}`,
+        risk: "high",
+      });
+    }
+  }
+}
+
+function aiCheck(name, payload, expectedReason) {
+  const reason = payload?.reason || "";
+  const reply = typeof payload?.reply_zh === "string" ? payload.reply_zh : "";
+  return {
+    name,
+    ok: Boolean(payload?.ok) && reason === expectedReason,
+    reason,
+    expected_reason: expectedReason,
+    latency_ms: payload?.latency_ms || payload?.provider_latency_ms || 0,
+    raw_reply_omitted: Boolean(reply) || undefined,
+  };
+}
+
+function adminAiChecksOk() {
+  return summary.admin_ai_checks.length > 0 && summary.admin_ai_checks.every((check) => check.ok);
 }
 
 function recordPayload(name, payload) {
@@ -395,8 +459,8 @@ async function runtimeStatus(corePort) {
   return fetchJson(`http://127.0.0.1:${corePort}/v1/runtime/status`);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, headers = {}) {
+  const response = await fetch(url, { headers });
   return response.json();
 }
 
@@ -454,6 +518,7 @@ function publicSummary() {
     rule_counts: summary.rule_counts,
     action_counts: summary.action_counts,
     llm_reason_counts: summary.llm_reason_counts,
+    admin_ai_checks: summary.admin_ai_checks,
     latency_ms: latency,
     llm_budget: summary.llm_budget,
     llm_circuit: summary.llm_circuit,
@@ -503,6 +568,14 @@ function markdownReport() {
     ...countLines("action", data.action_counts),
     ...countLines("llm_reason", data.llm_reason_counts),
     "",
+    "## Admin AI Checks",
+    "",
+    "| Check | OK | Reason | Latency ms | Raw reply omitted |",
+    "|---|---|---|---:|---|",
+    ...data.admin_ai_checks.map((check) => (
+      `| ${check.name} | ${check.ok} | ${check.reason || "-"} | ${check.latency_ms || 0} | ${Boolean(check.raw_reply_omitted)} |`
+    )),
+    "",
     "## Runtime",
     "",
     `- Async review status: ${JSON.stringify(data.async_review)}`,
@@ -531,7 +604,7 @@ function markdownReport() {
     "",
     "## Security Notes",
     "",
-    "- API keys, key file paths, proxy URLs, API base URLs, Authorization headers, raw prompts, and raw request bodies are intentionally omitted.",
+    "- API keys, key file paths, proxy URLs, API base URLs, auth headers, raw prompts, and raw request bodies are intentionally omitted.",
     "- The visible browser uses the local demo frontend and submits through the same form-backed endpoints as a user session.",
   );
   return `${lines.join("\n")}\n`;
@@ -547,6 +620,13 @@ async function expectText(targetPage, text) {
   const content = await targetPage.locator("body").textContent({ timeout: 15000 });
   if (!String(content || "").includes(text)) {
     throw new Error(`page did not contain text: ${text}`);
+  }
+}
+
+async function expectSelector(targetPage, selector) {
+  const count = await targetPage.locator(selector).count();
+  if (count < 1) {
+    throw new Error(`page did not contain selector: ${selector}`);
   }
 }
 

@@ -83,7 +83,7 @@ try {
   browser = await chromium.launch({ executablePath: chromePath, headless: true });
   page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.goto(`http://127.0.0.1:${demoPort}/`, { waitUntil: "domcontentloaded" });
-  await expectText(page, "ATEE 业务演示站");
+  await expectText(page, "Dining Hall Forum");
 
   summary.started_at = new Date().toISOString();
   await writeStatus("running");
@@ -239,7 +239,7 @@ async function submitLogin(username, password) {
 
 async function submitComment(text) {
   await page.locator('#commentForm textarea[name="text"]').fill(String(text));
-  return submitAndRead("/api/comment", "#commentForm button");
+  return submitAndRead("/posts", "#commentForm button");
 }
 
 async function submitUpload(filename, text) {
@@ -496,7 +496,7 @@ function markdownReport() {
   ];
   if (!data.issues.length) lines.push("No frontend failure was found.");
   for (const issue of data.issues) lines.push(`- [${issue.risk}] ${issue.title}: ${issue.detail}`);
-  lines.push("", "## Security Notes", "", "- API keys, key file paths, proxy URLs, API base URLs, Authorization headers, raw prompts, and raw request bodies are intentionally omitted.");
+  lines.push("", "## Security Notes", "", "- API keys, key file paths, proxy URLs, API base URLs, auth headers, raw prompts, and raw request bodies are intentionally omitted.");
   return `${lines.join("\n")}\n`;
 }
 

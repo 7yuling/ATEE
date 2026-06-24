@@ -540,7 +540,7 @@ def _markdown(summary: dict[str, Any]) -> str:
             "## Security Notes",
             "",
             "- The suite uses mock/local Core Service state by default.",
-            "- API keys, API base URLs, proxy URLs, Authorization headers, raw prompts, raw request bodies, and temporary paths are omitted.",
+            "- API keys, API base URLs, proxy URLs, auth headers, raw prompts, raw request bodies, and temporary paths are omitted.",
         ]
     )
     return "\n".join(lines) + "\n"
