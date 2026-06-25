@@ -1,23 +1,24 @@
 ﻿# ATEE 项目对齐报告
 
-报告日期：2026-06-23
+报告日期：2026-06-25
 对齐对象：
 
 - `ATEE_Agentic_Coding_Workflow_v3.3.md`
 - `ATEE_最终合并会议报告_v3.3_含小白引导.md`
 - 当前工程目录：`C:\Users\Pro16\Documents\Codex\ATEE`
 
-> 说明：本文件保留 2026-05 至 2026-06 的历史迭代记录；最新状态以本节和“2026-06-23 主干对齐快照”为准。
+> 说明：本文件保留 2026-05 至 2026-06 的历史迭代记录；最新状态以本节和“2026-06-25 主干对齐快照”为准。
 
-## 0. 2026-06-23 主干对齐快照
+## 0. 2026-06-25 主干对齐快照
 
-当前 `main` 已推送到 `origin/main`，最新提交为 `1d8eb56 feat: add page guard feature access controls`。该提交把 ATEE Page Guard、接入站点管理、用户级/站点级功能封禁、申诉通过自动解封、页面动作扫描、adapter feature access helper、管理台接入网站页，以及文件命名统一纳入主干。
+当前本地 `main` 位于 `e41eb13 feat: add reusable site proxy integration`，较 `origin/main` 领先 2 个提交；`origin/main` 最新为 `f5ccf93 docs: align project report with page guard release`。主干已纳入 ATEE Page Guard、接入站点管理、用户级/站点级功能封禁、申诉通过自动解封、页面动作扫描、adapter feature access helper、管理台接入网站页、文件命名统一、功能封禁闭环 smoke 验证，以及标准可复用站点代理接入能力。
 
 ### 0.1 本轮已对齐能力
 
 | 能力 | 当前状态 | 说明 |
 |---|---:|---|
 | 接入网站功能访问检查 | 已对齐 | `POST /v1/feature-access` 支持 `site_id`、`user_id`、`feature_scope`，先查站点级 `site_feature` 锁，再查用户级 `user_feature` 锁。 |
+| 标准可复用站点代理 | 已对齐 | Core 新增 `/proxy/sites/<site_id>/`，可按站点注册信息反向代理目标网站、注入 Page Guard、提供同源 feature-access，并在转发前拦截受保护写请求。 |
 | 用户级功能封禁 | 已对齐 | AI/人工 `feature_ban` 可落到 `target_scope.type=user_feature`，返回 `punishment_id=action:<id>` 供用户申诉。 |
 | 申诉通过自动解封 | 已对齐 | 管理员审核 `approved` 后，只自动撤销 active、reversible、`user_feature` 类型 `feature_ban`；驳回不解封。 |
 | 站点全局功能熔断 | 已对齐 | 管理员可创建 `site_feature` 全局锁，阻断同一站点不同用户；用户申诉不会误解除全站熔断，需管理员撤销 action。 |
@@ -25,19 +26,23 @@
 | 页面动作扫描 | 已对齐 | `scripts/page-action-scan.mjs` 复用共享分类器，可识别登录、注册、提交、搜索、保存、删除、菜单、分页、弹窗触发、上传等控件。 |
 | 接入站点管理台 | 已对齐 | 管理台新增接入网站、页面扫描、动作清单、受保护功能、站点熔断入口和全局熔断建议展示。 |
 | Python/Node adapter | 已对齐 | `feature_access` / `featureAccess` 支持 `site_id`，并增加上传、评论、发帖前置检查 helper。 |
+| 功能封禁闭环 smoke | 已对齐 | `scripts/feature-ban-closure-smoke.py` 与 `tests/test_feature_ban_closure_smoke.py` 覆盖站点级熔断、用户级功能封禁、申诉自动解封、管理员撤销和报告脱敏。 |
 | 文件命名 | 已对齐 | 管理台 React 组件源码统一为 kebab-case；Windows 启动入口统一为 `run-atee-windows.cmd`。 |
 
 ### 0.2 最新验证结果
 
 | 验证项 | 结果 |
 |---|---|
-| `python -m unittest discover -s tests` | 145 tests OK |
+| `python -m unittest tests.test_core tests.test_http_e2e` | 79 tests OK，覆盖 Core 与 HTTP E2E；包含 Site Proxy 注入和服务端拦截用例 |
+| `python -m unittest discover -s tests` | 147 tests OK，上一轮全量基线；站点代理提交后尚未重跑 full discover |
 | `npm.cmd run build:admin` | OK |
 | `npm.cmd run e2e:browser` | 62 checks OK |
+| ATEE Site Proxy 本地接入验证 | OK，`dining-hall` 通过代理访问，运行时脚本注入、同源 feature-access、`POST /api/login` 403 拦截和浏览器端登录按钮禁用均通过 |
 | Page Guard 分类器回归 | OK，`dropdown` 不再误判为 delete，`drop table` 仍识别为高危删除意图 |
 | 临时真实页面扫描 | OK，10 类控件全部识别 |
 | DeepSeek live provider drill | OK，返回 `provider_json_decision`，密钥未落盘 |
 | 功能封禁演练 | OK，用户级封禁可拦截并随申诉通过自动解封；站点级熔断需管理员撤销 |
+| Feature Ban Closure Smoke | OK，10 项检查全部通过，raw prompt/raw request body 未存储，secrets omitted=True |
 
 ### 0.3 当前边界判断
 
@@ -47,20 +52,23 @@
 P0 工程骨架：通过
 P0 本地演示：通过
 接入网站功能管理：通过
+标准可复用站点代理接入：通过（本地/staging）
 Page Guard / 页面扫描：通过
 AI 用户级功能接管：本地与受控 live 链路通过
 站点全局熔断：管理员确认路径通过
-生产部署：部分通过，仍需目标服务器域名、证书、SSO/反代和业务站点强制检查联调
+功能封禁闭环冒烟：通过
+生产部署：部分通过，仍需目标服务器域名、证书、SSO/反代、业务站点强制检查和 Site Proxy 生产域名/Cookie/CSP 联调
 最终 v3.3 全链路生产验收：未通过
 ```
 
-当前工作区曾残留一个未跟踪的 `docs/project-test-report-2026-06-15.md` 乱码报告草稿；该文件未纳入 `main` 提交，避免把不可读历史草稿误并入主干。
+本轮 `dining-hall` 无代码接入验证产生的临时 clone、venv、SQLite DB、日志和 runtime ledger 测试记录已清理。当前工作区的 `docs/project-test-report-2026-06-15.md` 仍为未跟踪报告草稿，纳入主干前建议由用户确认其章节格式与交付模板是否一致。
 
 ## 1. 对齐结论
 
 当前项目已经完成 ATEE P0 的“可运行工程骨架”，并且核心方向与 v3.3 文档保持一致：
 
 - 采用 `ATEE Core Service + Thin Adapter`，没有把安全引擎复制到各语言适配器。
+- 新增 `ATEE Core Service + Site Proxy` 标准接入路径，可在不修改目标网站代码的情况下完成本地/staging 接入验证。
 - 所有请求先进入 Trusted Real IP Resolver 和 Fast-Path Rule Gate。
 - 管理台按纯文本渲染 Agent 输出和用户输入，不使用 `dangerouslySetInnerHTML`。
 - 未配置 `trusted_proxy_cidrs` 时，自动 IP 封禁保持关闭。
@@ -75,7 +83,8 @@ AI 用户级功能接管：本地与受控 live 链路通过
 
 已验证：
 
-- 全量 Python 测试：145 个，通过。
+- Core/HTTP 聚焦回归：79 个，通过，覆盖本轮 Site Proxy 接入路径。
+- 全量 Python 测试：147 个，通过（上一轮全量基线；本轮未重跑 full discover）。
 - 管理台生产构建：`npm.cmd run build:admin` 通过。
 - 浏览器 E2E：`npm.cmd run e2e:browser` 62 项检查通过。
 - Python 编译检查：通过。
@@ -90,7 +99,9 @@ AI 用户级功能接管：本地与受控 live 链路通过
 - `/v1/admin/appeals` 与 `/v1/admin/actions` 可处理申诉和 ATEE 动作记录。
 - `/v1/admin/async-reviews` 与 `/v1/admin/async-reviews/run` 可查看并处理异步 AI 审查队列，支持重试和死信状态。
 - `/v1/feature-access` 可检查接入网站用户级和站点级功能封禁状态。
+- `/proxy/sites/<site_id>/` 可按注册站点反向代理目标网站、注入 Page Guard，并对受保护写请求做转发前拦截。
 - `/v1/admin/sites`、`/v1/admin/site-scans`、`/v1/admin/site-actions`、`/v1/admin/site-feature-bans` 可管理接入站点、页面扫描、动作清单和全局功能熔断。
+- `dining-hall` 本地无代码接入验证已通过；测试产生的临时进程、clone、DB、日志和 runtime ledger 记录已清理。
 - `/v1/onboarding/steps` 返回中文新手引导。
 - `apps/demo-site` 已验证登录、评论、上传、申诉通过 Python Thin Adapter 接入 Core。
 - `apps/page-guard` 已提供嵌入式页面守护脚本和共享页面动作分类器。
@@ -111,6 +122,7 @@ AI 用户级功能接管：本地与受控 live 链路通过
 |---|---:|---|
 | 核心逻辑只在 Core Service | 已对齐 | 主要逻辑集中在 `services/core-service/atee_core`。 |
 | Thin Adapter 只做请求提取和 Core 调用 | 已对齐 | Node/Python adapter 仅转发上下文。 |
+| 无代码站点接入不复制安全引擎 | 已对齐 | Site Proxy 只在 Core 内做反代、Page Guard 注入、feature-access 调用和写请求前置拦截，不把安全判断复制进目标网站。 |
 | 不在每个 SDK 重复安全引擎 | 已对齐 | 未实现多语言完整 SDK。 |
 | 请求先过 Real IP 和 Fast-Path | 已对齐 | `/v1/check` 和 `/v1/event` 共用 Core 流程。 |
 | 异步路径前也必须过 Fast-Path | 已对齐 | `event()` 复用 `check()` 流程。 |
@@ -151,9 +163,9 @@ AI 用户级功能接管：本地与受控 live 链路通过
 | 16 Admin Console | React + Ant Design 管理台 | 已完成 P0 最终形态：React + Ant Design + Vite，保留 CSP nonce、中文界面、申诉/动作/账本/网关入口 |
 | 17 Onboarding Wizard | 纯小白详细引导 | 部分完成，已有中文步骤展示 |
 | 18 Runtime Modes | observe/auto/degraded/read-only/pause | 已完成基础版 |
-| 19 Tests | Unit/API/Security/E2E/Load | 部分完成，当前 145 个 Python 测试通过；已补 HTTP E2E、Browser E2E 62 项、React 管理台构建验收、CSP nonce 验收、功能封禁与申诉自动解封测试、Page Guard 分类器回归、页面动作扫描演练、基础并发压测、混合负载重启恢复、本地供应商故障注入、供应商/代理故障演练脚本、预算限流演练、小批量 live 演练入口、Agent AI 全流程冒烟脚本、本地发布闸门、备份恢复联调演练、脱敏演练报告、可控 RPS 长时压测入口、部署资产测试、维护脚本测试、管理操作审计身份绑定测试、SSO 身份注入示例测试、生产反向代理冒烟测试和 Admin Token 轮换复验测试 |
-| 20 Docs | 用户/开发/安全文档 | 部分完成 |
-| 21 Final Integration | 全链路验收报告 | 部分完成，主干已合入 Page Guard 和功能封禁闭环；生产现场全链路验收仍未完成 |
+| 19 Tests | Unit/API/Security/E2E/Load | 部分完成，上一轮 147 个 Python 测试通过；本轮 Core/HTTP 聚焦回归 79 个通过。已补 HTTP E2E、Site Proxy 注入与服务端拦截 E2E、Browser E2E 62 项、React 管理台构建验收、CSP nonce 验收、功能封禁与申诉自动解封测试、功能封禁闭环 smoke、Page Guard 分类器回归、页面动作扫描演练、基础并发压测、混合负载重启恢复、本地供应商故障注入、供应商/代理故障演练脚本、预算限流演练、小批量 live 演练入口、Agent AI 全流程冒烟脚本、本地发布闸门、备份恢复联调演练、脱敏演练报告、可控 RPS 长时压测入口、部署资产测试、维护脚本测试、管理操作审计身份绑定测试、SSO 身份注入示例测试、生产反向代理冒烟测试和 Admin Token 轮换复验测试 |
+| 20 Docs | 用户/开发/安全文档 | 部分完成，已新增 `docs/site-proxy-integration.md` 说明标准可复用站点代理接入方式 |
+| 21 Final Integration | 全链路验收报告 | 部分完成，主干已合入 Page Guard、功能封禁闭环和标准站点代理；生产现场全链路验收仍未完成 |
 
 ## 5. 架构边界对齐
 
@@ -173,6 +185,7 @@ AI 用户级功能接管：本地与受控 live 链路通过
 - Appeal
 - Runtime Mode
 - Config Store
+- Site Proxy 反向代理接入
 - Admin Console 静态资源
 
 这与“核心逻辑只写一次”的方向一致。
@@ -185,6 +198,16 @@ AI 用户级功能接管：本地与受控 live 链路通过
 - `adapters/python-fastapi/atee_adapter.py`
 
 它们只构造请求上下文并调用 Core Service，没有重复实现安全判断。
+
+### Site Proxy
+
+当前新增标准可复用 Site Proxy：
+
+- 通过 `/proxy/sites/<site_id>/` 反向代理已登记站点。
+- 通过运行时脚本注入 Page Guard，不要求目标网站改代码。
+- 通过同源 `/proxy/sites/<site_id>/v1/feature-access` 检查功能锁。
+- 通过 `site_proxy.path_rules` 在服务端转发前拦截登录、注册、发帖、评论、删除和管理类写请求。
+- 通过 `site_proxy.feature_map` 映射站点按钮/控件到 ATEE feature scope。
 
 ### Demo Site
 
@@ -208,6 +231,7 @@ AI 用户级功能接管：本地与受控 live 链路通过
 | DPAPI 密钥绑定 Windows 用户上下文 | 中 | 已新增启动前配置预检；生产服务账号部署时仍需在该账号下迁移密钥或接入环境变量/密钥管理器。 |
 | Appeal/Action 管理闭环不完整 | 中 | 申诉审核、动作撤销和过期清理已完成基础版；仍缺真实业务侧撤销适配和批量运营工作流。 |
 | 管理台无认证 | 高 | 当前适合本地演示，不适合暴露到生产网络。 |
+| Site Proxy 生产化边界 | 中 | 本地/staging 接入已通过；生产还需按真实域名、TLS、Cookie/SameSite、CSP、上传、大文件、长连接和目标站路由做专项验收。 |
 | 配置文件无并发锁 | 中 | 单进程演示可用，多进程部署需加锁或改数据库。 |
 | Admin Console 运行期 CSP 兼容 | 中 | 已使用服务端动态 nonce、AntD `ConfigProvider` CSP、样式标签 nonce 兼容层和 `style-src-attr` 最小放行；Browser E2E 已验证无控制台 CSP 错误。 |
 | 压测和恢复测试仍偏轻 | 中 | 已补 HTTP E2E、Browser E2E、基础并发压测、混合负载重启恢复、本地供应商故障注入、坏代理演练、真实供应商 live 恢复探针、预算限流演练、小批量 live 演练入口、真实供应商小批量 live 执行、备份恢复联调演练、可控 RPS 长时压测入口、30 分钟、60 分钟和 120 分钟可控 RPS 压测；仍缺更高 RPS 或更长周期的生产环境压测。 |
@@ -224,10 +248,13 @@ AI 用户级功能接管：本地与受控 live 链路通过
 1. 执行更高强度或更接近生产的压测
    在现有 HTTP/Browser E2E、混合恢复测试、本地 fake provider 故障注入、坏代理演练、单次 live 恢复探针、预算限流演练、小批量 live 演练入口、真实供应商小批量 live 执行、备份恢复联调演练、可控 RPS 长时压测入口、30 分钟、60 分钟和 120 分钟压测基础上，下一轮可提高 RPS、延长至 4 小时以上，或在生产等价环境复测。
 
-2. 管理台生产化收口
+2. Site Proxy 生产化验收
+   标准代理已完成本地/staging 接入和 `dining-hall` 无代码验证；下一轮需要在真实域名、TLS、Cookie/SameSite、CSP、上传、大文件、长连接和复杂路由下做专项验收。
+
+3. 管理台生产化收口
    React + Ant Design 最终形态、主要功能闭环、管理认证、操作审计身份绑定、构建体积拆分、SSO 示例、生产冒烟脚本和 Admin Token 轮换复验脚本已完成；下一轮建议在目标服务器做真实证书、域名、重启命令和 SSO 身份注入联调。
 
-3. 安装与运维
+4. 安装与运维
    Docker、Windows 计划任务、WinSW SCM 包装、维护脚本和临时目录备份恢复联调已补基础版；继续补真实生产密钥迁移说明。
 
 ## 8. 当前验收判断
@@ -238,13 +265,24 @@ AI 用户级功能接管：本地与受控 live 链路通过
 P0 工程骨架：通过
 P0 本地演示：通过
 P0 安全边界原型：部分通过
+P0 标准站点代理接入：本地/staging 通过
 P0 生产部署：未通过
 最终 v3.3 全链路验收：未通过
 ```
 
-短期目标应继续保持“先闭环、再加深”的节奏：真实模型供应商已通过配置化代理连通，并已补预算保护、失败熔断、管理入口、Appeal/Action 基础闭环、浏览器 E2E、混合负载恢复测试、本地供应商故障注入、坏代理演练、真实供应商 live 恢复探针、预算限流演练、小批量 live 演练入口、真实供应商小批量 live 执行、备份恢复联调演练、可控 RPS 长时压测入口、30 分钟压测、60 分钟压测、120 分钟压测、Docker 部署入口、Windows 常驻入口、WinSW SCM 包装、维护脚本、React + Ant Design 管理台、SSO 示例、生产冒烟验收和 Admin Token 轮换复验；下一步应进入目标服务器真机验收，或做更高 RPS/更长周期压测。
+短期目标应继续保持“先闭环、再加深”的节奏：真实模型供应商已通过配置化代理连通，并已补预算保护、失败熔断、管理入口、Appeal/Action 基础闭环、浏览器 E2E、混合负载恢复测试、本地供应商故障注入、坏代理演练、真实供应商 live 恢复探针、预算限流演练、小批量 live 演练入口、真实供应商小批量 live 执行、备份恢复联调演练、可控 RPS 长时压测入口、30 分钟压测、60 分钟压测、120 分钟压测、Docker 部署入口、Windows 常驻入口、WinSW SCM 包装、维护脚本、React + Ant Design 管理台、SSO 示例、生产冒烟验收、Admin Token 轮换复验和标准 Site Proxy 接入；下一步应进入目标服务器真机验收、Site Proxy 生产域名专项验收，或做更高 RPS/更长周期压测。
 
 ## 9. 本轮迭代记录
+
+### 2026-06-25 Step 34：标准可复用 Site Proxy 接入
+
+- 新增 `services/core-service/atee_core/site_proxy.py`，由 Core 统一处理 `/proxy/sites/<site_id>/` 反向代理、HTML 注入、Page Guard 模块代理、同源 feature-access 和受保护写请求前置拦截。
+- `services/core-service/atee_core/site_inventory.py` 新增 `site_proxy` 标准配置，支持默认 path rules、feature map、protected action types 和用户 ID header 映射，并兼容 SQLite `site_proxy_json` 迁移。
+- `services/core-service/atee_core/http_server.py` 将 GET/POST/PUT/PATCH/DELETE 的 `/proxy/sites/...` 请求分发给 Site Proxy，避免目标站点代码承担安全引擎逻辑。
+- `docs/site-proxy-integration.md` 记录标准可复用接入方式；`tests/test_http_e2e.py` 增加代理注入、同源 feature-access、服务端拦截和不转发目标站写请求的 E2E 覆盖。
+- 本地验证：`dining-hall` 无代码接入通过，代理页注入运行时脚本，`POST /api/login` 在代理层返回 `403`，浏览器端登录按钮被 Page Guard 禁用。
+- 清理状态：已删除本轮验证产生的外部 clone、临时 venv、临时 SQLite DB、临时日志和 runtime ledger 测试记录。
+- 验证：`python -m unittest tests.test_core tests.test_http_e2e` 79 个测试通过；站点代理提交后 full discover 待复跑。
 
 ### 2026-05-13 Step 1：基线确认
 
