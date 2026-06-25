@@ -8,7 +8,7 @@ import unittest
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -292,6 +292,143 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertIn("style-src-attr 'unsafe-inline'", csp_one)
         self.assertNotIn("script-src 'self' 'unsafe-inline'", csp_one)
         self.assertNotIn("style-src 'self' 'unsafe-inline'", csp_one)
+
+    def test_site_proxy_injects_guard_and_blocks_protected_writes(self):
+        class TargetHandler(BaseHTTPRequestHandler):
+            login_attempts = 0
+            publish_attempts = 0
+
+            def do_GET(self):
+                if self.path == "/":
+                    body = (
+                        "<html><body>"
+                        "<button id=\"login-btn\" onclick=\"location.href='/login'\">Login</button>"
+                        "<button id=\"publish\">Publish</button>"
+                        "<script>fetch('/api/me')</script>"
+                        "</body></html>"
+                    ).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/api/me":
+                    body = b'{"ok":true,"id":"target-user"}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+            def do_POST(self):
+                if self.path == "/api/login":
+                    TargetHandler.login_attempts += 1
+                    body = b'{"ok":true,"target_login":true}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/api/publish":
+                    TargetHandler.publish_attempts += 1
+                    body = b'{"ok":true,"published":true}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(404)
+                self.end_headers()
+
+            def log_message(self, format, *args):
+                return
+
+        target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+        thread = threading.Thread(target=target.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = target.server_address
+            target_base = f"http://{host}:{port}/"
+            registered = self._json(
+                "POST",
+                "/v1/admin/sites",
+                {
+                    "name": "proxy-target",
+                    "base_url": target_base,
+                    "environment": "staging",
+                    "allowed_domains": [host],
+                    "protected_features": ["login", "posts", "comments"],
+                    "page_guard_enabled": True,
+                    "site_proxy": {
+                        "feature_map": {"#publish": "publishing"},
+                        "path_rules": [
+                            {"methods": ["POST"], "path": "/api/publish", "feature_scope": "publishing"}
+                        ],
+                    },
+                },
+            )
+            site_id = registered["site"]["id"]
+            site_fuse = self._json(
+                "POST",
+                "/v1/admin/site-feature-bans",
+                {"site_id": site_id, "feature_scope": "login", "duration_seconds": 3600},
+            )
+            publish_fuse = self._json(
+                "POST",
+                "/v1/admin/site-feature-bans",
+                {"site_id": site_id, "feature_scope": "publishing", "duration_seconds": 3600},
+            )
+
+            html = self._text("GET", f"/proxy/sites/{site_id}/")
+            guard_js = self._text("GET", f"/proxy/sites/{site_id}/atee-runtime-guard.js")
+            page_guard_js = self._text("GET", f"/proxy/sites/{site_id}/page-guard/atee-page-guard.mjs")
+            feature_access = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/v1/feature-access",
+                {"user_id": "proxy-user", "feature_scope": "login"},
+            )
+            blocked_login = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/api/login",
+                {"username": "blocked", "password": "blocked"},
+            )
+            blocked_publish = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/api/publish",
+                {"title": "blocked"},
+            )
+
+            self.assertTrue(registered["ok"])
+            self.assertTrue(site_fuse["ok"])
+            self.assertTrue(publish_fuse["ok"])
+            self.assertEqual(registered["site"]["site_proxy"]["standard"], "atee_site_proxy_v1")
+            self.assertEqual(registered["site"]["site_proxy"]["proxy_path"], f"/proxy/sites/{site_id}/")
+            self.assertIn(f'src="/proxy/sites/{site_id}/atee-runtime-guard.js"', html)
+            self.assertIn(f'"/proxy/sites/{site_id}/v1/feature-access"', guard_js)
+            self.assertIn('"path": "/api/publish"', guard_js)
+            self.assertIn('"#publish": "publishing"', guard_js)
+            self.assertIn("mutationFeature", guard_js)
+            self.assertIn("startPageGuard", page_guard_js)
+            self.assertFalse(feature_access["allowed"])
+            self.assertEqual(feature_access["reason"], "active_site_feature_ban")
+            self.assertEqual(blocked_login["status"], 403)
+            self.assertTrue(blocked_login["atee_blocked"])
+            self.assertEqual(blocked_login["feature_scope"], "login")
+            self.assertEqual(blocked_publish["status"], 403)
+            self.assertTrue(blocked_publish["atee_blocked"])
+            self.assertEqual(blocked_publish["feature_scope"], "publishing")
+            self.assertEqual(TargetHandler.login_attempts, 0)
+            self.assertEqual(TargetHandler.publish_attempts, 0)
+        finally:
+            target.shutdown()
+            target.server_close()
+            thread.join(timeout=5)
 
     def test_admin_api_requires_token_when_enabled(self):
         env_name = "ATEE_HTTP_E2E_ADMIN_TOKEN"

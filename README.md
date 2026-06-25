@@ -257,6 +257,8 @@ High-risk real clicking is off by default and should be used only in test/stagin
 
 Connected sites can also embed `apps/page-guard/atee-page-guard.mjs`, which Core serves at `/page-guard/atee-page-guard.mjs`. The guard reuses the shared classifier in `apps/page-guard/page-action-classifier.mjs`, identifies login/register/submit/search/save/delete/menu/pagination/dialog/upload controls, and calls `/v1/feature-access` through the site's own proxy before disabling protected upload, comment, or post controls. Use registered site `protected_features` and `page_guard_enabled` to keep the admin console and runtime guard aligned.
 
+For no-code local/staging integration, ATEE also serves a reusable site proxy at `/proxy/sites/<site_id>/`. Register a site with `POST /v1/admin/sites`, then browse through the returned `site_proxy.proxy_path`; the proxy injects Page Guard and checks protected write routes before forwarding them to the target site. Custom `site_proxy.path_rules` and `site_proxy.feature_map` allow per-site action mappings without changing target-site code. See [docs/site-proxy-integration.md](docs/site-proxy-integration.md).
+
 Administrators can confirm a site-wide feature fuse with `POST /v1/admin/site-feature-bans` using `site_id`, `feature_scope`, and `duration_seconds`. Core stores it as a reversible `feature_ban` with `target_scope.type=site_feature`; revoke it through `/v1/admin/actions/revoke`. AI-generated global fuse suggestions are advisory by default and are returned by `GET /v1/admin/sites`.
 
 ## Local Config

@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import threading
 from contextlib import closing
@@ -27,9 +28,174 @@ ACTION_TYPES = {
     "unknown",
 }
 RISK_LEVELS = {"low", "medium", "high", "critical"}
+SITE_PROXY_DEFAULT_FEATURES = [
+    "login",
+    "register",
+    "posts",
+    "comments",
+    "uploads",
+    "delete_posts",
+    "delete_topics",
+    "admin_actions",
+]
+SITE_PROXY_DEFAULT_ACTION_TYPES = ["login", "register", "submit", "delete", "upload"]
+SITE_PROXY_DEFAULT_FEATURE_MAP = {
+    "#btn-login": "login",
+    "#login-btn": "login",
+    "#reg-btn": "register",
+    "#btn-create": "posts",
+    "#send-btn": "comments",
+    "login": "login",
+    "register": "register",
+    "upload": "uploads",
+    "delete": "delete_posts",
+}
+SITE_PROXY_DEFAULT_PATH_RULES = [
+    {"methods": ["POST"], "path": "/api/login", "feature_scope": "login"},
+    {"methods": ["POST"], "path": "/api/register", "feature_scope": "register"},
+    {"methods": ["POST"], "path": "/api/topics", "feature_scope": "posts"},
+    {"methods": ["POST"], "path_regex": r"^/api/topics/\d+/posts$", "feature_scope": "comments"},
+    {"methods": ["DELETE"], "path_regex": r"^/api/posts/\d+$", "feature_scope": "delete_posts"},
+    {"methods": ["DELETE"], "path_regex": r"^/api/topics/\d+$", "feature_scope": "delete_topics"},
+    {"methods": ["POST", "PUT", "PATCH", "DELETE"], "path_prefix": "/api/admin/", "feature_scope": "admin_actions"},
+]
+SITE_PROXY_ALLOWED_RULE_KEYS = {"methods", "path", "path_prefix", "path_regex", "feature_scope"}
 
 
-class SQLiteSiteInventoryStore:
+class SiteProxyConfigMixin:
+    def _site_proxy_config(
+        self,
+        value: Any,
+        protected_features: list[str] | None = None,
+        site_id: int | None = None,
+    ) -> dict[str, Any]:
+        payload = value if isinstance(value, dict) else {}
+        enabled = payload.get("enabled")
+        feature_map = self._feature_map(payload.get("feature_map"))
+        protected_action_types = self._features(
+            payload.get("protected_action_types") or SITE_PROXY_DEFAULT_ACTION_TYPES
+        ) or list(SITE_PROXY_DEFAULT_ACTION_TYPES)
+        protected = self._unique_features(
+            [
+                *SITE_PROXY_DEFAULT_FEATURES,
+                *(protected_features or []),
+                *feature_map.values(),
+                *(rule["feature_scope"] for rule in self._path_rules(payload.get("path_rules"))),
+            ]
+        )
+        return {
+            "enabled": True if enabled is None else bool(enabled),
+            "standard": "atee_site_proxy_v1",
+            "mode": "reverse_proxy_injection",
+            "proxy_path": f"/proxy/sites/{site_id}/" if site_id else "",
+            "feature_access_path": f"/proxy/sites/{site_id}/v1/feature-access" if site_id else "",
+            "user_id_headers": self._user_id_headers(payload.get("user_id_headers")),
+            "protected_features": protected,
+            "protected_action_types": protected_action_types[:20],
+            "feature_map": feature_map,
+            "path_rules": self._path_rules(payload.get("path_rules")),
+        }
+
+    def _feature_map(self, value: Any) -> dict[str, str]:
+        payload = value if isinstance(value, dict) else {}
+        merged = dict(SITE_PROXY_DEFAULT_FEATURE_MAP)
+        for key, raw_feature in payload.items():
+            selector = self._text(key, "", 160)
+            feature = self._text(raw_feature, "", 120)
+            if selector and feature:
+                merged[selector] = feature
+        return dict(list(merged.items())[:100])
+
+    def _path_rules(self, value: Any) -> list[dict[str, Any]]:
+        raw_rules = value if isinstance(value, list) else []
+        merged = [dict(rule) for rule in SITE_PROXY_DEFAULT_PATH_RULES]
+        for raw_rule in raw_rules:
+            if not isinstance(raw_rule, dict):
+                continue
+            rule = {key: raw_rule.get(key) for key in SITE_PROXY_ALLOWED_RULE_KEYS if key in raw_rule}
+            feature = self._text(rule.get("feature_scope"), "", 120)
+            if not feature:
+                continue
+            methods = raw_rule.get("methods") or raw_rule.get("method") or []
+            if isinstance(methods, str):
+                methods = [methods]
+            methods = [self._text(method, "", 12).upper() for method in methods]
+            methods = [method for method in methods if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}]
+            if not methods:
+                continue
+            normalized: dict[str, Any] = {"methods": methods[:5], "feature_scope": feature}
+            for key in ("path", "path_prefix", "path_regex"):
+                text = self._text(rule.get(key), "", 240)
+                if not text:
+                    continue
+                if key == "path_regex":
+                    try:
+                        re.compile(text)
+                    except re.error:
+                        continue
+                normalized[key] = text
+                break
+            if any(key in normalized for key in ("path", "path_prefix", "path_regex")):
+                merged.append(normalized)
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for rule in merged:
+            key = (
+                tuple(rule.get("methods") or []),
+                rule.get("path") or "",
+                rule.get("path_prefix") or "",
+                rule.get("path_regex") or "",
+                rule.get("feature_scope") or "",
+            )
+            if key not in seen:
+                deduped.append(rule)
+                seen.add(key)
+        return deduped[:50]
+
+    def _user_id_headers(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            raw_items = value.replace("\n", ",").split(",")
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = ["X-ATEE-User-Id", "X-User-Id"]
+        headers: list[str] = []
+        for item in raw_items:
+            header = self._text(item, "", 80)
+            if header and header not in headers:
+                headers.append(header)
+        return headers[:10] or ["X-ATEE-User-Id", "X-User-Id"]
+
+    def _unique_features(self, values: list[str]) -> list[str]:
+        features: list[str] = []
+        for item in values:
+            feature = self._text(item, "", 120)
+            if feature and feature not in features:
+                features.append(feature)
+        return features[:100]
+
+    def _features(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            raw_items = value.replace("\n", ",").split(",")
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = []
+        features: list[str] = []
+        for item in raw_items:
+            feature = self._text(item, "", 120)
+            if feature and feature not in features:
+                features.append(feature)
+        return features[:50]
+
+    def _text(self, value: Any, default: str = "", limit: int = 200) -> str:
+        text = str(value if value is not None else default).strip()
+        if not text:
+            text = default
+        return text[:limit]
+
+
+class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +213,8 @@ class SQLiteSiteInventoryStore:
                     UPDATE managed_sites
                     SET name = ?, base_url = ?, environment = ?, allowed_domains_json = ?,
                         auth_mode = ?, session_state_ref = ?, status = ?, protected_features_json = ?,
-                        page_guard_enabled = ?, global_fuse_policy_json = ?, updated_at = ?
+                        page_guard_enabled = ?, global_fuse_policy_json = ?, site_proxy_json = ?,
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -61,6 +228,7 @@ class SQLiteSiteInventoryStore:
                         json.dumps(site["protected_features"], ensure_ascii=False, sort_keys=True),
                         int(bool(site["page_guard_enabled"])),
                         json.dumps(site["global_fuse_policy"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(site["site_proxy"], ensure_ascii=False, sort_keys=True),
                         now,
                         site_id,
                     ),
@@ -73,8 +241,8 @@ class SQLiteSiteInventoryStore:
                     INSERT INTO managed_sites
                     (name, base_url, environment, allowed_domains_json, auth_mode,
                      session_state_ref, status, protected_features_json, page_guard_enabled,
-                     global_fuse_policy_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     global_fuse_policy_json, site_proxy_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         site["name"],
@@ -87,6 +255,7 @@ class SQLiteSiteInventoryStore:
                         json.dumps(site["protected_features"], ensure_ascii=False, sort_keys=True),
                         int(bool(site["page_guard_enabled"])),
                         json.dumps(site["global_fuse_policy"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(site["site_proxy"], ensure_ascii=False, sort_keys=True),
                         now,
                         now,
                     ),
@@ -261,6 +430,7 @@ class SQLiteSiteInventoryStore:
                     protected_features_json TEXT NOT NULL DEFAULT '[]',
                     page_guard_enabled INTEGER NOT NULL DEFAULT 0,
                     global_fuse_policy_json TEXT NOT NULL DEFAULT '{}',
+                    site_proxy_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -273,6 +443,8 @@ class SQLiteSiteInventoryStore:
                 conn.execute("ALTER TABLE managed_sites ADD COLUMN page_guard_enabled INTEGER NOT NULL DEFAULT 0")
             if "global_fuse_policy_json" not in site_columns:
                 conn.execute("ALTER TABLE managed_sites ADD COLUMN global_fuse_policy_json TEXT NOT NULL DEFAULT '{}'")
+            if "site_proxy_json" not in site_columns:
+                conn.execute("ALTER TABLE managed_sites ADD COLUMN site_proxy_json TEXT NOT NULL DEFAULT '{}'")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS site_scan_runs (
@@ -340,6 +512,11 @@ class SQLiteSiteInventoryStore:
         site["protected_features"] = json.loads(site.pop("protected_features_json", "[]") or "[]")
         site["page_guard_enabled"] = bool(site.get("page_guard_enabled"))
         site["global_fuse_policy"] = json.loads(site.pop("global_fuse_policy_json", "{}") or "{}")
+        site["site_proxy"] = self._site_proxy_config(
+            json.loads(site.pop("site_proxy_json", "{}") or "{}"),
+            site["protected_features"],
+            int(site["id"]),
+        )
         site["scan_count"] = int(site.get("scan_count") or 0)
         site["action_count"] = int(site.get("action_count") or 0)
         return site
@@ -376,7 +553,7 @@ class SQLiteSiteInventoryStore:
         }
 
 
-class SiteInventory:
+class SiteInventory(SiteProxyConfigMixin):
     def __init__(self, sqlite_path: str | Path | None = None):
         self.store = SQLiteSiteInventoryStore(sqlite_path) if sqlite_path else None
         self._sites: list[dict[str, Any]] = []
@@ -398,6 +575,7 @@ class SiteInventory:
                 if int(existing["id"]) == int(site["id"]):
                     site["created_at"] = existing["created_at"]
                     site["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    site["site_proxy"] = self._site_proxy_config(site.get("site_proxy"), site["protected_features"], int(site["id"]))
                     self._sites[index] = site
                     return dict(site)
             return {}
@@ -406,6 +584,7 @@ class SiteInventory:
         now = datetime.now(timezone.utc).isoformat()
         site["created_at"] = now
         site["updated_at"] = now
+        site["site_proxy"] = self._site_proxy_config(site.get("site_proxy"), site["protected_features"], int(site["id"]))
         self._sites.append(site)
         return dict(site)
 
@@ -415,6 +594,11 @@ class SiteInventory:
         sites = []
         for site in self._sites:
             item = dict(site)
+            item["site_proxy"] = self._site_proxy_config(
+                item.get("site_proxy"),
+                item.get("protected_features") or [],
+                int(item["id"]),
+            )
             item["scan_count"] = sum(1 for scan in self._scans if scan["site_id"] == site["id"])
             item["action_count"] = sum(1 for action in self._actions if action["site_id"] == site["id"])
             item["last_scan_at"] = max(
@@ -429,7 +613,13 @@ class SiteInventory:
             return self.store.get_site(site_id)
         for site in self._sites:
             if int(site["id"]) == int(site_id):
-                return dict(site)
+                item = dict(site)
+                item["site_proxy"] = self._site_proxy_config(
+                    item.get("site_proxy"),
+                    item.get("protected_features") or [],
+                    int(item["id"]),
+                )
+                return item
         return None
 
     def record_scan(self, payload: dict[str, Any], scanner_result: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -521,6 +711,8 @@ class SiteInventory:
             allowed_domains = [item.strip() for item in allowed_domains.replace("\n", ",").split(",") if item.strip()]
         environment = str(payload.get("environment") or "staging").strip().lower()
         auth_mode = str(payload.get("auth_mode") or "none").strip().lower()
+        protected_features = self._features(payload.get("protected_features"))
+        site_proxy = payload.get("site_proxy") or payload.get("site_proxy_config") or payload.get("proxy_config")
         return {
             "id": self._bounded_int(payload.get("id"), 0, 2_147_483_647, 0),
             "name": self._text(payload.get("name") or payload.get("site_name"), "target-site", 80),
@@ -530,9 +722,10 @@ class SiteInventory:
             "auth_mode": auth_mode if auth_mode in AUTH_MODES else "none",
             "session_state_ref": self._text(payload.get("session_state_ref"), "", 240),
             "status": self._text(payload.get("status"), "active", 40),
-            "protected_features": self._features(payload.get("protected_features")),
+            "protected_features": protected_features,
             "page_guard_enabled": bool(payload.get("page_guard_enabled") or payload.get("guard_enabled")),
             "global_fuse_policy": self._global_fuse_policy(payload.get("global_fuse_policy")),
+            "site_proxy": self._site_proxy_config(site_proxy, protected_features),
         }
 
     def _action_from_payload(self, payload: dict[str, Any], site: dict[str, Any], scan_payload: dict[str, Any]) -> dict[str, Any]:
@@ -586,26 +779,6 @@ class SiteInventory:
         raw = self._text(value, "", 120).lower()
         parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
         return (parsed.hostname or raw).strip(".")
-
-    def _text(self, value: Any, default: str = "", limit: int = 200) -> str:
-        text = str(value if value is not None else default).strip()
-        if not text:
-            text = default
-        return text[:limit]
-
-    def _features(self, value: Any) -> list[str]:
-        if isinstance(value, str):
-            raw_items = value.replace("\n", ",").split(",")
-        elif isinstance(value, list):
-            raw_items = value
-        else:
-            raw_items = []
-        features: list[str] = []
-        for item in raw_items:
-            feature = self._text(item, "", 120)
-            if feature and feature not in features:
-                features.append(feature)
-        return features[:50]
 
     def _global_fuse_policy(self, value: Any) -> dict[str, Any]:
         payload = value if isinstance(value, dict) else {}
