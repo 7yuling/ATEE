@@ -99,6 +99,44 @@ Rule matching supports exact `path`, `path_prefix`, and `path_regex`. Keep
 feature names stable; actions and feature bans should use the same
 `feature_scope` string.
 
+## Admin Session Actions
+
+For concept demos where ATEE is allowed to act as the connected site's external
+admin brain, store the target site's admin session in a local session file and
+reference it from `site_proxy`. Do not commit that file.
+
+```json
+{
+  "site_proxy": {
+    "admin_session_enabled": true,
+    "admin_session_ref": "config/sessions/site-admin.json",
+    "auto_apply_admin_actions": true,
+    "admin_action_templates": {
+      "comments": {
+        "method": "POST",
+        "path": "/admin/feature-ban",
+        "body_template": {
+          "user_hash": "{user_hash}",
+          "feature": "{feature_scope}",
+          "reason": "{reason}",
+          "action_id": "{action_id}"
+        },
+        "success_status": [200, 201, 202, 204]
+      }
+    }
+  }
+}
+```
+
+When a feature ban is created for a mapped feature, ATEE first records its own
+reversible action, then calls the target site's admin template with the stored
+admin session. If that target call fails, the ATEE proxy-side feature ban stays
+active and the result reports the target admin action as failed.
+
+Proxy pages also report Page Guard action observations to
+`/proxy/sites/<site_id>/v1/page-actions`, which reuses the normal site scan
+inventory and auto-generates feature mappings where the control can be matched.
+
 ## Validation
 
 1. Register the site with `POST /v1/admin/sites`.

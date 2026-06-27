@@ -285,6 +285,19 @@ function IntegrationPlanResult({ plan }) {
   if (!plan) {
     return null;
   }
+  const site = plan.site || {};
+  const protectedFeatures = Array.isArray(site.protected_features) ? site.protected_features : [];
+  const endpointMappings = plan.endpoint_mappings || [];
+  const payloadEntries = Object.entries(plan.payload_examples || {});
+  const verificationRequests = plan.verification_requests || [];
+  const safetyNotes = plan.safety_notes_zh || [];
+  const hasReportContent = Boolean(
+    plan.steps?.length ||
+      endpointMappings.length ||
+      payloadEntries.length ||
+      verificationRequests.length ||
+      safetyNotes.length,
+  );
   return (
     <div id="integrationPlanResult" className="integration-plan-result">
       <Divider />
@@ -292,86 +305,122 @@ function IntegrationPlanResult({ plan }) {
         type={plan.ok === false ? "warning" : "success"}
         showIcon
         message={plan.display?.message_zh || "-"}
+        description={
+          plan.ok === false
+            ? plan.reason || "请根据提示调整接入方式后重新生成。"
+            : "以下内容可直接作为目标网站 HTTP API 接入报告使用。"
+        }
       />
+      {hasReportContent ? (
+        <div className="integration-report-summary" aria-label="HTTP API 接入报告摘要">
+          <div className="integration-summary-item">
+            <span>目标网站</span>
+            <strong>{site.name || "-"}</strong>
+            <small>{site.url || "-"}</small>
+          </div>
+          <div className="integration-summary-item">
+            <span>接入方式</span>
+            <strong>{site.adapter_type || "HTTP API"}</strong>
+            <small>{site.site_type || "-"}</small>
+          </div>
+          <div className="integration-summary-item">
+            <span>Core Service</span>
+            <strong>{plan.core_url || "-"}</strong>
+            <small>{site.appeal_path ? `申诉入口：${site.appeal_path}` : "申诉入口未配置"}</small>
+          </div>
+          <div className="integration-summary-item">
+            <span>受保护功能</span>
+            <strong>{protectedFeatures.length ? protectedFeatures.join(", ") : "未填写"}</strong>
+            <small>用于 /v1/feature-access 检查</small>
+          </div>
+        </div>
+      ) : (
+        <Alert
+          className="integration-empty-alert"
+          type="warning"
+          showIcon
+          message="当前返回中没有可展示的报告正文。"
+          description="请确认接入方式为 HTTP API，并检查 Core Service /v1/admin/integration/plan 返回。"
+        />
+      )}
       {plan.steps?.length ? (
-        <>
-          <Divider />
-          <Text strong>接入步骤</Text>
-          <List
+        <section className="integration-report-section" aria-labelledby="integrationStepsTitle">
+          <h3 id="integrationStepsTitle">接入步骤</h3>
+          <ul
             id="integrationPlanSteps"
-            size="small"
-            dataSource={plan.steps}
-            renderItem={(item) => (
-              <List.Item>
-                <List.Item.Meta title={item.title_zh} description={item.detail_zh} />
-              </List.Item>
-            )}
-          />
-        </>
+            className="integration-report-list"
+          >
+            {plan.steps.map((item) => (
+              <li key={item.id || item.title_zh} className="integration-report-item">
+                <strong>{item.title_zh}</strong>
+                <p>{item.detail_zh}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
-      {plan.endpoint_mappings?.length ? (
-        <>
-          <Divider />
-          <Text strong>接口映射</Text>
-          <List
+      {endpointMappings.length ? (
+        <section className="integration-report-section" aria-labelledby="integrationMappingsTitle">
+          <h3 id="integrationMappingsTitle">接口映射</h3>
+          <ul
             id="integrationEndpointMappings"
-            size="small"
-            dataSource={plan.endpoint_mappings}
-            renderItem={(item) => (
-              <List.Item>
-                <List.Item.Meta
-                  title={`${item.method} ${item.site_route} -> ${item.core_endpoint}`}
-                  description={`${item.purpose_zh} ${item.when_zh}`}
-                />
-              </List.Item>
-            )}
-          />
-        </>
+            className="integration-report-list"
+          >
+            {endpointMappings.map((item) => (
+              <li key={`${item.method}-${item.site_route}-${item.core_endpoint}`} className="integration-report-item">
+                <div className="integration-route-line">
+                  <code>{item.method} {item.site_route}</code>
+                  <span>→</span>
+                  <code>{item.core_endpoint}</code>
+                </div>
+                <p>{item.purpose_zh}</p>
+                <p className="integration-muted">{item.when_zh}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
-      {Object.keys(plan.payload_examples || {}).length ? (
-        <>
-          <Divider />
-          <Text strong>Payload 样例</Text>
+      {payloadEntries.length ? (
+        <section className="integration-report-section" aria-labelledby="integrationPayloadTitle">
+          <h3 id="integrationPayloadTitle">Payload 样例</h3>
           <div id="integrationPayloadExamples" className="integration-code-grid">
-            {Object.entries(plan.payload_examples).map(([key, item]) => (
+            {payloadEntries.map(([key, item]) => (
               <div key={key} className="integration-code-block">
                 <Text strong>{key}</Text>
                 <pre>{JSON.stringify(item, null, 2)}</pre>
               </div>
             ))}
           </div>
-        </>
+        </section>
       ) : null}
-      {plan.verification_requests?.length ? (
-        <>
-          <Divider />
-          <Text strong>验证请求</Text>
-          <List
+      {verificationRequests.length ? (
+        <section className="integration-report-section" aria-labelledby="integrationVerificationTitle">
+          <h3 id="integrationVerificationTitle">验证请求</h3>
+          <ul
             id="integrationVerificationRequests"
-            size="small"
-            dataSource={plan.verification_requests}
-            renderItem={(item) => (
-              <List.Item>
-                <Space direction="vertical" size={4} className="guide-detail">
-                  <Text strong>{item.title_zh}</Text>
-                  <pre className="integration-command">{item.command}</pre>
-                  <Text type="secondary">{item.expect_zh}</Text>
-                </Space>
-              </List.Item>
-            )}
-          />
-        </>
+            className="integration-report-list"
+          >
+            {verificationRequests.map((item) => (
+              <li key={item.id || item.title_zh} className="integration-report-item">
+                <strong>{item.title_zh}</strong>
+                <pre className="integration-command">{item.command}</pre>
+                <p className="integration-muted">{item.expect_zh}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
-      {plan.safety_notes_zh?.length ? (
-        <>
-          <Divider />
-          <Text strong>安全注意事项</Text>
-          <List
-            size="small"
-            dataSource={plan.safety_notes_zh}
-            renderItem={(item) => <List.Item>{item}</List.Item>}
-          />
-        </>
+      {safetyNotes.length ? (
+        <section className="integration-report-section" aria-labelledby="integrationSafetyTitle">
+          <h3 id="integrationSafetyTitle">安全注意事项</h3>
+          <ul className="integration-report-list integration-note-list">
+            {safetyNotes.map((item) => (
+              <li key={item} className="integration-report-item">
+                {item}
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
     </div>
   );

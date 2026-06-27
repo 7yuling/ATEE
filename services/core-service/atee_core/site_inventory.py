@@ -60,6 +60,7 @@ SITE_PROXY_DEFAULT_PATH_RULES = [
     {"methods": ["POST", "PUT", "PATCH", "DELETE"], "path_prefix": "/api/admin/", "feature_scope": "admin_actions"},
 ]
 SITE_PROXY_ALLOWED_RULE_KEYS = {"methods", "path", "path_prefix", "path_regex", "feature_scope"}
+SITE_PROXY_ALLOWED_TEMPLATE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 class SiteProxyConfigMixin:
@@ -94,6 +95,12 @@ class SiteProxyConfigMixin:
             "protected_action_types": protected_action_types[:20],
             "feature_map": feature_map,
             "path_rules": self._path_rules(payload.get("path_rules")),
+            "admin_session_enabled": bool(payload.get("admin_session_enabled")),
+            "admin_session_ref": self._text(payload.get("admin_session_ref"), "", 240),
+            "admin_action_templates": self._admin_action_templates(payload.get("admin_action_templates")),
+            "auto_apply_admin_actions": False if payload.get("auto_apply_admin_actions") is False else True,
+            "observe_actions": False if payload.get("observe_actions") is False else True,
+            "observe_events": bool(payload.get("observe_events")),
         }
 
     def _feature_map(self, value: Any) -> dict[str, str]:
@@ -152,6 +159,54 @@ class SiteProxyConfigMixin:
                 seen.add(key)
         return deduped[:50]
 
+    def _admin_action_templates(self, value: Any) -> dict[str, dict[str, Any]]:
+        raw_templates = value if isinstance(value, dict) else {}
+        templates: dict[str, dict[str, Any]] = {}
+        for raw_feature, raw_template in raw_templates.items():
+            feature = self._text(raw_feature, "", 120)
+            if not feature or not isinstance(raw_template, dict):
+                continue
+            method = self._text(raw_template.get("method"), "POST", 12).upper()
+            if method not in SITE_PROXY_ALLOWED_TEMPLATE_METHODS:
+                method = "POST"
+            path = self._text(raw_template.get("path"), "", 240)
+            if not path.startswith("/"):
+                continue
+            success_status = raw_template.get("success_status", [200, 201, 202, 204])
+            if isinstance(success_status, int):
+                statuses = [success_status]
+            elif isinstance(success_status, list):
+                statuses = [self._bounded_int(item, 100, 599, 200) for item in success_status[:10]]
+            else:
+                statuses = [200, 201, 202, 204]
+            templates[feature] = {
+                "method": method,
+                "path": path,
+                "body_template": self._template_value(raw_template.get("body_template") or {}),
+                "success_status": sorted(set(statuses)) or [200, 201, 202, 204],
+            }
+        return dict(list(templates.items())[:50])
+
+    def _template_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            output: dict[str, Any] = {}
+            for raw_key, raw_item in list(value.items())[:50]:
+                key = self._text(raw_key, "", 80)
+                if not key:
+                    continue
+                if any(marker in key.lower() for marker in ("authorization", "cookie", "token", "secret", "api_key", "password")):
+                    output[key] = "[REDACTED_TEMPLATE_VALUE]"
+                else:
+                    output[key] = self._template_value(raw_item)
+            return output
+        if isinstance(value, list):
+            return [self._template_value(item) for item in value[:50]]
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, (int, float)):
+            return value
+        return self._text(value, "", 500)
+
     def _user_id_headers(self, value: Any) -> list[str]:
         if isinstance(value, str):
             raw_items = value.replace("\n", ",").split(",")
@@ -187,6 +242,13 @@ class SiteProxyConfigMixin:
             if feature and feature not in features:
                 features.append(feature)
         return features[:50]
+
+    def _bounded_int(self, value: Any, minimum: int, maximum: int, default: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            number = default
+        return max(minimum, min(maximum, number))
 
     def _text(self, value: Any, default: str = "", limit: int = 200) -> str:
         text = str(value if value is not None else default).strip()
@@ -632,6 +694,7 @@ class SiteInventory(SiteProxyConfigMixin):
             return {"ok": False, "status": 409, "reason": "production_high_risk_scan_requires_confirmation"}
         actions = scanner_result.get("actions") if scanner_result else payload.get("actions")
         actions = [self._action_from_payload(action, site, payload) for action in (actions or [])]
+        auto_mapping = self._auto_match_site_actions(site, actions)
         status = "completed" if scanner_result is None or scanner_result.get("ok", True) else "failed"
         if not actions and not scanner_result:
             status = "queued"
@@ -645,16 +708,143 @@ class SiteInventory(SiteProxyConfigMixin):
             "max_pages": self._bounded_int(payload.get("max_pages"), 1, 100, 10),
             "max_actions": self._bounded_int(payload.get("max_actions"), 1, 1000, 100),
             "timeout_ms": self._bounded_int(payload.get("timeout_ms"), 1000, 120000, 30000),
-            "error_untrusted_text": self._text(
-                (scanner_result or {}).get("error") or payload.get("error_untrusted_text") or "",
-                "",
-                1000,
-            ),
+            "error_untrusted_text": self._scan_error_text(scanner_result, payload.get("error_untrusted_text")),
         }
         if self.store:
             record = self.store.insert_scan(site_id, scan, actions)
-            return {"ok": status != "failed", "scan": record, "actions": actions, "count": len(actions)}
-        return self._record_memory_scan(site_id, scan, actions)
+            return {
+                "ok": status != "failed",
+                "scan": record,
+                "actions": actions,
+                "count": len(actions),
+                "auto_mapping": auto_mapping,
+            }
+        result = self._record_memory_scan(site_id, scan, actions)
+        result["auto_mapping"] = auto_mapping
+        return result
+
+    def _auto_match_site_actions(self, site: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
+        if not actions:
+            return {"matched": 0, "unapplied": 0, "features": []}
+        proxy = dict(site.get("site_proxy") or {})
+        feature_map = dict(proxy.get("feature_map") or {})
+        path_rules = list(proxy.get("path_rules") or [])
+        existing_rule_keys = {self._rule_key(rule) for rule in path_rules}
+        matched_features: list[str] = []
+        matched = 0
+        unapplied = 0
+        for action in actions:
+            feature = self._feature_scope_for_action(action)
+            auto_match = {
+                "status": "unapplied",
+                "feature_scope": "",
+                "selector_applied": False,
+                "path_rule_applied": False,
+            }
+            if feature:
+                matched += 1
+                matched_features.append(feature)
+                action["suggested_feature_scope"] = feature
+                auto_match["status"] = "applied"
+                auto_match["feature_scope"] = feature
+                selector = self._text(action.get("selector"), "", 160)
+                if selector:
+                    feature_map[selector] = feature
+                    auto_match["selector_applied"] = True
+                rule = self._path_rule_for_action(action, feature)
+                if rule:
+                    rule_key = self._rule_key(rule)
+                    if rule_key not in existing_rule_keys:
+                        path_rules.append(rule)
+                        existing_rule_keys.add(rule_key)
+                    auto_match["path_rule_applied"] = True
+            else:
+                unapplied += 1
+            action["metadata"] = {
+                **(action.get("metadata") if isinstance(action.get("metadata"), dict) else {}),
+                "atee_auto_match": auto_match,
+            }
+        features = self._unique_features(matched_features)
+        if features:
+            updated_site = {
+                **site,
+                "protected_features": self._unique_features([*(site.get("protected_features") or []), *features]),
+                "site_proxy": {
+                    **proxy,
+                    "feature_map": feature_map,
+                    "path_rules": path_rules,
+                },
+            }
+            self.register_site(updated_site)
+        return {
+            "matched": matched,
+            "unapplied": unapplied,
+            "features": features,
+        }
+
+    def _feature_scope_for_action(self, action: dict[str, Any]) -> str:
+        action_type = self._text(action.get("action_type"), "", 80).lower()
+        haystack = " ".join(
+            self._text(action.get(key), "", 240).lower()
+            for key in ("label", "selector", "suggested_feature_scope", "suggested_event_type", "href", "form_action")
+        )
+        if "comment" in haystack or "评论" in haystack:
+            return "comments"
+        if any(marker in haystack for marker in ("publish", "post", "topic", "article", "发帖", "发布", "帖子")):
+            return "posts"
+        if "upload" in haystack or "上传" in haystack or action_type == "upload":
+            return "uploads"
+        if action_type == "login":
+            return "login"
+        if action_type == "register":
+            return "register"
+        if action_type == "delete":
+            return "delete_posts"
+        if any(marker in haystack for marker in ("admin", "moderation", "role", "permission", "后台", "管理", "权限")):
+            return "admin_actions"
+        return ""
+
+    def _path_rule_for_action(self, action: dict[str, Any], feature: str) -> dict[str, Any]:
+        method = self._text(action.get("form_method"), "", 20).upper()
+        if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return {}
+        form_action = self._text(action.get("form_action"), "", 240)
+        if not form_action:
+            return {}
+        parsed = urlsplit(form_action)
+        path = parsed.path if parsed.scheme or parsed.netloc else form_action
+        if not path.startswith("/"):
+            return {}
+        return {"methods": [method], "path": path, "feature_scope": feature}
+
+    def _rule_key(self, rule: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            tuple(rule.get("methods") or []),
+            rule.get("path") or "",
+            rule.get("path_prefix") or "",
+            rule.get("path_regex") or "",
+            rule.get("feature_scope") or "",
+        )
+
+    def _scan_error_text(self, scanner_result: dict[str, Any] | None, fallback: Any = "") -> str:
+        error_text = ""
+        if scanner_result:
+            error_text = self._text(scanner_result.get("error"), "", 1000)
+            if not error_text:
+                errors = scanner_result.get("errors")
+                if isinstance(errors, list) and errors:
+                    first_error = errors[0]
+                    if isinstance(first_error, dict):
+                        error_text = self._text(
+                            first_error.get("error") or first_error.get("reason") or first_error.get("message"),
+                            "",
+                            1000,
+                        )
+                    else:
+                        error_text = self._text(first_error, "", 1000)
+        if not error_text:
+            error_text = self._text(fallback, "", 1000)
+        return re.sub(r"https?://[^\s\"')]+", "[url]", error_text)[:1000]
 
     def list_scans(self, site_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         if self.store:

@@ -69,6 +69,19 @@ import {
 const runtimeCspNonce = cspNonce();
 installStyleNonce(runtimeCspNonce);
 
+function parseJsonObjectInput(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 const PAGE_ARCHITECTURE_META = {
   dashboard: {
     domain: "Runtime Index / Status Constellation",
@@ -625,6 +638,13 @@ function App() {
           session_state_ref: String(values.session_state_ref || "").trim(),
           protected_features: splitListInput(values.protected_features),
           page_guard_enabled: Boolean(values.page_guard_enabled),
+          site_proxy: {
+            admin_session_enabled: Boolean(values.admin_session_enabled),
+            admin_session_ref: String(values.admin_session_ref || "").trim(),
+            admin_action_templates: parseJsonObjectInput(values.admin_action_templates),
+            auto_apply_admin_actions: values.auto_apply_admin_actions !== false,
+            observe_actions: true,
+          },
         }),
       });
       if (data.ok) {

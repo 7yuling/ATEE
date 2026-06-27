@@ -61,6 +61,11 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/preflight", js)
         self.assertIn("/v1/admin/security-flow/run", js)
         self.assertIn("/v1/admin/integration/plan", js)
+        self.assertIn("integration-report-summary", css)
+        self.assertIn("integration-report-section", css)
+        self.assertIn("scan-error-text", css)
+        self.assertIn("scan-error-detail", css)
+        self.assertIn("HTTP API 接入报告", js)
         self.assertIn("/v1/admin/agent/chat", js)
         self.assertIn("/v1/auth/captcha", js)
         self.assertIn("/v1/auth/login", js)
@@ -70,6 +75,8 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/site-scans", js)
         self.assertIn("/v1/admin/site-actions", js)
         self.assertIn("/v1/admin/site-feature-bans", js)
+        self.assertIn("授权管理员会话", js)
+        self.assertIn("直接扫描网络", js)
         self.assertIn("<script>alert(1)<\\/script>", js)
         self.assertIn("ATEE 管理控制台", js)
 
@@ -187,6 +194,8 @@ class AdminConsoleTests(unittest.TestCase):
             "integrationProtectedFeaturesInput",
             "integrationPlanBtn",
             "integrationPlanResult",
+            "integration-report-summary",
+            "integration-report-section",
             "integrationPlanSteps",
             "integrationEndpointMappings",
             "integrationPayloadExamples",
@@ -207,7 +216,12 @@ class AdminConsoleTests(unittest.TestCase):
             "managedSiteAuthModeSelect",
             "managedSiteSessionStateInput",
             "managedSitePageGuardSwitch",
+            "managedSiteAdminSessionSwitch",
+            "managedSiteAutoApplySwitch",
+            "managedSiteAdminSessionRefInput",
+            "managedSiteAdminActionTemplatesInput",
             "registerManagedSiteBtn",
+            "authorizeSiteAdminSession-${record.id}",
             "siteScanSiteSelect",
             "siteScanStartUrlInput",
             "siteScanMaxPagesInput",
@@ -216,6 +230,8 @@ class AdminConsoleTests(unittest.TestCase):
             "siteScanHighRiskSwitch",
             "startSiteScanBtn",
             "siteScansBtn",
+            "scan-error-text",
+            "scan-error-detail",
             "siteActionSiteSelect",
             "siteActionRiskSelect",
             "siteActionTypeSelect",

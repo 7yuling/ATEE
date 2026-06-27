@@ -297,6 +297,8 @@ class AteeHttpE2ETests(unittest.TestCase):
         class TargetHandler(BaseHTTPRequestHandler):
             login_attempts = 0
             publish_attempts = 0
+            admin_bans = 0
+            admin_cookie = ""
 
             def do_GET(self):
                 if self.path == "/":
@@ -343,6 +345,15 @@ class AteeHttpE2ETests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                if self.path == "/admin/feature-ban":
+                    TargetHandler.admin_bans += 1
+                    TargetHandler.admin_cookie = self.headers.get("Cookie", "")
+                    body = b'{"ok":true,"admin_ban":true}'
+                    self.send_response(204)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    return
                 self.send_response(404)
                 self.end_headers()
 
@@ -355,6 +366,9 @@ class AteeHttpE2ETests(unittest.TestCase):
         try:
             host, port = target.server_address
             target_base = f"http://{host}:{port}/"
+            session_path = Path(self.temp_dir.name) / "config" / "sessions" / "target-admin.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(json.dumps({"headers": {"Cookie": "target_admin=ok"}}), encoding="utf-8")
             registered = self._json(
                 "POST",
                 "/v1/admin/sites",
@@ -370,10 +384,38 @@ class AteeHttpE2ETests(unittest.TestCase):
                         "path_rules": [
                             {"methods": ["POST"], "path": "/api/publish", "feature_scope": "publishing"}
                         ],
+                        "admin_session_enabled": True,
+                        "admin_session_ref": "config/sessions/target-admin.json",
+                        "admin_action_templates": {
+                            "publishing": {
+                                "method": "POST",
+                                "path": "/admin/feature-ban",
+                                "body_template": {"feature": "{feature_scope}", "reason": "{reason}"},
+                                "success_status": [204],
+                            }
+                        },
                     },
                 },
             )
             site_id = registered["site"]["id"]
+            observed_actions = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/v1/page-actions",
+                {
+                    "page_url": target_base,
+                    "actions": [
+                        {
+                            "page_url": target_base,
+                            "action_type": "submit",
+                            "risk_level": "high",
+                            "label": "Comment",
+                            "selector": "#comment",
+                            "form_method": "POST",
+                            "form_action": "/api/comments",
+                        }
+                    ],
+                },
+            )
             site_fuse = self._json(
                 "POST",
                 "/v1/admin/site-feature-bans",
@@ -388,6 +430,8 @@ class AteeHttpE2ETests(unittest.TestCase):
             html = self._text("GET", f"/proxy/sites/{site_id}/")
             guard_js = self._text("GET", f"/proxy/sites/{site_id}/atee-runtime-guard.js")
             page_guard_js = self._text("GET", f"/proxy/sites/{site_id}/page-guard/atee-page-guard.mjs")
+            managed_sites = self._json("GET", "/v1/admin/sites")
+            observed_site_actions = self._json("GET", f"/v1/admin/site-actions?site_id={site_id}&action_type=submit")
             feature_access = self._json(
                 "POST",
                 f"/proxy/sites/{site_id}/v1/feature-access",
@@ -405,16 +449,22 @@ class AteeHttpE2ETests(unittest.TestCase):
             )
 
             self.assertTrue(registered["ok"])
+            self.assertTrue(observed_actions["ok"])
+            self.assertEqual(observed_actions["auto_mapping"]["features"], ["comments"])
             self.assertTrue(site_fuse["ok"])
             self.assertTrue(publish_fuse["ok"])
+            self.assertEqual(publish_fuse["site_admin_action"]["status"], "applied")
             self.assertEqual(registered["site"]["site_proxy"]["standard"], "atee_site_proxy_v1")
             self.assertEqual(registered["site"]["site_proxy"]["proxy_path"], f"/proxy/sites/{site_id}/")
             self.assertIn(f'src="/proxy/sites/{site_id}/atee-runtime-guard.js"', html)
             self.assertIn(f'"/proxy/sites/{site_id}/v1/feature-access"', guard_js)
+            self.assertIn(f'"/proxy/sites/{site_id}/v1/page-actions"', guard_js)
             self.assertIn('"path": "/api/publish"', guard_js)
             self.assertIn('"#publish": "publishing"', guard_js)
             self.assertIn("mutationFeature", guard_js)
             self.assertIn("startPageGuard", page_guard_js)
+            self.assertEqual(managed_sites["sites"][0]["site_proxy"]["feature_map"]["#comment"], "comments")
+            self.assertEqual(observed_site_actions["actions"][0]["metadata"]["atee_auto_match"]["status"], "applied")
             self.assertFalse(feature_access["allowed"])
             self.assertEqual(feature_access["reason"], "active_site_feature_ban")
             self.assertEqual(blocked_login["status"], 403)
@@ -425,6 +475,8 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertEqual(blocked_publish["feature_scope"], "publishing")
             self.assertEqual(TargetHandler.login_attempts, 0)
             self.assertEqual(TargetHandler.publish_attempts, 0)
+            self.assertEqual(TargetHandler.admin_bans, 1)
+            self.assertEqual(TargetHandler.admin_cookie, "target_admin=ok")
         finally:
             target.shutdown()
             target.server_close()

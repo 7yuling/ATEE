@@ -6,6 +6,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Popconfirm,
   Row,
   Select,
   Space,
@@ -15,6 +16,7 @@ import {
   Typography,
 } from "antd";
 import {
+  ExportOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -50,6 +52,17 @@ export function SiteManagementTab({
     value: site.id,
     label: `${site.name} #${site.id}`,
   }));
+  const openProxyPath = (site) => {
+    const proxyPath = site?.site_proxy?.proxy_path || `/proxy/sites/${site.id}/`;
+    window.open(proxyPath, "_blank", "noopener,noreferrer");
+  };
+  const scanErrorText = (record) => {
+    const error = String(record?.error_untrusted_text || "").trim();
+    if (error) {
+      return error;
+    }
+    return record?.status === "failed" ? "扫描失败，但后端未返回具体错误。" : "";
+  };
   const siteColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 72 },
     { title: "名称", dataIndex: "name", key: "name" },
@@ -60,14 +73,42 @@ export function SiteManagementTab({
     { title: "扫描", dataIndex: "scan_count", key: "scan_count", width: 80 },
     { title: "动作", dataIndex: "action_count", key: "action_count", width: 80 },
     { title: "最近扫描", dataIndex: "last_scan_at", key: "last_scan_at", render: (value) => value || "-" },
+    {
+      title: "管理员会话",
+      key: "adminSession",
+      width: 150,
+      render: (_, record) => (
+        <Popconfirm
+          title="授权管理员会话"
+          description="ATEE 将通过代理入口复用目标站管理员登录态，后续 AI 动作可能代表管理员执行封禁/清算。"
+          okText="进入代理"
+          cancelText="取消"
+          onConfirm={() => openProxyPath(record)}
+        >
+          <Button id={`authorizeSiteAdminSession-${record.id}`} size="small" icon={<ExportOutlined />}>
+            授权
+          </Button>
+        </Popconfirm>
+      ),
+    },
   ];
   const scanColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 72 },
     { title: "站点", dataIndex: "site_id", key: "site_id", width: 80 },
     { title: "状态", dataIndex: "status", key: "status", render: (value) => <Tag color={value === "completed" ? "success" : value === "failed" ? "error" : "processing"}>{value}</Tag> },
-    { title: "入口", dataIndex: "start_url", key: "start_url", ellipsis: true },
+    { title: "入口", dataIndex: "start_url", key: "start_url", ellipsis: true, render: (value) => <span title={value}>{value || "-"}</span> },
     { title: "动作", key: "actions", render: (_, record) => record.summary?.actions ?? 0 },
     { title: "高风险", key: "highRisk", render: (_, record) => record.summary?.high_risk_actions ?? 0 },
+    {
+      title: "失败原因",
+      dataIndex: "error_untrusted_text",
+      key: "error",
+      ellipsis: true,
+      render: (_, record) => {
+        const error = scanErrorText(record);
+        return error ? <Text className="scan-error-text" title={error}>{error}</Text> : "-";
+      },
+    },
     { title: "更新时间", dataIndex: "updated_at", key: "updated_at" },
   ];
   const actionColumns = [
@@ -77,6 +118,15 @@ export function SiteManagementTab({
     { title: "页面", dataIndex: "page_url", key: "page_url", ellipsis: true },
     { title: "选择器", dataIndex: "selector", key: "selector", ellipsis: true },
     { title: "ATEE feature", dataIndex: "suggested_feature_scope", key: "suggested_feature_scope", ellipsis: true },
+    {
+      title: "应用",
+      key: "autoMatch",
+      width: 90,
+      render: (_, record) => {
+        const status = record.metadata?.atee_auto_match?.status || "unapplied";
+        return <Tag color={status === "applied" ? "success" : "warning"}>{status === "applied" ? "已应用" : "未应用"}</Tag>;
+      },
+    },
   ];
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -98,7 +148,17 @@ export function SiteManagementTab({
         </Col>
         <Col xs={24} xl={12}>
           <Card title="登记/更新">
-            <Form form={siteForm} layout="vertical" initialValues={{ environment: "staging", auth_mode: "none", page_guard_enabled: false }}>
+            <Form
+              form={siteForm}
+              layout="vertical"
+              initialValues={{
+                environment: "staging",
+                auth_mode: "none",
+                page_guard_enabled: false,
+                admin_session_enabled: false,
+                auto_apply_admin_actions: true,
+              }}
+            >
               <Row gutter={12}>
                 <Col xs={24} md={12}>
                   <Form.Item label="站点名称" name="name">
@@ -150,6 +210,28 @@ export function SiteManagementTab({
               <Form.Item label="Page Guard" name="page_guard_enabled" valuePropName="checked">
                 <Switch id="managedSitePageGuardSwitch" />
               </Form.Item>
+              <Row gutter={12}>
+                <Col xs={24} md={12}>
+                  <Form.Item label="管理员会话授权" name="admin_session_enabled" valuePropName="checked">
+                    <Switch id="managedSiteAdminSessionSwitch" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item label="自动执行后台动作" name="auto_apply_admin_actions" valuePropName="checked">
+                    <Switch id="managedSiteAutoApplySwitch" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item label="管理员会话引用" name="admin_session_ref">
+                <Input id="managedSiteAdminSessionRefInput" autoComplete="off" placeholder="config/sessions/site-admin.json" />
+              </Form.Item>
+              <Form.Item label="管理员动作模板 JSON" name="admin_action_templates">
+                <TextArea
+                  id="managedSiteAdminActionTemplatesInput"
+                  autoSize={{ minRows: 3, maxRows: 8 }}
+                  placeholder='{"comments":{"method":"POST","path":"/admin/ban","body_template":{"user_hash":"{user_hash}","feature":"{feature_scope}"}}}'
+                />
+              </Form.Item>
               <Button id="registerManagedSiteBtn" type="primary" icon={<PlusOutlined />} onClick={registerManagedSite} disabled={writeLocked}>
                 保存站点
               </Button>
@@ -188,9 +270,17 @@ export function SiteManagementTab({
                 <Switch id="siteScanHighRiskSwitch" />
               </Form.Item>
               <Space wrap>
-                <Button id="startSiteScanBtn" type="primary" icon={<PlayCircleOutlined />} onClick={startSiteScan} disabled={writeLocked}>
-                  开始扫描
-                </Button>
+                <Popconfirm
+                  title="直接扫描网络"
+                  description="ATEE 会访问目标站页面并遍历按钮/表单，可能触发目标站风控或被识别为攻击；概念演示版可继续。"
+                  okText="继续扫描"
+                  cancelText="取消"
+                  onConfirm={startSiteScan}
+                >
+                  <Button id="startSiteScanBtn" danger type="primary" icon={<PlayCircleOutlined />} disabled={writeLocked}>
+                    开始扫描
+                  </Button>
+                </Popconfirm>
                 <Button id="siteScansBtn" icon={<ReloadOutlined />} onClick={showSiteScans}>
                   扫描历史
                 </Button>
@@ -201,7 +291,20 @@ export function SiteManagementTab({
         </Col>
         <Col xs={24} xl={14}>
           <Card title="扫描历史">
-            <Table rowKey="id" columns={scanColumns} dataSource={siteScans} pagination={{ pageSize: 6 }} />
+            <Table
+              rowKey="id"
+              columns={scanColumns}
+              dataSource={siteScans}
+              pagination={{ pageSize: 6 }}
+              rowClassName={(record) => (record.status === "failed" ? "site-scan-row-failed" : "")}
+              expandable={{
+                expandedRowRender: (record) => {
+                  const error = scanErrorText(record);
+                  return error ? <pre className="scan-error-detail">{error}</pre> : null;
+                },
+                rowExpandable: (record) => Boolean(scanErrorText(record)),
+              }}
+            />
           </Card>
         </Col>
       </Row>

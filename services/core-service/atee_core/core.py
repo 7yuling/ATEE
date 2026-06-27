@@ -5,6 +5,8 @@ import os
 import platform
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -865,6 +867,12 @@ class CoreService:
             "reason": "admin_confirmed_site_feature_fuse",
         }
         action_record = self.executor.execute(decision, gateway)
+        site_admin_action = self._maybe_apply_site_admin_action(
+            decision,
+            action_record,
+            reason=reason,
+            source="site_feature_fuse",
+        )
         ledger_record = self.ledger.record(
             {
                 "severity": "high",
@@ -872,7 +880,10 @@ class CoreService:
                 "endpoint_type": "admin",
                 "action": "feature_ban",
                 "summary": self._admin_summary(
-                    f"site_feature_fuse site_id={site_id} feature={feature} duration_seconds={duration_seconds} reason={reason}",
+                    (
+                        f"site_feature_fuse site_id={site_id} feature={feature} duration_seconds={duration_seconds} "
+                        f"site_admin_action={site_admin_action.get('status')} reason={reason}"
+                    ),
                     actor,
                 ),
             }
@@ -882,6 +893,7 @@ class CoreService:
             "status": 200,
             "site": site,
             "action_result": action_record,
+            "site_admin_action": site_admin_action,
             "ledger_record": ledger_record,
             "display": {"locale": "zh-CN", "message_zh": "Site feature fuse has been created."},
         }
@@ -1296,6 +1308,12 @@ class CoreService:
             "reason": "manual_review_policy_passed",
         }
         action_record = self.executor.execute(decision, gateway)
+        site_admin_action = self._maybe_apply_site_admin_action(
+            decision,
+            action_record,
+            reason=admin_note or "manual_async_review",
+            source="manual_async_review",
+        )
         ledger_record = self.ledger.record(
             {
                 "severity": "high",
@@ -1307,7 +1325,8 @@ class CoreService:
                 "summary": self._admin_summary(
                     (
                         f"manual_async_review job_id={job_id} action=feature_ban "
-                        f"site_id={site_id or ''} user_hash={user_hash} feature={feature} duration_seconds={duration_seconds} note={admin_note}"
+                        f"site_id={site_id or ''} user_hash={user_hash} feature={feature} duration_seconds={duration_seconds} "
+                        f"site_admin_action={site_admin_action.get('status')} note={admin_note}"
                     ),
                     actor,
                 ),
@@ -1319,6 +1338,7 @@ class CoreService:
             "decision": decision,
             "tool_gateway": gateway,
             "action_result": action_record,
+            "site_admin_action": site_admin_action,
             "ledger_record": ledger_record,
             "raw_prompt_stored": False,
             "raw_request_body_stored": False,
@@ -1329,6 +1349,7 @@ class CoreService:
             "status": 200,
             "job": completed,
             "action_result": action_record,
+            "site_admin_action": site_admin_action,
             "ledger_record": ledger_record,
             "queue": self.async_reviews.status(),
             "display": {
@@ -1683,6 +1704,21 @@ class CoreService:
         decision = self.decision_engine.decide(packet, route, llm_result.get("agent_decision"))
         gateway = self.tool_gateway.validate(decision, {"can_ip_ban": False}, self.config)
         action_record = self.executor.execute(decision, gateway)
+        site_admin_action = self._maybe_apply_site_admin_action(
+            decision,
+            action_record,
+            reason=str(llm_result.get("reason") or "async_review_decision"),
+            source="async_review",
+        )
+        details = self._ledger_details(
+            packet,
+            route,
+            packet.get("fast_path_signal") or {},
+            decision,
+            llm_result,
+            gateway,
+        )
+        details["site_admin_action"] = site_admin_action
         ledger_record = self.ledger.record(
             {
                 "severity": "medium" if decision["selected_action"] in {"allow", "rule_hint"} else "high",
@@ -1693,16 +1729,10 @@ class CoreService:
                 "action": gateway.get("effective_action"),
                 "summary": (
                     f"async_review_job id={job.get('id')} "
-                    f"decision={decision.get('selected_action')} reason={llm_result.get('reason')}"
+                    f"decision={decision.get('selected_action')} site_admin_action={site_admin_action.get('status')} "
+                    f"reason={llm_result.get('reason')}"
                 ),
-                "details": self._ledger_details(
-                    packet,
-                    route,
-                    packet.get("fast_path_signal") or {},
-                    decision,
-                    llm_result,
-                    gateway,
-                ),
+                "details": details,
             }
         )
         return {
@@ -1710,10 +1740,173 @@ class CoreService:
             "decision": decision,
             "tool_gateway": gateway,
             "action_result": action_record,
+            "site_admin_action": site_admin_action,
             "ledger_record": ledger_record,
             "raw_prompt_stored": False,
             "raw_request_body_stored": False,
         }
+
+    def _maybe_apply_site_admin_action(
+        self,
+        decision: dict[str, Any],
+        action_record: dict[str, Any],
+        *,
+        reason: str = "",
+        source: str = "feature_ban",
+    ) -> dict[str, Any]:
+        if not action_record.get("executed"):
+            return {"ok": True, "status": "skipped", "reason": "atee_action_not_executed"}
+        record = action_record.get("record") or {}
+        if record.get("action") != "feature_ban":
+            return {"ok": True, "status": "skipped", "reason": "not_feature_ban"}
+        target = decision.get("target_scope") or record.get("target_scope") or {}
+        feature = str(target.get("feature") or "").strip()
+        site_id = self._optional_site_id(target.get("site_id"))
+        if not site_id or not feature:
+            return {"ok": True, "status": "skipped", "reason": "site_or_feature_missing"}
+        return self.apply_site_admin_action(
+            site_id=site_id,
+            feature_scope=feature,
+            user_hash=str(target.get("user_hash") or ""),
+            reason=reason or str(decision.get("admin_explanation") or source),
+            action_id=record.get("id"),
+            source=source,
+        )
+
+    def apply_site_admin_action(
+        self,
+        *,
+        site_id: int,
+        feature_scope: str,
+        user_hash: str = "",
+        user_id: str = "",
+        reason: str = "",
+        action_id: Any = None,
+        source: str = "feature_ban",
+    ) -> dict[str, Any]:
+        site = self.site_inventory.get_site(site_id)
+        if not site:
+            return {"ok": False, "status": "failed", "reason": "site_not_found", "applied": False}
+        proxy = site.get("site_proxy") if isinstance(site.get("site_proxy"), dict) else {}
+        if proxy.get("auto_apply_admin_actions") is False:
+            return {"ok": True, "status": "skipped", "reason": "auto_apply_admin_actions_disabled", "applied": False}
+        if not proxy.get("admin_session_enabled"):
+            return {"ok": True, "status": "skipped", "reason": "admin_session_not_enabled", "applied": False}
+        templates = proxy.get("admin_action_templates") if isinstance(proxy.get("admin_action_templates"), dict) else {}
+        template = templates.get(feature_scope)
+        if not isinstance(template, dict):
+            return {"ok": True, "status": "skipped", "reason": "admin_action_template_not_configured", "applied": False}
+        session = self._load_site_admin_session(proxy.get("admin_session_ref"))
+        if not session.get("ok"):
+            return {
+                "ok": False,
+                "status": "failed",
+                "reason": session.get("reason") or "admin_session_unavailable",
+                "applied": False,
+                "site_id": site_id,
+                "feature_scope": feature_scope,
+                "template_path": template.get("path"),
+            }
+
+        method = str(template.get("method") or "POST").upper()
+        target_url = self._site_admin_action_url(site, str(template.get("path") or "/"))
+        values = {
+            "site_id": site_id,
+            "feature_scope": feature_scope,
+            "user_hash": user_hash,
+            "user_id": user_id,
+            "reason": reason,
+            "action_id": action_id or "",
+            "source": source,
+        }
+        body_value = self._render_site_admin_template(template.get("body_template") or {}, values)
+        body = json.dumps(body_value, ensure_ascii=False, sort_keys=True).encode("utf-8") if body_value != "" else b""
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "X-ATEE-Admin-Action": "feature_ban",
+            **session.get("headers", {}),
+        }
+        request = urllib.request.Request(
+            target_url,
+            data=body if body else None,
+            headers=headers,
+            method=method,
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=10)
+        except urllib.error.HTTPError as error:
+            response = error
+        except urllib.error.URLError:
+            return {
+                "ok": False,
+                "status": "failed",
+                "reason": "target_admin_unreachable",
+                "applied": False,
+                "site_id": site_id,
+                "feature_scope": feature_scope,
+                "template_path": template.get("path"),
+            }
+        with response:
+            http_status = int(response.status)
+            success_status = set(int(item) for item in (template.get("success_status") or [200, 201, 202, 204]))
+            applied = http_status in success_status
+            return {
+                "ok": applied,
+                "status": "applied" if applied else "failed",
+                "reason": "target_admin_action_applied" if applied else "target_admin_action_rejected",
+                "applied": applied,
+                "site_id": site_id,
+                "feature_scope": feature_scope,
+                "http_status": http_status,
+                "template_path": template.get("path"),
+            }
+
+    def _load_site_admin_session(self, ref: Any) -> dict[str, Any]:
+        session_ref = str(ref or "").strip()
+        if not session_ref:
+            return {"ok": False, "reason": "admin_session_ref_required"}
+        session_path = self._resolve_project_path(session_ref)
+        if not session_path or not session_path.is_file():
+            return {"ok": False, "reason": "admin_session_ref_not_found"}
+        try:
+            text = load_secret_file(session_path) or ""
+            payload = json.loads(text) if text.strip() else {}
+        except (OSError, json.JSONDecodeError, SecretStoreError):
+            return {"ok": False, "reason": "admin_session_ref_unreadable"}
+        if not isinstance(payload, dict):
+            return {"ok": False, "reason": "admin_session_invalid"}
+        headers = payload.get("headers") if isinstance(payload.get("headers"), dict) else {}
+        safe_headers = {
+            str(key): str(value)
+            for key, value in headers.items()
+            if str(key).lower() not in {"host", "content-length", "content-type"}
+        }
+        cookies = payload.get("cookies") if isinstance(payload.get("cookies"), list) else []
+        cookie_header = "; ".join(
+            f"{item.get('name')}={item.get('value')}"
+            for item in cookies
+            if isinstance(item, dict) and item.get("name") and item.get("value")
+        )
+        if cookie_header and "Cookie" not in safe_headers:
+            safe_headers["Cookie"] = cookie_header
+        return {"ok": True, "headers": safe_headers}
+
+    def _site_admin_action_url(self, site: dict[str, Any], path: str) -> str:
+        base = urlsplit(str(site.get("base_url") or ""))
+        safe_path = path if path.startswith("/") else f"/{path}"
+        return urlunsplit((base.scheme, base.netloc, safe_path, "", ""))
+
+    def _render_site_admin_template(self, value: Any, variables: dict[str, Any]) -> Any:
+        if isinstance(value, dict):
+            return {key: self._render_site_admin_template(item, variables) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._render_site_admin_template(item, variables) for item in value]
+        if isinstance(value, str):
+            rendered = value
+            for key, item in variables.items():
+                rendered = rendered.replace("{" + key + "}", str(item))
+            return rendered
+        return value
 
     def _save_config(self) -> None:
         if self.config_store:

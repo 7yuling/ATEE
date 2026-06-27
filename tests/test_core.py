@@ -341,6 +341,177 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(critical_actions["actions"][0]["requires_admin_review"])
             self.assertEqual(search_actions["count"], 1)
 
+    def test_site_scan_auto_matches_feature_map_and_path_rules(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example/",
+                    "allowed_domains": ["forum.example"],
+                }
+            )
+
+            scan = core.create_site_scan(
+                {
+                    "site_id": site["site"]["id"],
+                    "actions": [
+                        {
+                            "page_url": "https://forum.example/topic/1",
+                            "action_type": "submit",
+                            "risk_level": "high",
+                            "label": "Post comment",
+                            "selector": "#comment-submit",
+                            "form_method": "POST",
+                            "form_action": "/api/comments",
+                        },
+                        {
+                            "page_url": "https://forum.example/topic/1",
+                            "action_type": "search",
+                            "risk_level": "medium",
+                            "label": "Search",
+                            "selector": "#search",
+                        },
+                    ],
+                }
+            )
+            updated_site = core.admin_sites()["sites"][0]
+            actions = core.admin_site_actions(site_id=site["site"]["id"])["actions"]
+            comment_action = next(action for action in actions if action["selector"] == "#comment-submit")
+            search_action = next(action for action in actions if action["selector"] == "#search")
+            path_rules = updated_site["site_proxy"]["path_rules"]
+
+            self.assertTrue(scan["ok"])
+            self.assertEqual(scan["auto_mapping"]["features"], ["comments"])
+            self.assertEqual(updated_site["site_proxy"]["feature_map"]["#comment-submit"], "comments")
+            self.assertIn({"methods": ["POST"], "path": "/api/comments", "feature_scope": "comments"}, path_rules)
+            self.assertEqual(comment_action["metadata"]["atee_auto_match"]["status"], "applied")
+            self.assertEqual(search_action["metadata"]["atee_auto_match"]["status"], "unapplied")
+
+    def test_site_feature_ban_applies_target_admin_template_without_leaking_session(self):
+        class FakeResponse:
+            status = 204
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_path = Path(temp_dir) / "config" / "sessions" / "admin.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(json.dumps({"headers": {"Cookie": "admin_session=super-secret"}}), encoding="utf-8")
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example/",
+                    "protected_features": ["comments"],
+                    "site_proxy": {
+                        "admin_session_enabled": True,
+                        "admin_session_ref": "config/sessions/admin.json",
+                        "admin_action_templates": {
+                            "comments": {
+                                "method": "POST",
+                                "path": "/admin/feature-ban",
+                                "body_template": {
+                                    "feature": "{feature_scope}",
+                                    "reason": "{reason}",
+                                    "action_id": "{action_id}",
+                                },
+                                "success_status": [204],
+                            }
+                        },
+                    },
+                }
+            )
+
+            with patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+                result = core.create_site_feature_ban(
+                    {"site_id": site["site"]["id"], "feature_scope": "comments", "reason": "spam wave"}
+                )
+            request = urlopen.call_args.args[0]
+            public_text = json.dumps(result, ensure_ascii=False).lower()
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["site_admin_action"]["status"], "applied")
+            self.assertEqual(request.full_url, "https://forum.example/admin/feature-ban")
+            self.assertIn('"feature": "comments"', request.data.decode("utf-8"))
+            self.assertNotIn("super-secret", public_text)
+
+    def test_site_feature_ban_keeps_atee_ban_when_target_admin_apply_fails(self):
+        class FakeResponse:
+            status = 500
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_path = Path(temp_dir) / "config" / "sessions" / "admin.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(json.dumps({"headers": {"Cookie": "admin_session=super-secret"}}), encoding="utf-8")
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example/",
+                    "site_proxy": {
+                        "admin_session_enabled": True,
+                        "admin_session_ref": "config/sessions/admin.json",
+                        "admin_action_templates": {
+                            "comments": {"method": "POST", "path": "/admin/feature-ban", "success_status": [204]}
+                        },
+                    },
+                }
+            )
+
+            with patch("urllib.request.urlopen", return_value=FakeResponse()):
+                result = core.create_site_feature_ban({"site_id": site["site"]["id"], "feature_scope": "comments"})
+            access = core.feature_access({"site_id": site["site"]["id"], "user_id": "u1", "feature_scope": "comments"})
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["site_admin_action"]["status"], "failed")
+            self.assertEqual(result["site_admin_action"]["reason"], "target_admin_action_rejected")
+            self.assertFalse(access["allowed"])
+            self.assertEqual(access["reason"], "active_site_feature_ban")
+
+    def test_site_scan_records_first_scanner_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "offline-local",
+                    "base_url": "http://127.0.0.1:65534/",
+                    "environment": "dev",
+                }
+            )
+            scanner_result = {
+                "ok": True,
+                "status": "failed",
+                "actions": [],
+                "errors": [
+                    {
+                        "url": "http://127.0.0.1:65534/",
+                        "error": "page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:65534/",
+                    }
+                ],
+            }
+
+            with patch.object(core, "_run_page_action_scan", return_value=scanner_result):
+                scan = core.create_site_scan({"site_id": site["site"]["id"]})
+            scans = core.admin_site_scans(site_id=site["site"]["id"])
+
+            self.assertFalse(scan["ok"])
+            self.assertEqual(scan["status"], 502)
+            self.assertEqual(scan["scan"]["status"], "failed")
+            self.assertIn("ERR_CONNECTION_REFUSED", scan["scan"]["error_untrusted_text"])
+            self.assertNotIn("http://127.0.0.1:65534", scan["scan"]["error_untrusted_text"])
+            self.assertEqual(scans["scans"][0]["error_untrusted_text"], scan["scan"]["error_untrusted_text"])
+
     def test_production_high_risk_site_scan_requires_confirmation(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
@@ -661,16 +832,47 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(core.admin_actions(status="active")["count"], 1)
 
     def test_async_ai_feature_ban_targets_site_user_feature(self):
+        class FakeResponse:
+            status = 204
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
         with tempfile.TemporaryDirectory() as temp_dir:
+            session_path = Path(temp_dir) / "config" / "sessions" / "admin.json"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(json.dumps({"headers": {"Cookie": "admin_session=async-secret"}}), encoding="utf-8")
             core = CoreService(
                 config=AdminConfig(runtime_mode="auto", llm_mode="mock"),
                 config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            site = core.register_site(
+                {
+                    "name": "upload-site",
+                    "base_url": "https://upload.example/",
+                    "protected_features": ["uploads"],
+                    "site_proxy": {
+                        "admin_session_enabled": True,
+                        "admin_session_ref": "config/sessions/admin.json",
+                        "admin_action_templates": {
+                            "uploads": {
+                                "method": "POST",
+                                "path": "/admin/feature-ban",
+                                "body_template": {"user_hash": "{user_hash}", "feature": "{feature_scope}"},
+                                "success_status": [204],
+                            }
+                        },
+                    },
+                }
             )
             queued = core.event(
                 {
                     "method": "POST",
                     "path": "/upload",
-                    "site_id": 7,
+                    "site_id": site["site"]["id"],
                     "user_id": "upload-user",
                     "event_type": "upload",
                     "feature_scope": "uploads",
@@ -684,16 +886,23 @@ class AteeCoreTests(unittest.TestCase):
                 "agent_decision": {"selected_action": "feature_ban", "ai_confidence": 0.92},
             }
 
-            with patch.object(core.llm_gateway, "review", return_value=llm_result):
+            with patch.object(core.llm_gateway, "review", return_value=llm_result), patch(
+                "urllib.request.urlopen", return_value=FakeResponse()
+            ) as urlopen:
                 processed = core.process_async_reviews(limit=1)
             action = core.admin_actions(status="active")["actions"][0]
-            access = core.feature_access({"site_id": 7, "user_id": "upload-user", "feature_scope": "uploads"})
+            completed = core.admin_async_reviews(status="completed")
+            access = core.feature_access({"site_id": site["site"]["id"], "user_id": "upload-user", "feature_scope": "uploads"})
+            public_text = json.dumps(completed, ensure_ascii=False).lower()
 
             self.assertEqual(queued["route"]["route"], "async_agent")
             self.assertEqual(processed["processed"][0]["effective_action"], "feature_ban")
             self.assertEqual(action["target_scope"]["type"], "user_feature")
-            self.assertEqual(action["target_scope"]["site_id"], 7)
+            self.assertEqual(action["target_scope"]["site_id"], site["site"]["id"])
             self.assertEqual(action["target_scope"]["feature"], "uploads")
+            self.assertEqual(completed["jobs"][0]["result"]["site_admin_action"]["status"], "applied")
+            self.assertIn('"feature": "uploads"', urlopen.call_args.args[0].data.decode("utf-8"))
+            self.assertNotIn("async-secret", public_text)
             self.assertFalse(access["allowed"])
             self.assertEqual(access["reason"], "active_feature_ban")
 

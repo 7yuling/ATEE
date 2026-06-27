@@ -70,6 +70,25 @@ def handle_site_proxy_request(handler: Any, core: Any, page_guard_dir: Path) -> 
         asset = page_guard_dir / Path(proxy_path).name
         _send_bytes(handler, asset.read_bytes(), "application/javascript; charset=utf-8")
         return True
+    if proxy_path == "/v1/page-actions":
+        payload = _read_json_body(handler)
+        if payload is None:
+            return True
+        actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
+        result = core.create_site_scan(
+            {
+                "site_id": site_id,
+                "start_url": payload.get("page_url") or site.get("base_url"),
+                "actions": actions,
+                "allow_high_risk_actions": False,
+                "max_pages": 1,
+                "max_actions": max(1, len(actions)),
+                "timeout_ms": 1000,
+                "execute_scan": False,
+            }
+        )
+        _send_json(handler, result, status=int(result.get("status", 200)))
+        return True
     if proxy_path == "/v1/feature-access":
         payload = _read_json_body(handler)
         if payload is None:
@@ -131,6 +150,8 @@ def runtime_guard_js(site: dict[str, Any], site_id: int, prefix: str) -> str:
         "protectedActionTypes": proxy_config.get("protected_action_types") or [],
         "featureMap": proxy_config.get("feature_map") or {},
         "pathRules": proxy_config.get("path_rules") or [],
+        "actionReportUrl": f"{prefix}/v1/page-actions",
+        "reportActions": bool(proxy_config.get("observe_actions", True)),
     }
     return f"""
 const ATEE_PROXY_CONFIG = {json.dumps(config, ensure_ascii=False, sort_keys=True)};
@@ -146,6 +167,8 @@ const ATEE_PROXY_CONFIG = {json.dumps(config, ensure_ascii=False, sort_keys=True
     protectedFeatures: config.protectedFeatures,
     protectedActionTypes: config.protectedActionTypes,
     featureMap: config.featureMap,
+    actionReportUrl: config.actionReportUrl,
+    reportActions: config.reportActions,
     autoStart: false
   }};
 
