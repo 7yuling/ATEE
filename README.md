@@ -16,7 +16,9 @@ This version focuses on the production safety boundaries from the workflow:
 - Appeal paths are whitelisted but rate-limited.
 - Admin UI renders untrusted text with `textContent`.
 
-## Run
+## Run And Deployment
+
+### Local Quick Start
 
 ```powershell
 cd C:\Users\Pro16\Documents\Codex\ATEE
@@ -37,17 +39,115 @@ Then open:
 http://127.0.0.1:8787/
 ```
 
-To keep the Core Service running in the current Windows user context:
+### Ubuntu First Install
+
+Ubuntu is the recommended production target. Keep ATEE bound to `127.0.0.1` behind Nginx/Caddy unless you have a trusted private network and firewall policy.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3 nodejs npm
+sudo mkdir -p /opt/atee
+sudo chown "$USER":"$USER" /opt/atee
+git clone git@github.com:7yuling/ATEE.git /opt/atee
+cd /opt/atee
+cp config/config.example.json config/config.json
+python3 services/core-service/check_config.py
+bash scripts/linux/install-atee-systemd.sh --user
+systemctl --user status atee-core.service
+curl -fsS http://127.0.0.1:8787/health
+```
+
+For a current-user service that should survive SSH logout and server reboot, enable linger once:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+For a machine-level service instead of a current-user service:
+
+```bash
+sudo bash scripts/linux/install-atee-systemd.sh --system --run-user atee
+sudo systemctl status atee-core.service
+```
+
+Linux provider secrets should use `llm_api_key_env` and `admin_token_env` with a locked-down environment file or a production secret manager, not Windows DPAPI files.
+
+```bash
+mkdir -p ~/.config/atee
+cp scripts/linux/atee-core.env.example ~/.config/atee/atee-core.env
+chmod 600 ~/.config/atee/atee-core.env
+# Edit ~/.config/atee/atee-core.env on the server; do not commit secrets.
+```
+
+### Ubuntu Remote Pull Update
+
+Use this from an SSH session on the Ubuntu server:
+
+```bash
+cd /opt/atee
+git pull --ff-only
+python3 services/core-service/check_config.py
+systemctl --user restart atee-core.service
+systemctl --user status atee-core.service
+curl -fsS http://127.0.0.1:8787/health
+```
+
+If you run the system service variant, replace the restart/status lines with:
+
+```bash
+sudo systemctl restart atee-core.service
+sudo systemctl status atee-core.service
+```
+
+When a pull includes admin console source or `package-lock.json` changes, run `npm ci` and `npm run build:admin` before restarting the service.
+
+### Windows Remote Pull Deployment
+
+Install or update from an elevated PowerShell session on the Windows host, or run the same block through PowerShell Remoting.
+
+First install:
 
 ```powershell
+git clone git@github.com:7yuling/ATEE.git C:\srv\ATEE
+Set-Location C:\srv\ATEE
+Copy-Item config\config.example.json config\config.json
+python services\core-service\check_config.py
 powershell -ExecutionPolicy Bypass -File scripts\windows\start-atee-core-background.ps1
+Invoke-RestMethod http://127.0.0.1:8787/health
 ```
 
-Stop it with:
+Remote pull update with PowerShell Remoting:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\windows\stop-atee-core-background.ps1
+$session = New-PSSession -ComputerName <windows-host> -Credential <user>
+Invoke-Command -Session $session -ScriptBlock {
+    Set-Location C:\srv\ATEE
+    git pull --ff-only
+    python services\core-service\check_config.py
+    powershell -ExecutionPolicy Bypass -File scripts\windows\stop-atee-core-background.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\windows\start-atee-core-background.ps1
+    Invoke-RestMethod http://127.0.0.1:8787/health
+}
+Remove-PSSession $session
 ```
+
+When a pull includes admin console source or `package-lock.json` changes, run `npm ci` and `npm run build:admin` on the remote host before restarting ATEE.
+
+For boot/login persistence without extra dependencies, install the scheduled task once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\install-atee-task.ps1
+```
+
+For native Windows SCM integration with a vetted WinSW binary:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\install-atee-winsw.ps1 -WinswExePath C:\Tools\WinSW-x64.exe
+```
+
+DPAPI CurrentUser secrets must be created under the same Windows user context that runs ATEE. If you deploy with a scheduled task or service account, create the encrypted key under that account or provide the key through `llm_api_key_env` from a secret manager.
+
+### Demo, Docker, And Maintenance
 
 To run the local business demo site in a second terminal:
 
@@ -74,34 +174,6 @@ docker compose up --build
 ```
 
 Docker deployment notes are in [docs/deployment.md](docs/deployment.md). The image excludes local config, secrets, SQLite data, logs, reports, and `node_modules`.
-
-For Ubuntu/Linux systemd deployment:
-
-```bash
-cp config/config.example.json config/config.json
-# Optional: edit config/config.json for your environment.
-bash scripts/linux/install-atee-systemd.sh --user
-```
-
-Linux provider secrets should use `llm_api_key_env` with an environment file or secret manager, not Windows DPAPI files.
-
-To install the Core Service as a dependency-free Windows scheduled task:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\windows\install-atee-task.ps1
-```
-
-Uninstall it with:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\windows\uninstall-atee-task.ps1
-```
-
-For native Windows SCM integration with a vetted WinSW binary:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\windows\install-atee-winsw.ps1 -WinswExePath C:\Tools\WinSW-x64.exe
-```
 
 For local backup and log maintenance:
 
