@@ -42,6 +42,60 @@ The returned site payload includes:
 Users should browse through `proxy_path`; direct visits to the original
 `base_url` do not receive ATEE runtime interception.
 
+Registering a site only stores the target metadata and proxy rules inside
+ATEE. It does not change public DNS, Nginx, Caddy, CDN, or the target site's
+own routing. To send real browser traffic through ATEE, put Core Service behind
+your public reverse proxy and expose the returned `proxy_path`.
+
+## Public Traffic Through Nginx
+
+Keep Core Service private, for example on `127.0.0.1:8787`, then let Nginx
+forward the public ATEE domain to Core:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name atee.example.com;
+
+    # TLS certificate configuration omitted.
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+After registration, users and testers should open:
+
+```text
+https://atee.example.com/proxy/sites/<site_id>/
+```
+
+Target-site absolute paths such as `/api/me`, `/api/admin/status`, and
+`/admin` are expected to stay under that prefix, for example:
+
+```text
+/proxy/sites/<site_id>/api/me
+/proxy/sites/<site_id>/api/admin/status
+/proxy/sites/<site_id>/admin
+```
+
+A direct request to `https://atee.example.com/api/me` is not a target-site
+request and may return ATEE's `404 not_found`.
+
+ATEE accounts and the target site's accounts are separate. ATEE admin login
+only authorizes ATEE management APIs. Target-site login should still happen
+through the proxied target page and should create target-site cookies scoped to
+`/proxy/sites/<site_id>/`. The optional `site_proxy.admin_session_ref` is a
+local session file used only by configured admin action templates; it is not a
+password-sharing mechanism and should not make arbitrary target credentials log
+in to ATEE.
+
 ## Default Protected Routes
 
 The standard proxy includes reusable defaults:

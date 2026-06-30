@@ -16,7 +16,7 @@ const menuKeys = [
   "agent",
   "guide",
   "admins",
-  "apiKeys",
+  "sites",
   "appeals",
   "asyncReviews",
   "actions",
@@ -385,7 +385,7 @@ try {
   );
   mark("admin_password_change_button");
 
-  await openMenu(page, "apiKeys");
+  await openMenu(page, "config");
   await expectOne(page, "#apiKeysBtn");
   await expectOne(page, "#createApiKeyBtn");
   mark("api_keys_module_connected");
@@ -534,7 +534,7 @@ try {
   await expectDisabled(page, "#changeAdminPasswordBtn", "read-only mode should disable admin password change");
   mark("admin_accounts_read_only_guard");
 
-  await openMenu(page, "apiKeys");
+  await openMenu(page, "config");
   await expectDisabled(page, "#createApiKeyBtn", "read-only mode should disable API key creation");
   mark("api_keys_read_only_guard");
 

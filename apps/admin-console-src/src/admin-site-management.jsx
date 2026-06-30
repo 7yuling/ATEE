@@ -80,8 +80,8 @@ export function SiteManagementTab({
       render: (_, record) => (
         <Popconfirm
           title="授权管理员会话"
-          description="ATEE 将通过代理入口复用目标站管理员登录态，后续 AI 动作可能代表管理员执行封禁/清算。"
-          okText="进入代理"
+          description="这里仅打开目标站代理入口；目标站管理员会话来自配置的本地会话文件，只用于已配置的后台动作模板，不会把任意原站登录账号变成 ATEE 管理员。"
+          okText="打开代理入口"
           cancelText="取消"
           onConfirm={() => openProxyPath(record)}
         >
@@ -133,7 +133,7 @@ export function SiteManagementTab({
       <Alert
         type="info"
         showIcon
-        message="外部网站扫描建议只用于测试/预发环境；高风险真实点击需要显式开启。"
+        message="登记接入网站不会自动切换公网流量；生产访问仍需由 Nginx/Caddy 转发到 ATEE 的站点代理路径。ATEE 管理员账号、原站用户账号、目标站管理员会话互相独立。"
       />
       <details className="site-section-panel" open>
         <summary>站点接入</summary>

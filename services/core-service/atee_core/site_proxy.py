@@ -2,12 +2,17 @@ import json
 import re
 import urllib.error
 import urllib.request
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 
 PROXY_PREFIX_RE = re.compile(r"^/proxy/sites/(\d+)(?:/(.*))?$")
+HTML_URL_ATTR_RE = re.compile(
+    r"(?P<before>\s(?:href|src|action|poster|data-src)=['\"])(?P<url>/[^'\"]*)(?P<after>['\"])",
+    flags=re.IGNORECASE,
+)
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -177,8 +182,7 @@ const ATEE_PROXY_CONFIG = {json.dumps(config, ensure_ascii=False, sort_keys=True
   document.head.appendChild(style);
 
   function proxiedPath(path) {{
-    if (!path || !path.startsWith("/") || path.startsWith(config.prefix + "/")) return path;
-    if (path.startsWith("/proxy/") || path.startsWith("/v1/") || path.startsWith("/admin") || path === "/health") return path;
+    if (!path || !path.startsWith("/") || path === config.prefix || path.startsWith(config.prefix + "/")) return path;
     return config.prefix + path;
   }}
 
@@ -253,6 +257,17 @@ const ATEE_PROXY_CONFIG = {json.dumps(config, ensure_ascii=False, sort_keys=True
       return rawFetch(new Request(nextUrl, request), init);
     }}
     return rawFetch(nextUrl, init);
+  }};
+
+  const rawPushState = history.pushState.bind(history);
+  const rawReplaceState = history.replaceState.bind(history);
+  history.pushState = function (state, title, url) {{
+    if (arguments.length < 3 || url == null) return rawPushState(state, title);
+    return rawPushState(state, title, proxiedUrl(url));
+  }};
+  history.replaceState = function (state, title, url) {{
+    if (arguments.length < 3 || url == null) return rawReplaceState(state, title);
+    return rawReplaceState(state, title, proxiedUrl(url));
   }};
 
   document.addEventListener("click", (event) => {{
@@ -365,11 +380,11 @@ def _proxy_upstream(
         content_type = response.headers.get("Content-Type", "")
         if "text/html" in content_type.lower():
             text = payload.decode(_charset(content_type), errors="replace")
-            payload = _inject_runtime_guard(text, prefix).encode("utf-8")
-            headers["Content-Type"] = "text/html; charset=utf-8"
-        headers["Content-Length"] = str(len(payload))
+            payload = _prepare_html_response(text, prefix).encode("utf-8")
+            headers = _set_response_header(headers, "Content-Type", "text/html; charset=utf-8")
+        headers = _set_response_header(headers, "Content-Length", str(len(payload)))
         handler.send_response(status)
-        for key, value in headers.items():
+        for key, value in headers:
             handler.send_header(key, value)
         handler.end_headers()
         if handler.command != "HEAD":
@@ -408,16 +423,34 @@ def _upstream_headers(handler: Any, target_url: str) -> dict[str, str]:
     return headers
 
 
-def _response_headers(headers: Any, site: dict[str, Any], site_id: int, prefix: str) -> dict[str, str]:
-    result: dict[str, str] = {}
+def _response_headers(headers: Any, site: dict[str, Any], site_id: int, prefix: str) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
     for key, value in headers.items():
         lower = key.lower()
         if lower in HOP_BY_HOP_HEADERS or lower in {"content-security-policy", "x-frame-options"}:
             continue
         if lower == "location":
             value = _rewrite_location(value, site, site_id, prefix)
-        result[key] = value
-    result["Cache-Control"] = "no-store"
+        if lower == "set-cookie":
+            value = _rewrite_set_cookie(value, site, prefix)
+        result.append((key, value))
+    result.append(("Cache-Control", "no-store"))
+    return result
+
+
+def _set_response_header(headers: list[tuple[str, str]], name: str, value: str) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    replaced = False
+    lower_name = name.lower()
+    for key, current in headers:
+        if key.lower() == lower_name:
+            if not replaced:
+                result.append((name, value))
+                replaced = True
+            continue
+        result.append((key, current))
+    if not replaced:
+        result.append((name, value))
     return result
 
 
@@ -432,6 +465,53 @@ def _rewrite_location(value: str, site: dict[str, Any], site_id: int, prefix: st
         path = parsed.path or "/"
         return urlunsplit(("", "", f"/proxy/sites/{site_id}{path}", parsed.query, parsed.fragment))
     return value
+
+
+def _rewrite_set_cookie(value: str, site: dict[str, Any], prefix: str) -> str:
+    cookie = SimpleCookie()
+    try:
+        cookie.load(value)
+    except Exception:
+        return _rewrite_set_cookie_text(value, site, prefix)
+    if not cookie:
+        return _rewrite_set_cookie_text(value, site, prefix)
+    for morsel in cookie.values():
+        morsel["domain"] = ""
+        morsel["path"] = _proxy_cookie_path(site, prefix, morsel["path"] or "/")
+    return cookie.output(header="").strip()
+
+
+def _rewrite_set_cookie_text(value: str, site: dict[str, Any], prefix: str) -> str:
+    parts = [part.strip() for part in str(value or "").split(";")]
+    if not parts or not parts[0]:
+        return value
+    rewritten = [parts[0]]
+    path_seen = False
+    for part in parts[1:]:
+        lower = part.lower()
+        if lower.startswith("domain="):
+            continue
+        if lower.startswith("path="):
+            _, _, raw_path = part.partition("=")
+            rewritten.append(f"Path={_proxy_cookie_path(site, prefix, raw_path or '/')}")
+            path_seen = True
+            continue
+        rewritten.append(part)
+    if not path_seen:
+        rewritten.append(f"Path={_proxy_cookie_path(site, prefix, '/')}")
+    return "; ".join(rewritten)
+
+
+def _proxy_cookie_path(site: dict[str, Any], prefix: str, cookie_path: str) -> str:
+    base_path = (urlsplit(site.get("base_url", "")).path or "/").rstrip("/")
+    raw_path = str(cookie_path or "/").strip() or "/"
+    if not raw_path.startswith("/"):
+        raw_path = "/"
+    if base_path and base_path != "/" and raw_path.startswith(base_path):
+        raw_path = raw_path.removeprefix(base_path) or "/"
+    if raw_path == "/":
+        return prefix.rstrip("/") + "/"
+    return prefix.rstrip("/") + "/" + raw_path.lstrip("/")
 
 
 def _proxy_config(site: dict[str, Any], site_id: int | None = None) -> dict[str, Any]:
@@ -457,9 +537,31 @@ def _rule_matches(rule: dict[str, Any], path: str, method: str) -> bool:
     return False
 
 
+def _prepare_html_response(text: str, prefix: str) -> str:
+    return _inject_runtime_guard(_rewrite_html_url_attributes(text, prefix), prefix)
+
+
+def _rewrite_html_url_attributes(text: str, prefix: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        url = match.group("url")
+        if url.startswith("//") or url == prefix or url.startswith(prefix + "/"):
+            return match.group(0)
+        return f"{match.group('before')}{prefix}{url}{match.group('after')}"
+
+    return HTML_URL_ATTR_RE.sub(replace, text)
+
+
 def _inject_runtime_guard(text: str, prefix: str) -> str:
-    snippet = f'\n<script type="module" src="{prefix}/atee-runtime-guard.js"></script>\n'
+    snippet = f'\n<script src="{prefix}/atee-runtime-guard.js"></script>\n'
+    head = re.search(r"<head\b[^>]*>", text, flags=re.IGNORECASE)
+    if head:
+        return text[: head.end()] + snippet + text[head.end() :]
     lower = text.lower()
+    body = lower.find("<body")
+    if body >= 0:
+        body_end = lower.find(">", body)
+        if body_end >= 0:
+            return text[: body_end + 1] + snippet + text[body_end + 1 :]
     index = lower.rfind("</body>")
     if index >= 0:
         return text[:index] + snippet + text[index:]

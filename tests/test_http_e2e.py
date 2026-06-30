@@ -303,10 +303,15 @@ class AteeHttpE2ETests(unittest.TestCase):
             def do_GET(self):
                 if self.path == "/":
                     body = (
-                        "<html><body>"
-                        "<button id=\"login-btn\" onclick=\"location.href='/login'\">Login</button>"
-                        "<button id=\"publish\">Publish</button>"
+                        "<html><head>"
                         "<script>fetch('/api/me')</script>"
+                        "<script src=\"/assets/app.js\"></script>"
+                        "<link rel=\"stylesheet\" href=\"/assets/app.css\">"
+                        "</head><body>"
+                        "<button id=\"login-btn\" onclick=\"location.href='/login'\">Login</button>"
+                        "<a id=\"admin-link\" href=\"/admin\">Admin</a>"
+                        "<form id=\"login-form\" method=\"post\" action=\"/api/login\"></form>"
+                        "<button id=\"publish\">Publish</button>"
                         "</body></html>"
                     ).encode("utf-8")
                     self.send_response(200)
@@ -315,10 +320,42 @@ class AteeHttpE2ETests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                if self.path == "/assets/app.js":
+                    body = b"fetch('/api/admin/status'); history.pushState({}, '', '/admin');"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/javascript")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/assets/app.css":
+                    body = b"body{color:#111}"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/css")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if self.path == "/api/me":
                     body = b'{"ok":true,"id":"target-user"}'
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/api/admin/status":
+                    body = b'{"ok":true,"target_admin_status":true}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/admin":
+                    body = b"<html><body>target admin backend</body></html>"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
@@ -332,6 +369,7 @@ class AteeHttpE2ETests(unittest.TestCase):
                     body = b'{"ok":true,"target_login":true}'
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
+                    self.send_header("Set-Cookie", "session=target-user; Domain=127.0.0.1; Path=/; HttpOnly; SameSite=Lax")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
@@ -416,6 +454,11 @@ class AteeHttpE2ETests(unittest.TestCase):
                     ],
                 },
             )
+            allowed_login_status, allowed_login_headers, allowed_login = self._json_response(
+                "POST",
+                f"/proxy/sites/{site_id}/api/login",
+                {"username": "target-user", "password": "target-password"},
+            )
             site_fuse = self._json(
                 "POST",
                 "/v1/admin/site-feature-bans",
@@ -430,6 +473,10 @@ class AteeHttpE2ETests(unittest.TestCase):
             html = self._text("GET", f"/proxy/sites/{site_id}/")
             guard_js = self._text("GET", f"/proxy/sites/{site_id}/atee-runtime-guard.js")
             page_guard_js = self._text("GET", f"/proxy/sites/{site_id}/page-guard/atee-page-guard.mjs")
+            proxied_app_js = self._text("GET", f"/proxy/sites/{site_id}/assets/app.js")
+            proxied_me = self._json("GET", f"/proxy/sites/{site_id}/api/me")
+            proxied_admin_status = self._json("GET", f"/proxy/sites/{site_id}/api/admin/status")
+            target_admin = self._text("GET", f"/proxy/sites/{site_id}/admin")
             managed_sites = self._json("GET", "/v1/admin/sites")
             observed_site_actions = self._json("GET", f"/v1/admin/site-actions?site_id={site_id}&action_type=submit")
             feature_access = self._json(
@@ -454,15 +501,34 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertTrue(site_fuse["ok"])
             self.assertTrue(publish_fuse["ok"])
             self.assertEqual(publish_fuse["site_admin_action"]["status"], "applied")
+            self.assertEqual(allowed_login_status, 200)
+            self.assertTrue(allowed_login["target_login"])
+            self.assertIn(f"Path=/proxy/sites/{site_id}/", allowed_login_headers["Set-Cookie"])
+            self.assertNotIn("Domain=", allowed_login_headers["Set-Cookie"])
             self.assertEqual(registered["site"]["site_proxy"]["standard"], "atee_site_proxy_v1")
             self.assertEqual(registered["site"]["site_proxy"]["proxy_path"], f"/proxy/sites/{site_id}/")
             self.assertIn(f'src="/proxy/sites/{site_id}/atee-runtime-guard.js"', html)
+            self.assertNotIn('type="module" src=', html)
+            self.assertLess(
+                html.index(f'src="/proxy/sites/{site_id}/atee-runtime-guard.js"'),
+                html.index("fetch('/api/me')"),
+            )
+            self.assertIn(f'src="/proxy/sites/{site_id}/assets/app.js"', html)
+            self.assertIn(f'href="/proxy/sites/{site_id}/assets/app.css"', html)
+            self.assertIn(f'href="/proxy/sites/{site_id}/admin"', html)
+            self.assertIn(f'action="/proxy/sites/{site_id}/api/login"', html)
             self.assertIn(f'"/proxy/sites/{site_id}/v1/feature-access"', guard_js)
             self.assertIn(f'"/proxy/sites/{site_id}/v1/page-actions"', guard_js)
             self.assertIn('"path": "/api/publish"', guard_js)
             self.assertIn('"#publish": "publishing"', guard_js)
             self.assertIn("mutationFeature", guard_js)
+            self.assertIn("history.pushState", guard_js)
+            self.assertNotIn('path.startsWith("/admin")', guard_js)
             self.assertIn("startPageGuard", page_guard_js)
+            self.assertIn("fetch('/api/admin/status')", proxied_app_js)
+            self.assertTrue(proxied_me["ok"])
+            self.assertTrue(proxied_admin_status["target_admin_status"])
+            self.assertIn("target admin backend", target_admin)
             self.assertEqual(managed_sites["sites"][0]["site_proxy"]["feature_map"]["#comment"], "comments")
             self.assertEqual(observed_site_actions["actions"][0]["metadata"]["atee_auto_match"]["status"], "applied")
             self.assertFalse(feature_access["allowed"])
@@ -473,7 +539,7 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertEqual(blocked_publish["status"], 403)
             self.assertTrue(blocked_publish["atee_blocked"])
             self.assertEqual(blocked_publish["feature_scope"], "publishing")
-            self.assertEqual(TargetHandler.login_attempts, 0)
+            self.assertEqual(TargetHandler.login_attempts, 1)
             self.assertEqual(TargetHandler.publish_attempts, 0)
             self.assertEqual(TargetHandler.admin_bans, 1)
             self.assertEqual(TargetHandler.admin_cookie, "target_admin=ok")
@@ -656,6 +722,25 @@ class AteeHttpE2ETests(unittest.TestCase):
                 return json.loads(error.read().decode("utf-8"))
             finally:
                 error.close()
+
+    def _json_response(
+        self,
+        method: str,
+        path: str,
+        payload: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict[str, str], dict]:
+        data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_headers = {"Content-Type": "application/json"}
+        request_headers.update(headers or {})
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=data,
+            headers=request_headers,
+            method=method,
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return int(response.status), dict(response.headers), json.loads(response.read().decode("utf-8"))
 
     def _text(self, method: str, path: str) -> str:
         request = urllib.request.Request(self.base_url + path, method=method)
