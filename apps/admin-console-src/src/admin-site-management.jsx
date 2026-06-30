@@ -135,8 +135,9 @@ export function SiteManagementTab({
         showIcon
         message="外部网站扫描建议只用于测试/预发环境；高风险真实点击需要显式开启。"
       />
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
+      <details className="site-section-panel" open>
+        <summary>站点接入</summary>
+        <div className="site-section-body site-management-stack">
           <Card title="接入网站">
             <Space className="table-actions" wrap>
               <Button id="managedSitesBtn" icon={<ReloadOutlined />} onClick={showManagedSites}>
@@ -145,11 +146,10 @@ export function SiteManagementTab({
             </Space>
             <Table rowKey="id" columns={siteColumns} dataSource={sites} pagination={{ pageSize: 6 }} />
           </Card>
-        </Col>
-        <Col xs={24} xl={12}>
           <Card title="登记/更新">
             <Form
               form={siteForm}
+              className="site-register-form"
               layout="vertical"
               initialValues={{
                 environment: "staging",
@@ -159,13 +159,15 @@ export function SiteManagementTab({
                 auto_apply_admin_actions: true,
               }}
             >
-              <Row gutter={12}>
-                <Col xs={24} md={12}>
-                  <Form.Item label="站点名称" name="name">
-                    <Input id="managedSiteNameInput" autoComplete="off" />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} md={12}>
+              <Form.Item label="站点名称" name="name">
+                <Input id="managedSiteNameInput" autoComplete="off" />
+              </Form.Item>
+              <Form.Item label="入口 URL" name="base_url">
+                <Input id="managedSiteBaseUrlInput" autoComplete="off" placeholder="https://staging.example.com/" />
+              </Form.Item>
+              <details className="site-config-panel">
+                <summary>配置选项</summary>
+                <div className="site-config-fields">
                   <Form.Item label="环境" name="environment">
                     <Select
                       id="managedSiteEnvironmentSelect"
@@ -177,19 +179,12 @@ export function SiteManagementTab({
                       ]}
                     />
                   </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item label="入口 URL" name="base_url">
-                <Input id="managedSiteBaseUrlInput" autoComplete="off" placeholder="https://staging.example.com/" />
-              </Form.Item>
-              <Form.Item label="允许扫描域名" name="allowed_domains">
-                <TextArea id="managedSiteAllowedDomainsInput" autoSize={{ minRows: 2, maxRows: 4 }} />
-              </Form.Item>
-              <Form.Item label="受保护功能" name="protected_features">
-                <TextArea id="managedSiteProtectedFeaturesInput" autoSize={{ minRows: 2, maxRows: 4 }} placeholder="comments, uploads, posts" />
-              </Form.Item>
-              <Row gutter={12}>
-                <Col xs={24} md={10}>
+                  <Form.Item label="允许扫描域名" name="allowed_domains">
+                    <TextArea id="managedSiteAllowedDomainsInput" autoSize={{ minRows: 2, maxRows: 4 }} />
+                  </Form.Item>
+                  <Form.Item label="受保护功能" name="protected_features">
+                    <TextArea id="managedSiteProtectedFeaturesInput" autoSize={{ minRows: 2, maxRows: 4 }} placeholder="comments, uploads, posts" />
+                  </Form.Item>
                   <Form.Item label="认证方式" name="auth_mode">
                     <Select
                       id="managedSiteAuthModeSelect"
@@ -200,46 +195,40 @@ export function SiteManagementTab({
                       ]}
                     />
                   </Form.Item>
-                </Col>
-                <Col xs={24} md={14}>
                   <Form.Item label="会话状态引用" name="session_state_ref">
                     <Input id="managedSiteSessionStateInput" autoComplete="off" placeholder="config/sessions/site.json" />
                   </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item label="Page Guard" name="page_guard_enabled" valuePropName="checked">
-                <Switch id="managedSitePageGuardSwitch" />
-              </Form.Item>
-              <Row gutter={12}>
-                <Col xs={24} md={12}>
+                  <Form.Item label="Page Guard" name="page_guard_enabled" valuePropName="checked">
+                    <Switch id="managedSitePageGuardSwitch" />
+                  </Form.Item>
                   <Form.Item label="管理员会话授权" name="admin_session_enabled" valuePropName="checked">
                     <Switch id="managedSiteAdminSessionSwitch" />
                   </Form.Item>
-                </Col>
-                <Col xs={24} md={12}>
                   <Form.Item label="自动执行后台动作" name="auto_apply_admin_actions" valuePropName="checked">
                     <Switch id="managedSiteAutoApplySwitch" />
                   </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item label="管理员会话引用" name="admin_session_ref">
-                <Input id="managedSiteAdminSessionRefInput" autoComplete="off" placeholder="config/sessions/site-admin.json" />
-              </Form.Item>
-              <Form.Item label="管理员动作模板 JSON" name="admin_action_templates">
-                <TextArea
-                  id="managedSiteAdminActionTemplatesInput"
-                  autoSize={{ minRows: 3, maxRows: 8 }}
-                  placeholder='{"comments":{"method":"POST","path":"/admin/ban","body_template":{"user_hash":"{user_hash}","feature":"{feature_scope}"}}}'
-                />
-              </Form.Item>
+                  <Form.Item label="管理员会话引用" name="admin_session_ref">
+                    <Input id="managedSiteAdminSessionRefInput" autoComplete="off" placeholder="config/sessions/site-admin.json" />
+                  </Form.Item>
+                  <Form.Item label="管理员动作模板 JSON" name="admin_action_templates">
+                    <TextArea
+                      id="managedSiteAdminActionTemplatesInput"
+                      autoSize={{ minRows: 3, maxRows: 8 }}
+                      placeholder='{"comments":{"method":"POST","path":"/admin/ban","body_template":{"user_hash":"{user_hash}","feature":"{feature_scope}"}}}'
+                    />
+                  </Form.Item>
+                </div>
+              </details>
               <Button id="registerManagedSiteBtn" type="primary" icon={<PlusOutlined />} onClick={registerManagedSite} disabled={writeLocked}>
                 保存站点
               </Button>
             </Form>
           </Card>
-        </Col>
-      </Row>
-      <Row gutter={[16, 16]}>
+        </div>
+      </details>
+      <details className="site-section-panel" open>
+        <summary>扫描发现</summary>
+        <Row className="site-section-body" gutter={[16, 16]}>
         <Col xs={24} xl={10}>
           <Card title="发起扫描">
             <Form form={siteScanForm} layout="vertical" initialValues={{ max_pages: 5, max_actions: 80, timeout_ms: 30000, allow_high_risk_actions: false }}>
@@ -307,8 +296,11 @@ export function SiteManagementTab({
             />
           </Card>
         </Col>
-      </Row>
-      <Row gutter={[16, 16]}>
+        </Row>
+      </details>
+      <details className="site-section-panel" open>
+        <summary>治理与动作</summary>
+        <Row className="site-section-body" gutter={[16, 16]}>
         <Col xs={24} xl={12}>
           <Card title="全局功能熔断">
             <Form form={siteFeatureBanForm} layout="vertical" initialValues={{ duration_seconds: 3600 }}>
@@ -357,58 +349,59 @@ export function SiteManagementTab({
             />
           </Card>
         </Col>
-      </Row>
-      <Card title="动作资产台账">
-        <Space className="table-actions" wrap>
-          <Select
-            id="siteActionSiteSelect"
-            className="field-md"
-            allowClear
-            placeholder="站点"
-            value={siteActionSiteId}
-            onChange={setSiteActionSiteId}
-            options={siteOptions}
-          />
-          <Select
-            id="siteActionRiskSelect"
-            className="field-sm"
-            value={siteActionRisk}
-            onChange={setSiteActionRisk}
-            options={[
-              { value: "all", label: "all" },
-              { value: "critical", label: "critical" },
-              { value: "high", label: "high" },
-              { value: "medium", label: "medium" },
-              { value: "low", label: "low" },
-            ]}
-          />
-          <Select
-            id="siteActionTypeSelect"
-            className="field-md"
-            value={siteActionType}
-            onChange={setSiteActionType}
-            options={[
-              "all",
-              "login",
-              "register",
-              "submit",
-              "search",
-              "save",
-              "delete",
-              "menu",
-              "pagination",
-              "dialog_trigger",
-              "upload",
-              "navigation",
-              "unknown",
-            ].map((value) => ({ value, label: value }))}
-          />
-          <Button id="siteActionsBtn" icon={<SearchOutlined />} onClick={showSiteActions}>
-            查询动作
-          </Button>
-        </Space>
-        <Table rowKey="id" columns={actionColumns} dataSource={siteActions} pagination={{ pageSize: 10 }} />
-      </Card>
+        </Row>
+        <Card title="动作资产台账">
+          <Space className="table-actions" wrap>
+            <Select
+              id="siteActionSiteSelect"
+              className="field-md"
+              allowClear
+              placeholder="站点"
+              value={siteActionSiteId}
+              onChange={setSiteActionSiteId}
+              options={siteOptions}
+            />
+            <Select
+              id="siteActionRiskSelect"
+              className="field-sm"
+              value={siteActionRisk}
+              onChange={setSiteActionRisk}
+              options={[
+                { value: "all", label: "all" },
+                { value: "critical", label: "critical" },
+                { value: "high", label: "high" },
+                { value: "medium", label: "medium" },
+                { value: "low", label: "low" },
+              ]}
+            />
+            <Select
+              id="siteActionTypeSelect"
+              className="field-md"
+              value={siteActionType}
+              onChange={setSiteActionType}
+              options={[
+                "all",
+                "login",
+                "register",
+                "submit",
+                "search",
+                "save",
+                "delete",
+                "menu",
+                "pagination",
+                "dialog_trigger",
+                "upload",
+                "navigation",
+                "unknown",
+              ].map((value) => ({ value, label: value }))}
+            />
+            <Button id="siteActionsBtn" icon={<SearchOutlined />} onClick={showSiteActions}>
+              查询动作
+            </Button>
+          </Space>
+          <Table rowKey="id" columns={actionColumns} dataSource={siteActions} pagination={{ pageSize: 10 }} />
+        </Card>
+      </details>
     </Space>
   );
 }

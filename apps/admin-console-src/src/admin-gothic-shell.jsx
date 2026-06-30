@@ -14,6 +14,7 @@ import { budgetLabel, providerLabel } from "./admin-support.jsx";
 
 const PARTICLE_COUNT = 34;
 const ORBIT_COUNT = 9;
+const NAV_WAKE_ZONE_RATIO = 0.03;
 
 function randomWingBackdrop() {
   return Math.random() < 0.5 ? "wing-bg-single" : "wing-bg-wide";
@@ -101,11 +102,12 @@ export function GothicConsoleShell({
       nav.style.removeProperty("transform");
       nav.style.removeProperty("filter");
       nav.style.removeProperty("--nav-marker-opacity");
+      nav.style.removeProperty("--nav-left");
       return;
     }
     nav.style.setProperty("--nav-marker-opacity", navAwake ? "0" : "1");
+    nav.style.setProperty("--nav-left", navAwake ? "var(--nav-expanded-left)" : "var(--nav-hidden-left)");
     nav.style.setProperty("opacity", navAwake ? "0.96" : "0.42", "important");
-    nav.style.setProperty("transform", navAwake ? "translate3d(0px, -50%, 0)" : "translate3d(calc(-100% + 30px), -50%, 0)", "important");
     nav.style.setProperty("filter", navAwake ? "none" : "saturate(0.72)", "important");
   }, [compactNav, navAwake]);
 
@@ -127,12 +129,34 @@ export function GothicConsoleShell({
     }, delay);
   }
 
+  function pointerIsInsideNavigation(clientX, clientY) {
+    const nav = navRef.current;
+    if (!nav) {
+      return false;
+    }
+    const navRect = nav.getBoundingClientRect();
+    const navStyle = window.getComputedStyle(nav);
+    const expandedLeft = Number.parseFloat(navStyle.getPropertyValue("--nav-expanded-left"));
+    const left = Number.isFinite(expandedLeft) ? expandedLeft : navRect.left;
+    const right = left + navRect.width;
+    return clientX >= left && clientX <= right && clientY >= navRect.top && clientY <= navRect.bottom;
+  }
+
+  function handleNavigationLeave(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    sleepNavigation(220);
+  }
+
   function handlePointerMove(event) {
     const rect = event.currentTarget.getBoundingClientRect();
     pendingPointer.current = {
       x: clamp((event.clientX - rect.left) / rect.width - 0.5, -0.5, 0.5),
       y: clamp((event.clientY - rect.top) / rect.height - 0.5, -0.5, 0.5),
       left: event.clientX - rect.left,
+      clientX: event.clientX,
+      clientY: event.clientY,
     };
     if (pointerFrame.current) {
       return;
@@ -144,7 +168,9 @@ export function GothicConsoleShell({
         return;
       }
       setPointer({ x: next.x, y: next.y });
-      if (next.left < 240) {
+      if (next.left < rect.width * NAV_WAKE_ZONE_RATIO) {
+        wakeNavigation();
+      } else if (pointerIsInsideNavigation(next.clientX, next.clientY)) {
         wakeNavigation();
       } else if (navAwakeRef.current) {
         sleepNavigation(260);
@@ -197,8 +223,8 @@ export function GothicConsoleShell({
 
   const navInlineStyle = compactNav ? undefined : {
     "--nav-marker-opacity": navAwake ? "0" : "1",
+    "--nav-left": navAwake ? "var(--nav-expanded-left)" : "var(--nav-hidden-left)",
     opacity: navAwake ? 0.96 : 0.42,
-    transform: navAwake ? "translate3d(0px, -50%, 0)" : "translate3d(calc(-100% + 30px), -50%, 0)",
     filter: navAwake ? "none" : "saturate(0.72)",
   };
 
@@ -228,7 +254,7 @@ export function GothicConsoleShell({
           aria-label="Control modules"
           style={navInlineStyle}
           onPointerEnter={wakeNavigation}
-          onPointerLeave={() => sleepNavigation(220)}
+          onPointerLeave={handleNavigationLeave}
         >
           <button
             id="navCollapseBtn"
@@ -238,7 +264,6 @@ export function GothicConsoleShell({
             title="Move pointer to the left edge to wake navigation"
             onClick={wakeNavigation}
             onPointerEnter={wakeNavigation}
-            onPointerLeave={() => sleepNavigation(220)}
           >
             <MenuUnfoldOutlined />
             <span>Modules</span>
@@ -251,7 +276,6 @@ export function GothicConsoleShell({
               data-menu-id={item.key}
               onClick={(event) => handleMenuClick(event, item.key)}
               onPointerEnter={wakeNavigation}
-              onPointerLeave={() => sleepNavigation(220)}
               title={item.label}
             >
               <span className="gothic-nav-index">{String(index + 1).padStart(2, "0")}</span>

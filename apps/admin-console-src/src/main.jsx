@@ -16,7 +16,6 @@ import {
   DatabaseOutlined,
   FileSearchOutlined,
   GlobalOutlined,
-  KeyOutlined,
   MessageOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
@@ -50,7 +49,6 @@ import {
 import {
   AdminAccountsTab,
   AdminLoginPanel,
-  ApiKeysTab,
 } from "./admin-access.jsx";
 import {
   SiteManagementTab,
@@ -112,10 +110,6 @@ const PAGE_ARCHITECTURE_META = {
     domain: "Access Control Domain",
     endpoints: ["GET /v1/admin/accounts", "POST /v1/admin/accounts"],
   },
-  apiKeys: {
-    domain: "Key Material / Invocation Domain",
-    endpoints: ["GET /v1/admin/api-keys", "POST /v1/admin/api-keys", "DELETE /v1/admin/api-keys/{id}"],
-  },
   appeals: {
     domain: "User Appeal Domain",
     endpoints: ["GET /v1/admin/appeals?status=", "POST /v1/admin/appeals/review"],
@@ -133,8 +127,15 @@ const PAGE_ARCHITECTURE_META = {
     endpoints: ["GET /v1/admin/ledger/recent?limit=&details=1"],
   },
   config: {
-    domain: "Gateway Configuration Domain",
-    endpoints: ["GET /v1/admin/config", "POST /v1/admin/config", "POST /v1/admin/break-glass/status"],
+    domain: "Gateway Configuration / Key Material Domain",
+    endpoints: [
+      "GET /v1/admin/config",
+      "POST /v1/admin/config",
+      "POST /v1/admin/break-glass/status",
+      "GET /v1/admin/api-keys",
+      "POST /v1/admin/api-keys",
+      "DELETE /v1/admin/api-keys/{id}",
+    ],
   },
 };
 
@@ -947,7 +948,6 @@ function App() {
       { key: "guide", icon: <CheckCircleOutlined />, label: "新手引导" },
       { key: "admins", icon: <UserOutlined />, label: "管理员账号" },
       { key: "sites", icon: <GlobalOutlined />, label: "接入网站" },
-      { key: "apiKeys", icon: <KeyOutlined />, label: "API keys" },
       { key: "appeals", icon: <FileSearchOutlined />, label: "申诉处理" },
       { key: "asyncReviews", icon: <BranchesOutlined />, label: "异步 AI 审查" },
       { key: "actions", icon: <ToolOutlined />, label: "动作管理" },
@@ -1068,20 +1068,6 @@ function App() {
         />
       ));
     }
-    if (activeMenu === "apiKeys") {
-      return pageFrame("apiKeys", (
-        <ApiKeysTab
-          apiKeys={apiKeys}
-          showApiKeys={showApiKeys}
-          apiKeyForm={apiKeyForm}
-          createApiKey={createApiKey}
-          deleteApiKey={deleteApiKey}
-          createdApiKey={createdApiKey}
-          clearCreatedApiKey={() => setCreatedApiKey(null)}
-          writeLocked={writeLocked}
-        />
-      ));
-    }
     if (activeMenu === "appeals") {
       return pageFrame("appeals", (
         <AppealsTab
@@ -1148,6 +1134,13 @@ function App() {
           status={status}
           breakGlassForm={breakGlassForm}
           breakGlass={breakGlass}
+          apiKeys={apiKeys}
+          showApiKeys={showApiKeys}
+          apiKeyForm={apiKeyForm}
+          createApiKey={createApiKey}
+          deleteApiKey={deleteApiKey}
+          createdApiKey={createdApiKey}
+          clearCreatedApiKey={() => setCreatedApiKey(null)}
         />
       ));
     }
@@ -1284,6 +1277,12 @@ createRoot(rootElement).render(
         colorSuccess: "#138a48",
         colorWarning: "#b7791f",
         colorError: "#c2410c",
+        colorTextBase: "#ffffff",
+        colorText: "#ffffff",
+        colorTextHeading: "#ffffff",
+        colorTextSecondary: "#ffffff",
+        colorTextDescription: "#ffffff",
+        colorTextDisabled: "rgba(255, 255, 255, 0.48)",
         borderRadius: 6,
         fontFamily: 'Arial, "Microsoft YaHei", sans-serif',
       },

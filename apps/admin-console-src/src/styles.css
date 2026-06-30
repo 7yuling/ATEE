@@ -383,25 +383,35 @@ body {
 }
 
 .gothic-nav {
+  --nav-expanded-left: 20px;
+  --nav-hidden-left: calc(50px - min(192px, 17vw));
   position: fixed;
-  left: 20px;
+  left: var(--nav-left, var(--nav-hidden-left));
   top: 50%;
   z-index: 20;
   width: min(192px, 17vw);
   display: grid;
   gap: 7px;
   opacity: var(--nav-opacity, 0.42);
-  transform: translate3d(var(--nav-offset, calc(-100% + 30px)), -50%, 0);
-  transition: opacity 180ms ease, transform 220ms ease, filter 220ms ease;
+  transform: translate3d(0, -50%, 0);
+  transition: opacity 180ms ease, left 220ms ease, filter 220ms ease;
   filter: var(--nav-filter, saturate(0.72));
+}
+
+.gothic-console:not(.nav-awake) .gothic-nav {
+  pointer-events: none;
+}
+
+.gothic-console.nav-awake .gothic-nav {
+  pointer-events: auto;
 }
 
 .gothic-nav::before {
   position: absolute;
   top: -28px;
-  right: -30px;
+  right: -2vw;
   bottom: -28px;
-  width: 54px;
+  width: 3vw;
   content: "";
 }
 
@@ -591,7 +601,7 @@ body {
 }
 
 .gothic-status dt {
-  color: var(--gothic-text);
+  color: #fff;
   font-size: 11px;
   font-weight: 900;
   line-height: 1.2;
@@ -600,10 +610,11 @@ body {
 
 .gothic-status dd {
   margin: 5px 0 0;
-  color: var(--gothic-muted);
+  color: #fff;
   font-size: 13px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.32);
 }
 
 .gothic-status.danger dd {
@@ -1077,6 +1088,15 @@ body {
   background: transparent !important;
 }
 
+.gothic-console .ant-table-wrapper .ant-table,
+.gothic-console .ant-table-wrapper .ant-table-container,
+.gothic-console .ant-table-wrapper .ant-table-thead > tr > th,
+.gothic-console .ant-table-wrapper .ant-table-tbody > tr > td,
+.gothic-console .ant-table-wrapper .ant-table-cell,
+.gothic-console .ant-table-wrapper .ant-empty-description {
+  color: #fff !important;
+}
+
 .ant-card {
   color: var(--gothic-text);
   border: 1px solid rgba(232, 232, 232, 0.13);
@@ -1147,6 +1167,74 @@ body {
 
 .gothic-page-body .ant-form {
   min-width: 0;
+}
+
+.site-section-panel {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--gothic-line);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.site-section-panel > summary {
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 950;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.site-section-panel[open] > summary {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--gothic-line);
+}
+
+.site-section-body {
+  width: 100%;
+}
+
+.site-section-panel > .ant-card,
+.site-section-panel > .site-section-body + .ant-card {
+  margin-top: 16px;
+}
+
+.site-management-stack {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.site-register-form {
+  width: min(100%, 760px);
+}
+
+.site-config-panel {
+  margin: 2px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--gothic-line);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.site-config-panel > summary {
+  color: var(--gothic-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.site-config-panel[open] > summary {
+  margin-bottom: 12px;
+}
+
+.site-config-fields {
+  display: grid;
+}
+
+.site-config-fields .ant-form-item:last-child {
+  margin-bottom: 0;
 }
 
 .compact-form {
@@ -1286,7 +1374,7 @@ body {
 .gothic-stage.active-dashboard .metric-value {
   margin-top: 6px;
   gap: 0;
-  color: rgba(255, 255, 255, 0.94);
+  color: #fff;
   font-size: 24px;
   letter-spacing: 0;
 }
@@ -1296,7 +1384,8 @@ body {
 }
 
 .gothic-stage.active-dashboard .metric-value span {
-  text-shadow: 0 0 18px rgba(255, 255, 255, 0.16);
+  color: #fff;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
 }
 
 .dashboard-metrics > .ant-col:nth-child(3n + 1) .metric-card {
@@ -1725,6 +1814,19 @@ textarea.ant-input::placeholder {
 .ant-select-selection-item,
 .ant-select-selection-placeholder {
   color: var(--gothic-text) !important;
+}
+
+.gothic-console .ant-select {
+  color: #000 !important;
+}
+
+.gothic-console .ant-select .ant-select-content,
+.gothic-console .ant-select .ant-select-input,
+.gothic-console .ant-select .ant-select-selection-item,
+.gothic-console .ant-select .ant-select-selection-placeholder,
+.gothic-console .ant-select .ant-select-arrow,
+.gothic-console .ant-select .ant-select-clear {
+  color: #000 !important;
 }
 
 .ant-switch {
