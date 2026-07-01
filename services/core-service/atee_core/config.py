@@ -5,6 +5,35 @@ from pathlib import Path
 from typing import Any
 
 
+CORE_APPEAL_PATH = "/v1/appeal"
+BUILT_IN_APPEAL_PATHS = (CORE_APPEAL_PATH, "/api/appeal")
+DEFAULT_APPEAL_PATHS = (
+    "/atee-appeal",
+    "/security/appeal",
+    "/.well-known/atee-appeal",
+    "/api/appeal",
+    "/api/appeal/submit",
+)
+
+
+def normalize_appeal_path(path: Any) -> str:
+    value = str(path or "").strip()
+    if not value:
+        return ""
+    if not value.startswith("/"):
+        value = "/" + value
+    return value.rstrip("/") or "/"
+
+
+def configured_appeal_paths(config: "AdminConfig") -> set[str]:
+    paths = [*BUILT_IN_APPEAL_PATHS, *config.appeal_paths]
+    return {normalized for item in paths if (normalized := normalize_appeal_path(item))}
+
+
+def is_appeal_path(path: str, config: "AdminConfig") -> bool:
+    return normalize_appeal_path(path) in configured_appeal_paths(config)
+
+
 @dataclass
 class AdminConfig:
     locale: str = "zh-CN"
@@ -35,12 +64,7 @@ class AdminConfig:
     bypass_enabled: bool = False
     bypass_key_file: str | None = None
     bypass_key: str | None = None
-    appeal_paths: tuple[str, ...] = (
-        "/atee-appeal",
-        "/security/appeal",
-        "/.well-known/atee-appeal",
-        "/api/appeal/submit",
-    )
+    appeal_paths: tuple[str, ...] = DEFAULT_APPEAL_PATHS
 
 
 DEFAULT_CONFIG = AdminConfig()
@@ -103,7 +127,11 @@ def config_from_dict(data: dict[str, Any] | None) -> AdminConfig:
         if key in base:
             base[key] = value
     base["trusted_proxy_cidrs"] = [str(item) for item in base.get("trusted_proxy_cidrs") or []]
-    base["appeal_paths"] = tuple(str(item) for item in base.get("appeal_paths") or DEFAULT_CONFIG.appeal_paths)
+    base["appeal_paths"] = tuple(
+        normalized
+        for item in base.get("appeal_paths") or DEFAULT_CONFIG.appeal_paths
+        if (normalized := normalize_appeal_path(item))
+    )
     return AdminConfig(**base)
 
 

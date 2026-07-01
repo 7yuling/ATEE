@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -120,6 +121,15 @@ class AteeHttpE2ETests(unittest.TestCase):
             {"user_id": feature_user, "feature_scope": feature_scope},
         )
         appeal = self._json("POST", "/v1/appeal", {"punishment_id": "http-e2e-p1", "reason": "please review"})
+        alias_appeal = self._json(
+            "POST",
+            "/api/appeal",
+            {"punishment_id": "http-e2e-p2", "reason": "legacy site route"},
+        )
+        form_appeal = self._form_json(
+            "/api/appeal/submit",
+            {"punishment_id": "http-e2e-p3", "reason": "form route"},
+        )
         pending = self._json("GET", "/v1/admin/appeals?status=pending")
         reviewed = self._json(
             "POST",
@@ -245,7 +255,14 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertTrue(feature_reviewed["auto_unban"]["executed"])
         self.assertTrue(feature_allowed["allowed"])
         self.assertEqual(appeal["status"], 202)
-        self.assertEqual(pending["count"], 1)
+        self.assertEqual(alias_appeal["status"], 202)
+        self.assertEqual(form_appeal["status"], 202)
+        self.assertEqual(pending["count"], 3)
+        self.assertTrue(
+            {"http-e2e-p1", "http-e2e-p2", "http-e2e-p3"}.issubset(
+                {item["punishment_id"] for item in pending["appeals"]}
+            )
+        )
         self.assertTrue(reviewed["ok"])
         self.assertEqual(active["count"], 1)
         self.assertTrue(revoked["ok"])
@@ -466,6 +483,21 @@ class AteeHttpE2ETests(unittest.TestCase):
                 {"username": "target-user", "password": "target-password"},
                 headers=proxy_referer_headers,
             )
+            proxied_appeal = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/api/appeal",
+                {"punishment_id": "proxy-appeal-p1", "reason": "through proxy"},
+            )
+            proxied_form_appeal = self._form_json(
+                f"/proxy/sites/{site_id}/api/appeal/submit",
+                {"punishment_id": "proxy-appeal-p2", "reason": "through proxy form"},
+            )
+            referer_form_appeal = self._form_json(
+                "/api/appeal/submit",
+                {"punishment_id": "proxy-appeal-p3", "reason": "referer fallback form"},
+                headers=proxy_referer_headers,
+            )
+            pending_appeals = self._json("GET", "/v1/admin/appeals?status=pending")
             site_fuse = self._json(
                 "POST",
                 "/v1/admin/site-feature-bans",
@@ -519,6 +551,15 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertEqual(referer_login_status, 200)
             self.assertTrue(referer_login["target_login"])
             self.assertIn(f"Path=/proxy/sites/{site_id}/", referer_login_headers["Set-Cookie"])
+            self.assertEqual(proxied_appeal["status"], 202)
+            self.assertEqual(proxied_form_appeal["status"], 202)
+            self.assertEqual(referer_form_appeal["status"], 202)
+            self.assertEqual(pending_appeals["count"], 3)
+            self.assertTrue(
+                {"proxy-appeal-p1", "proxy-appeal-p2", "proxy-appeal-p3"}.issubset(
+                    {item["punishment_id"] for item in pending_appeals["appeals"]}
+                )
+            )
             self.assertEqual(registered["site"]["site_proxy"]["standard"], "atee_site_proxy_v1")
             self.assertEqual(registered["site"]["site_proxy"]["proxy_path"], f"/proxy/sites/{site_id}/")
             self.assertIn(f'src="/proxy/sites/{site_id}/atee-runtime-guard.js"', html)
@@ -759,6 +800,24 @@ class AteeHttpE2ETests(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             return int(response.status), dict(response.headers), json.loads(response.read().decode("utf-8"))
+
+    def _form_json(self, path: str, payload: dict, headers: dict[str, str] | None = None) -> dict:
+        request_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        request_headers.update(headers or {})
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=urllib.parse.urlencode(payload).encode("utf-8"),
+            headers=request_headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            try:
+                return json.loads(error.read().decode("utf-8"))
+            finally:
+                error.close()
 
     def _text(self, method: str, path: str, headers: dict[str, str] | None = None) -> str:
         request = urllib.request.Request(self.base_url + path, headers=headers or {}, method=method)

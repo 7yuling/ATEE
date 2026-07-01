@@ -4,8 +4,9 @@ import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
+from .config import is_appeal_path
 from .core import CoreService
 from .async_review_worker import AsyncReviewWorker
 from .site_proxy import handle_site_proxy_request, is_site_proxy_path, proxy_path_from_referer
@@ -124,12 +125,17 @@ class AteeHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not_found"}, status=404)
 
     def do_POST(self) -> None:
+        remote_addr = self.client_address[0] if self.client_address else "127.0.0.1"
+        if self._is_public_appeal_path():
+            payload = self._read_json()
+            result = CORE.appeal(payload, remote_addr=remote_addr)
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
         if self._handle_site_proxy_context():
             return
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return
         payload = self._read_json()
-        remote_addr = self.client_address[0] if self.client_address else "127.0.0.1"
         if self.path == "/v1/auth/register":
             result = CORE.register_admin(payload)
             self._send_json(result, status=int(result.get("status", 200)))
@@ -275,6 +281,9 @@ class AteeHandler(BaseHTTPRequestHandler):
     def _is_admin_api_path(self) -> bool:
         return self.path == "/v1/admin" or self.path.startswith("/v1/admin/")
 
+    def _is_public_appeal_path(self) -> bool:
+        return is_appeal_path(urlsplit(self.path).path, CORE.config)
+
     def _ensure_admin_auth(self) -> bool:
         if CORE.admin_authorized(dict(self.headers.items())):
             return True
@@ -290,10 +299,17 @@ class AteeHandler(BaseHTTPRequestHandler):
         if length <= 0:
             return {}
         raw = self.rfile.read(length)
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type == "application/x-www-form-urlencoded":
+            try:
+                parsed = parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+            except UnicodeDecodeError:
+                return {}
+            return {key: values[-1] if values else "" for key, values in parsed.items()}
         try:
             data = json.loads(raw.decode("utf-8"))
             return data if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return {}
 
     def _query_limit(self, default: int = 20) -> int:

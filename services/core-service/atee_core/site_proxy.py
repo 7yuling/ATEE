@@ -5,7 +5,9 @@ import urllib.request
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
+
+from .config import is_appeal_path
 
 
 PROXY_PREFIX_RE = re.compile(r"^/proxy/sites/(\d+)(?:/(.*))?$")
@@ -112,6 +114,14 @@ def handle_site_proxy_request(handler: Any, core: Any, page_guard_dir: Path) -> 
         payload["site_id"] = site_id
         payload.setdefault("user_id", _proxy_user_id(handler, site))
         result = core.feature_access(payload)
+        _send_json(handler, result, status=int(result.get("status", 200)))
+        return True
+    if handler.command == "POST" and is_appeal_path(proxy_path, core.config):
+        payload = _read_payload_body(handler)
+        if payload is None:
+            return True
+        payload.setdefault("site_id", site_id)
+        result = core.appeal(payload, remote_addr=_remote_addr(handler))
         _send_json(handler, result, status=int(result.get("status", 200)))
         return True
 
@@ -604,6 +614,28 @@ def _read_json_body(handler: Any) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else {}
 
 
+def _read_payload_body(handler: Any) -> dict[str, Any] | None:
+    body = _read_body(handler)
+    if body is None:
+        return None
+    if not body:
+        return {}
+    content_type = handler.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    if content_type == "application/x-www-form-urlencoded":
+        try:
+            parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        except UnicodeDecodeError:
+            _send_json(handler, {"ok": False, "status": 400, "reason": "invalid_form"}, status=400)
+            return None
+        return {key: values[-1] if values else "" for key, values in parsed.items()}
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        _send_json(handler, {"ok": False, "status": 400, "reason": "invalid_json"}, status=400)
+        return None
+    return data if isinstance(data, dict) else {}
+
+
 def _proxy_user_id(handler: Any, site: dict[str, Any] | None = None) -> str:
     headers = []
     if site:
@@ -615,6 +647,10 @@ def _proxy_user_id(handler: Any, site: dict[str, Any] | None = None) -> str:
         if value:
             break
     return str(value).strip() or "site-proxy-user"
+
+
+def _remote_addr(handler: Any) -> str:
+    return handler.client_address[0] if handler.client_address else "127.0.0.1"
 
 
 def _send_json(handler: Any, payload: dict[str, Any], status: int = 200) -> None:

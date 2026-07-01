@@ -19,7 +19,7 @@ from .admin_auth import AdminAuthService
 from .api_keys import ApiKeyRegistry
 from .appeals import AppealService
 from .async_review import AsyncReviewQueue, AsyncReviewQueueFull
-from .config import DEFAULT_CONFIG, AdminConfig, ConfigStore, config_to_dict
+from .config import DEFAULT_CONFIG, AdminConfig, ConfigStore, config_to_dict, normalize_appeal_path
 from .decision_engine import AgentDecisionEngine
 from .fast_path import FastPathRuleGate
 from .i18n import response_display, runtime_display
@@ -370,7 +370,11 @@ class CoreService:
                 value = [str(item).strip() for item in raw_items if str(item).strip()]
             elif key == "appeal_paths":
                 raw_items = str(value).replace(",", "\n").splitlines() if isinstance(value, str) else (value or [])
-                value = tuple(str(item).strip() for item in raw_items if str(item).strip())
+                value = tuple(
+                    normalized
+                    for item in raw_items
+                    if (normalized := normalize_appeal_path(item))
+                )
             elif key == "runtime_mode":
                 value = str(value)
                 if value not in VALID_MODES:
