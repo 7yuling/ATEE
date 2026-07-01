@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 
 from .core import CoreService
 from .async_review_worker import AsyncReviewWorker
-from .site_proxy import handle_site_proxy_request, is_site_proxy_path
+from .site_proxy import handle_site_proxy_request, is_site_proxy_path, proxy_path_from_referer
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -31,8 +31,7 @@ class AteeHandler(BaseHTTPRequestHandler):
     server_version = "ATEECore/0.1"
 
     def do_GET(self) -> None:
-        if is_site_proxy_path(self.path):
-            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+        if self._handle_site_proxy_context():
             return
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return
@@ -125,8 +124,7 @@ class AteeHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not_found"}, status=404)
 
     def do_POST(self) -> None:
-        if is_site_proxy_path(self.path):
-            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+        if self._handle_site_proxy_context():
             return
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return
@@ -229,8 +227,7 @@ class AteeHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not_found"}, status=404)
 
     def do_DELETE(self) -> None:
-        if is_site_proxy_path(self.path):
-            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+        if self._handle_site_proxy_context():
             return
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return
@@ -248,19 +245,32 @@ class AteeHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not_found"}, status=404)
 
     def do_PUT(self) -> None:
-        if is_site_proxy_path(self.path):
-            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+        if self._handle_site_proxy_context():
             return
         self._send_json({"error": "not_found"}, status=404)
 
     def do_PATCH(self) -> None:
-        if is_site_proxy_path(self.path):
-            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+        if self._handle_site_proxy_context():
             return
         self._send_json({"error": "not_found"}, status=404)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _handle_site_proxy_context(self) -> bool:
+        if is_site_proxy_path(self.path):
+            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+            return True
+        proxy_path = proxy_path_from_referer(self.path, self.headers.get("Referer"))
+        if not proxy_path:
+            return False
+        original_path = self.path
+        self.path = proxy_path
+        try:
+            handle_site_proxy_request(self, CORE, PAGE_GUARD_DIR)
+        finally:
+            self.path = original_path
+        return True
 
     def _is_admin_api_path(self) -> bool:
         return self.path == "/v1/admin" or self.path.startswith("/v1/admin/")

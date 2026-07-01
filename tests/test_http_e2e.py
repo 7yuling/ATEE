@@ -454,10 +454,17 @@ class AteeHttpE2ETests(unittest.TestCase):
                     ],
                 },
             )
+            proxy_referer_headers = {"Referer": f"{self.base_url}/proxy/sites/{site_id}/login"}
             allowed_login_status, allowed_login_headers, allowed_login = self._json_response(
                 "POST",
                 f"/proxy/sites/{site_id}/api/login",
                 {"username": "target-user", "password": "target-password"},
+            )
+            referer_login_status, referer_login_headers, referer_login = self._json_response(
+                "POST",
+                "/api/login",
+                {"username": "target-user", "password": "target-password"},
+                headers=proxy_referer_headers,
             )
             site_fuse = self._json(
                 "POST",
@@ -477,6 +484,10 @@ class AteeHttpE2ETests(unittest.TestCase):
             proxied_me = self._json("GET", f"/proxy/sites/{site_id}/api/me")
             proxied_admin_status = self._json("GET", f"/proxy/sites/{site_id}/api/admin/status")
             target_admin = self._text("GET", f"/proxy/sites/{site_id}/admin")
+            referer_root = self._text("GET", "/", headers=proxy_referer_headers)
+            referer_me = self._json("GET", "/api/me", headers=proxy_referer_headers)
+            referer_admin_status = self._json("GET", "/api/admin/status", headers=proxy_referer_headers)
+            referer_admin = self._text("GET", "/admin", headers=proxy_referer_headers)
             managed_sites = self._json("GET", "/v1/admin/sites")
             observed_site_actions = self._json("GET", f"/v1/admin/site-actions?site_id={site_id}&action_type=submit")
             feature_access = self._json(
@@ -505,6 +516,9 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertTrue(allowed_login["target_login"])
             self.assertIn(f"Path=/proxy/sites/{site_id}/", allowed_login_headers["Set-Cookie"])
             self.assertNotIn("Domain=", allowed_login_headers["Set-Cookie"])
+            self.assertEqual(referer_login_status, 200)
+            self.assertTrue(referer_login["target_login"])
+            self.assertIn(f"Path=/proxy/sites/{site_id}/", referer_login_headers["Set-Cookie"])
             self.assertEqual(registered["site"]["site_proxy"]["standard"], "atee_site_proxy_v1")
             self.assertEqual(registered["site"]["site_proxy"]["proxy_path"], f"/proxy/sites/{site_id}/")
             self.assertIn(f'src="/proxy/sites/{site_id}/atee-runtime-guard.js"', html)
@@ -529,6 +543,10 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertTrue(proxied_me["ok"])
             self.assertTrue(proxied_admin_status["target_admin_status"])
             self.assertIn("target admin backend", target_admin)
+            self.assertIn(f'action="/proxy/sites/{site_id}/api/login"', referer_root)
+            self.assertTrue(referer_me["ok"])
+            self.assertTrue(referer_admin_status["target_admin_status"])
+            self.assertIn("target admin backend", referer_admin)
             self.assertEqual(managed_sites["sites"][0]["site_proxy"]["feature_map"]["#comment"], "comments")
             self.assertEqual(observed_site_actions["actions"][0]["metadata"]["atee_auto_match"]["status"], "applied")
             self.assertFalse(feature_access["allowed"])
@@ -539,7 +557,7 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertEqual(blocked_publish["status"], 403)
             self.assertTrue(blocked_publish["atee_blocked"])
             self.assertEqual(blocked_publish["feature_scope"], "publishing")
-            self.assertEqual(TargetHandler.login_attempts, 1)
+            self.assertEqual(TargetHandler.login_attempts, 2)
             self.assertEqual(TargetHandler.publish_attempts, 0)
             self.assertEqual(TargetHandler.admin_bans, 1)
             self.assertEqual(TargetHandler.admin_cookie, "target_admin=ok")
@@ -742,8 +760,8 @@ class AteeHttpE2ETests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=10) as response:
             return int(response.status), dict(response.headers), json.loads(response.read().decode("utf-8"))
 
-    def _text(self, method: str, path: str) -> str:
-        request = urllib.request.Request(self.base_url + path, method=method)
+    def _text(self, method: str, path: str, headers: dict[str, str] | None = None) -> str:
+        request = urllib.request.Request(self.base_url + path, headers=headers or {}, method=method)
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.read().decode("utf-8")
 

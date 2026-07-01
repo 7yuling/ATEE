@@ -44,6 +44,17 @@ def is_site_proxy_path(path: str) -> bool:
     return urlsplit(path).path.startswith("/proxy/sites/")
 
 
+def proxy_path_from_referer(path: str, referer: str | None) -> str:
+    if is_site_proxy_path(path):
+        return ""
+    parsed_referer = urlsplit(referer or "")
+    match = PROXY_PREFIX_RE.match(parsed_referer.path)
+    if not match:
+        return ""
+    parsed_path = urlsplit(path)
+    return urlunsplit(("", "", f"/proxy/sites/{int(match.group(1))}{parsed_path.path}", parsed_path.query, ""))
+
+
 def handle_site_proxy_request(handler: Any, core: Any, page_guard_dir: Path) -> bool:
     parsed = urlsplit(handler.path)
     match = PROXY_PREFIX_RE.match(parsed.path)
