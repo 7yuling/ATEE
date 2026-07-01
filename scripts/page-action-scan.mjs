@@ -208,7 +208,16 @@ function dedupeActions(actions) {
   const seen = new Set();
   const output = [];
   for (const action of actions) {
-    const key = `${action.page_url}|${action.selector}|${action.action_type}|${action.label}`;
+    const key = [
+      action.page_url,
+      action.action_type,
+      action.risk_level,
+      action.label,
+      normalizeSelector(action.selector),
+      action.form_method,
+      action.form_action || action.href,
+      action.suggested_feature_scope,
+    ].map((item) => String(item || "").trim().toLowerCase()).join("|");
     if (seen.has(key)) {
       continue;
     }
@@ -216,6 +225,15 @@ function dedupeActions(actions) {
     output.push(action);
   }
   return output;
+}
+
+function normalizeSelector(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s*>\s*/g, ">")
+    .replace(/\s+/g, " ")
+    .replace(/:nth-(?:child|of-type)\(\d+\)/g, ":nth(*)");
 }
 
 function isAllowedUrl(value) {

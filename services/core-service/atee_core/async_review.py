@@ -213,6 +213,41 @@ class AsyncReviewQueue:
             row = conn.execute("SELECT * FROM async_review_jobs WHERE id = ?", (int(job_id),)).fetchone()
         return self._row_to_job(row, include_payload=include_payload) if row else None
 
+    def delete(self, job_id: int) -> dict[str, Any]:
+        job = self.get(job_id, include_payload=False)
+        if not job:
+            return {"ok": False, "status": 404, "reason": "async_review_job_not_found"}
+        if job.get("status") == "processing":
+            return {"ok": False, "status": 409, "reason": "processing_async_review_cannot_be_deleted"}
+        with closing(sqlite3.connect(self.path)) as conn:
+            cursor = conn.execute(
+                "DELETE FROM async_review_jobs WHERE id = ? AND status <> 'processing'",
+                (int(job_id),),
+            )
+            conn.commit()
+        return {"ok": True, "status": 200, "deleted": int(cursor.rowcount), "job_id": int(job_id)}
+
+    def clear(self, status: str = "all") -> dict[str, Any]:
+        status = status if status in QUEUE_STATUSES else "all"
+        if status == "processing":
+            return {"ok": False, "status": 409, "reason": "processing_async_reviews_cannot_be_deleted"}
+        with closing(sqlite3.connect(self.path)) as conn:
+            processing_skipped = int(
+                conn.execute("SELECT COUNT(*) FROM async_review_jobs WHERE status = 'processing'").fetchone()[0]
+            )
+            if status == "all":
+                cursor = conn.execute("DELETE FROM async_review_jobs WHERE status <> 'processing'")
+            else:
+                cursor = conn.execute("DELETE FROM async_review_jobs WHERE status = ?", (status,))
+            conn.commit()
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": int(cursor.rowcount),
+            "filter_status": status,
+            "processing_skipped": processing_skipped if status == "all" else 0,
+        }
+
     def status(self) -> dict[str, Any]:
         with closing(sqlite3.connect(self.path)) as conn:
             return self._status_from_conn(conn)

@@ -388,6 +388,69 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(comment_action["metadata"]["atee_auto_match"]["status"], "applied")
             self.assertEqual(search_action["metadata"]["atee_auto_match"]["status"], "unapplied")
 
+    def test_site_action_inventory_deduplicates_repeated_table_controls(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example/admin",
+                    "allowed_domains": ["forum.example"],
+                }
+            )["site"]
+            repeated_user_delete = {
+                "page_url": "https://forum.example/admin/users",
+                "action_type": "delete",
+                "risk_level": "critical",
+                "label": "删除",
+                "selector": "#users-tbody > tr:nth-child(1) > td:nth-child(5) > button",
+            }
+
+            scan = core.create_site_scan(
+                {
+                    "site_id": site["id"],
+                    "start_url": site["base_url"],
+                    "actions": [
+                        repeated_user_delete,
+                        {**repeated_user_delete, "selector": "#users-tbody > tr:nth-child(2) > td:nth-child(5) > button"},
+                        {**repeated_user_delete, "selector": "#users-tbody > tr:nth-of-type(3) > td:nth-of-type(5) > button"},
+                        {
+                            "page_url": "https://forum.example/admin/topics",
+                            "action_type": "delete",
+                            "risk_level": "critical",
+                            "label": "删除",
+                            "selector": "#topics-tbody > tr:nth-child(1) > td:nth-child(5) > button",
+                        },
+                        {
+                            "page_url": "https://forum.example/admin/users",
+                            "action_type": "save",
+                            "risk_level": "high",
+                            "label": "保存",
+                            "selector": "#users-tbody > tr:nth-child(1) > td:nth-child(6) > button",
+                        },
+                    ],
+                }
+            )
+            repeat_scan = core.create_site_scan(
+                {
+                    "site_id": site["id"],
+                    "start_url": site["base_url"],
+                    "actions": [{**repeated_user_delete, "selector": "#users-tbody > tr:nth-child(4) > td:nth-child(5) > button"}],
+                }
+            )
+            actions = core.admin_site_actions(site_id=site["id"])["actions"]
+            delete_actions = [action for action in actions if action["action_type"] == "delete"]
+
+            self.assertTrue(scan["ok"])
+            self.assertEqual(scan["duplicates_removed"], 2)
+            self.assertTrue(repeat_scan["ok"])
+            self.assertEqual(core.admin_site_actions(site_id=site["id"])["count"], 3)
+            self.assertEqual(len(delete_actions), 2)
+            self.assertEqual(
+                {action["page_url"] for action in delete_actions},
+                {"https://forum.example/admin/users", "https://forum.example/admin/topics"},
+            )
+
     def test_site_feature_ban_applies_target_admin_template_without_leaking_session(self):
         class FakeResponse:
             status = 204
@@ -655,6 +718,61 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(second["status"], 429)
             self.assertEqual(len(core.appeals.appeals), 1)
 
+    def test_site_appeal_accepts_form_without_punishment_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example",
+                    "allowed_domains": ["forum.example"],
+                }
+            )["site"]
+
+            appeal = core.appeal(
+                {
+                    "site_id": site["id"],
+                    "username": "forum-user",
+                    "reason": "cannot access my account",
+                    "contact": "",
+                }
+            )
+            pending = core.admin_appeals(status="pending")
+
+            self.assertEqual(appeal["status"], 202)
+            self.assertEqual(pending["count"], 1)
+            self.assertTrue(pending["appeals"][0]["punishment_id"].startswith(f"site:{site['id']}:user:"))
+            self.assertEqual(pending["appeals"][0]["reason_untrusted_text"], "cannot access my account")
+
+    def test_site_appeal_without_punishment_id_matches_active_user_feature_ban(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example",
+                    "allowed_domains": ["forum.example"],
+                }
+            )["site"]
+            action = self._execute_user_feature_ban(core, user_id="forum-user", feature_scope="comments", site_id=site["id"])
+            punishment_id = f"action:{action['record']['id']}"
+
+            appeal = core.appeal(
+                {
+                    "site_id": site["id"],
+                    "username": "forum-user",
+                    "feature_scope": "comments",
+                    "reason": "please restore comments",
+                }
+            )
+            reviewed = core.review_appeal({"punishment_id": punishment_id, "resolution": "approved"})
+            access = core.feature_access({"site_id": site["id"], "user_id": "forum-user", "feature_scope": "comments"})
+
+            self.assertEqual(appeal["status"], 202)
+            self.assertEqual(appeal["appeal"]["punishment_id"], punishment_id)
+            self.assertTrue(reviewed["auto_unban"]["executed"])
+            self.assertTrue(access["allowed"])
+
     def test_appeals_survive_core_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config" / "config.json"
@@ -766,6 +884,117 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(expired_record["executed"])
             self.assertEqual(cleanup["expired_marked"], 1)
             self.assertEqual(expired["count"], 1)
+
+    def test_admin_can_delete_and_clear_console_records(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config" / "config.json"
+            core = CoreService(config=AdminConfig(runtime_mode="auto", llm_mode="mock"), config_path=config_path)
+
+            ledger_record = core.ledger.record(
+                {"severity": "medium", "event_type": "test_record", "summary": "delete me"}
+            )
+            deleted_ledger = core.delete_ledger_record(ledger_record["id"])
+            core.ledger.record({"severity": "medium", "event_type": "test_record", "summary": "clear me"})
+            cleared_ledger = core.clear_ledger_records()
+            ledger_after_clear_count = core.ledger_recent(limit=5)["status"]["persisted_records"]
+
+            core.appeal({"punishment_id": "delete-appeal", "reason": "remove"})
+            core.appeal({"punishment_id": "clear-appeal", "reason": "remove"})
+            deleted_appeal = core.delete_appeal_record("delete-appeal")
+            cleared_appeals = core.clear_appeal_records(status="pending")
+
+            active = core.executor.execute(
+                {"duration_seconds": 60, "target_scope": {"type": "request", "hash": "active"}},
+                {"executed": True, "effective_action": "challenge"},
+            )
+            active_delete = core.delete_action_record(active["record"]["id"])
+            revoked = core.revoke_action({"action_id": active["record"]["id"], "reason": "reviewed"})
+            deleted_action = core.delete_action_record(active["record"]["id"])
+            expired = core.executor.execute(
+                {"duration_seconds": -1, "target_scope": {"type": "request", "hash": "expired"}},
+                {"executed": True, "effective_action": "challenge"},
+            )
+            core.cleanup_expired_actions()
+            cleared_actions = core.clear_action_records(status="expired")
+
+            queued = core.event(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "normal async review"},
+                }
+            )
+            pending_job = core.admin_async_reviews(status="pending")["jobs"][0]
+            deleted_async = core.delete_async_review_record(pending_job["id"])
+            core.event(
+                {
+                    "method": "POST",
+                    "path": "/comment",
+                    "event_type": "comment_create",
+                    "body": {"text": "another async review"},
+                }
+            )
+            cleared_async = core.clear_async_review_records(status="pending")
+
+            site = core.register_site(
+                {
+                    "name": "records-site",
+                    "base_url": "https://records.example",
+                    "allowed_domains": ["records.example"],
+                }
+            )["site"]
+            scan = core.create_site_scan(
+                {
+                    "site_id": site["id"],
+                    "start_url": site["base_url"],
+                    "actions": [
+                        {
+                            "page_url": site["base_url"],
+                            "action_type": "delete",
+                            "risk_level": "critical",
+                            "label": "Delete",
+                        }
+                    ],
+                }
+            )
+            site_action_id = core.admin_site_actions(site_id=site["id"])["actions"][0]["id"]
+            deleted_site_action = core.delete_site_action_record(site_action_id)
+            deleted_scan = core.delete_site_scan_record(scan["scan"]["id"])
+            scan_two = core.create_site_scan(
+                {
+                    "site_id": site["id"],
+                    "start_url": site["base_url"],
+                    "actions": [{"page_url": site["base_url"], "action_type": "submit", "label": "Post"}],
+                }
+            )
+            cleared_site_scans = core.clear_site_scan_records(site_id=site["id"])
+
+            self.assertTrue(deleted_ledger["ok"])
+            self.assertEqual(cleared_ledger["deleted"], 1)
+            self.assertEqual(ledger_after_clear_count, 0)
+            self.assertTrue(deleted_appeal["ok"])
+            self.assertEqual(cleared_appeals["deleted"], 1)
+            self.assertEqual(core.admin_appeals(status="pending")["count"], 0)
+            self.assertFalse(active_delete["ok"])
+            self.assertEqual(active_delete["status"], 409)
+            self.assertTrue(revoked["ok"])
+            self.assertTrue(deleted_action["ok"])
+            self.assertTrue(expired["executed"])
+            self.assertEqual(cleared_actions["deleted"], 1)
+            self.assertEqual(core.admin_actions(status="all")["count"], 0)
+            self.assertEqual(queued["route"]["route"], "async_agent")
+            self.assertTrue(deleted_async["ok"])
+            self.assertEqual(cleared_async["deleted"], 1)
+            self.assertEqual(core.admin_async_reviews(status="all")["count"], 0)
+            self.assertTrue(deleted_site_action["ok"])
+            self.assertTrue(deleted_scan["ok"])
+            self.assertEqual(deleted_scan["deleted_actions"], 0)
+            self.assertTrue(scan_two["ok"])
+            self.assertEqual(cleared_site_scans["deleted"], 1)
+            self.assertEqual(cleared_site_scans["deleted_actions"], 1)
+            self.assertEqual(core.admin_site_scans(site_id=site["id"])["count"], 0)
+            self.assertEqual(core.admin_site_actions(site_id=site["id"])["count"], 0)
 
     def test_feature_access_blocks_active_user_feature_ban_with_punishment_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1024,6 +1253,8 @@ class AteeCoreTests(unittest.TestCase):
             expired_before_cleanup = core.admin_actions(status="expired")
             revoked = core.revoke_action({"action_id": active_record["id"], "reason": "read only check"})
             cleanup = core.cleanup_expired_actions()
+            deleted = core.delete_action_record(active_record["id"])
+            cleared = core.clear_action_records(status="all")
 
             self.assertEqual(listed["count"], 2)
             self.assertEqual(expired_before_cleanup["count"], 0)
@@ -1033,6 +1264,10 @@ class AteeCoreTests(unittest.TestCase):
             self.assertFalse(cleanup["ok"])
             self.assertEqual(cleanup["status"], 423)
             self.assertEqual(cleanup["reason"], "read_only_mode_blocks_action_cleanup")
+            self.assertFalse(deleted["ok"])
+            self.assertEqual(deleted["status"], 423)
+            self.assertFalse(cleared["ok"])
+            self.assertEqual(cleared["status"], 423)
             self.assertEqual(core.admin_actions(status="active")["count"], 2)
 
     def test_config_store_creates_and_loads_json(self):

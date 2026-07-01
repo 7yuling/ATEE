@@ -1,5 +1,6 @@
 import {
   BranchesOutlined,
+  DeleteOutlined,
   ReloadOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
@@ -41,8 +42,30 @@ export function AppealsTab({
   appeals,
   appealForm,
   reviewAppeal,
+  deleteAppeal,
+  clearAppeals,
   writeLocked,
 }) {
+  const columns = [
+    ...appealColumns,
+    {
+      title: "操作",
+      key: "recordActions",
+      width: 96,
+      render: (_, record) => (
+        <Popconfirm
+          title="删除申诉记录"
+          description="仅删除 ATEE 申诉记录，不会修改原站业务数据。"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={() => deleteAppeal(record.punishment_id)}
+          disabled={writeLocked}
+        >
+          <Button id={`deleteAppeal-${record.punishment_id}`} danger size="small" icon={<DeleteOutlined />} disabled={writeLocked} />
+        </Popconfirm>
+      ),
+    },
+  ];
   return (
     <Card title="申诉审核">
       <Space className="table-actions" wrap>
@@ -62,10 +85,20 @@ export function AppealsTab({
           className="field-xs"
         />
         <Button id="appealsBtn" icon={<ReloadOutlined />} onClick={() => showAppeals(appealStatus)}>刷新申诉</Button>
+        <Popconfirm
+          title="清空当前申诉列表"
+          description="按当前状态筛选清空 ATEE 申诉记录，不会修改原站业务数据。"
+          okText="清空"
+          cancelText="取消"
+          onConfirm={clearAppeals}
+          disabled={writeLocked}
+        >
+          <Button id="clearAppealsBtn" danger icon={<DeleteOutlined />} disabled={writeLocked}>清空申诉</Button>
+        </Popconfirm>
       </Space>
       <Table
         rowKey="punishment_id"
-        columns={appealColumns}
+        columns={columns}
         dataSource={appeals}
         pagination={{ pageSize: 5 }}
         expandable={{
@@ -129,8 +162,36 @@ export function ActionsTab({
   actionForm,
   cleanupActions,
   revokeAction,
+  deleteActionRecord,
+  clearActionRecords,
   writeLocked,
 }) {
+  const columns = [
+    ...actionColumns,
+    {
+      title: "操作",
+      key: "recordActions",
+      width: 112,
+      render: (_, record) => (
+        <Popconfirm
+          title="删除动作记录"
+          description="active 动作必须先撤销；这里只删除 ATEE 动作记录。"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={() => deleteActionRecord(record.id)}
+          disabled={writeLocked || record.status === "active"}
+        >
+          <Button
+            id={`deleteActionRecord-${record.id}`}
+            danger
+            size="small"
+            icon={<DeleteOutlined />}
+            disabled={writeLocked || record.status === "active"}
+          />
+        </Popconfirm>
+      ),
+    },
+  ];
   return (
     <Card title="动作撤销">
       <Space className="table-actions" wrap>
@@ -160,10 +221,20 @@ export function ActionsTab({
         >
           <Button id="cleanupActionsBtn" icon={<ToolOutlined />} disabled={writeLocked}>清理过期动作</Button>
         </Popconfirm>
+        <Popconfirm
+          title="清空当前动作记录"
+          description="active 动作不会被物理删除；请先撤销后再删除记录。"
+          okText="清空"
+          cancelText="取消"
+          onConfirm={clearActionRecords}
+          disabled={writeLocked || actionStatus === "active"}
+        >
+          <Button id="clearActionRecordsBtn" danger icon={<DeleteOutlined />} disabled={writeLocked || actionStatus === "active"}>清空记录</Button>
+        </Popconfirm>
       </Space>
       <Table
         rowKey="id"
-        columns={actionColumns}
+        columns={columns}
         dataSource={actions}
         pagination={{ pageSize: 5 }}
         onRow={(record) => activatableRow(() => actionForm.setFieldsValue({ action_id: record.id }))}
@@ -201,8 +272,36 @@ export function AsyncReviewsTab({
   manualReviewForm,
   manualFeatureBan,
   runAsyncReviews,
+  deleteAsyncReview,
+  clearAsyncReviews,
   writeLocked,
 }) {
+  const columns = [
+    ...asyncReviewColumns,
+    {
+      title: "操作",
+      key: "recordActions",
+      width: 96,
+      render: (_, record) => (
+        <Popconfirm
+          title="删除审查记录"
+          description="processing 状态任务不会被删除。"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={() => deleteAsyncReview(record.id)}
+          disabled={writeLocked || record.status === "processing"}
+        >
+          <Button
+            id={`deleteAsyncReview-${record.id}`}
+            danger
+            size="small"
+            icon={<DeleteOutlined />}
+            disabled={writeLocked || record.status === "processing"}
+          />
+        </Popconfirm>
+      ),
+    },
+  ];
   return (
     <Card title="异步 AI 审查队列">
       <Alert
@@ -235,10 +334,20 @@ export function AsyncReviewsTab({
         <Button id="runAsyncReviewsBtn" type="primary" icon={<BranchesOutlined />} onClick={runAsyncReviews} disabled={writeLocked}>
           处理到期任务
         </Button>
+        <Popconfirm
+          title="清空当前审查记录"
+          description="按当前状态清空异步审查记录；processing 任务会保留。"
+          okText="清空"
+          cancelText="取消"
+          onConfirm={clearAsyncReviews}
+          disabled={writeLocked || asyncReviewStatus === "processing"}
+        >
+          <Button id="clearAsyncReviewsBtn" danger icon={<DeleteOutlined />} disabled={writeLocked || asyncReviewStatus === "processing"}>清空记录</Button>
+        </Popconfirm>
       </Space>
       <Table
         rowKey="id"
-        columns={asyncReviewColumns}
+        columns={columns}
         dataSource={asyncReviews}
         pagination={{ pageSize: 5 }}
         onRow={(record) => activatableRow(() => manualReviewForm.setFieldsValue({

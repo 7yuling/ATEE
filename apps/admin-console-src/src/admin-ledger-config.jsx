@@ -2,6 +2,7 @@ import {
   ApiOutlined,
   CheckCircleOutlined,
   DatabaseOutlined,
+  DeleteOutlined,
   SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import {
@@ -38,16 +39,49 @@ export function LedgerTab({
   showLedger,
   ledgerColumns,
   ledgerRecords,
+  deleteLedgerRecord,
+  clearLedgerRecords,
+  writeLocked,
 }) {
+  const columns = [
+    ...ledgerColumns,
+    {
+      title: "操作",
+      key: "recordActions",
+      width: 96,
+      render: (_, record) => (
+        <Popconfirm
+          title="删除账本记录"
+          description="仅删除 ATEE 本地账本记录，不影响原站业务数据。"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={() => deleteLedgerRecord(record.id)}
+          disabled={writeLocked}
+        >
+          <Button id={`deleteLedgerRecord-${record.id}`} danger size="small" icon={<DeleteOutlined />} disabled={writeLocked} />
+        </Popconfirm>
+      ),
+    },
+  ];
   return (
     <Card title="最近账本">
       <Space className="table-actions" wrap>
         <InputNumber id="ledgerLimitInput" min={1} max={100} value={ledgerLimit} onChange={(value) => setLedgerLimit(value || 10)} />
         <Button id="ledgerBtn" icon={<DatabaseOutlined />} onClick={showLedger}>读取账本</Button>
+        <Popconfirm
+          title="清空账本记录"
+          description="会清空 ATEE 本地安全账本记录，不会删除原站业务数据。"
+          okText="清空"
+          cancelText="取消"
+          onConfirm={clearLedgerRecords}
+          disabled={writeLocked}
+        >
+          <Button id="clearLedgerRecordsBtn" danger icon={<DeleteOutlined />} disabled={writeLocked}>清空账本</Button>
+        </Popconfirm>
       </Space>
       <Table
         rowKey="id"
-        columns={ledgerColumns}
+        columns={columns}
         dataSource={ledgerRecords}
         pagination={{ pageSize: 5 }}
         expandable={{

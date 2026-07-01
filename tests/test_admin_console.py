@@ -52,10 +52,14 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertTrue(any(path.name.startswith("admin-antd-") for path in js_files))
         self.assertIn("/v1/admin/llm/test", js)
         self.assertIn("/v1/admin/ledger/recent", js)
+        self.assertIn("/v1/admin/ledger/records", js)
         self.assertIn("/v1/admin/appeals?status=", js)
+        self.assertIn("/v1/admin/appeals/", js)
         self.assertIn("/v1/admin/actions?status=", js)
+        self.assertIn("/v1/admin/actions/", js)
         self.assertIn("/v1/admin/actions/revoke", js)
         self.assertIn("/v1/admin/async-reviews?status=", js)
+        self.assertIn("/v1/admin/async-reviews/", js)
         self.assertIn("/v1/admin/async-reviews/run", js)
         self.assertIn("/v1/admin/config", js)
         self.assertIn("/v1/admin/preflight", js)
@@ -73,7 +77,9 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/api-keys", js)
         self.assertIn("/v1/admin/sites", js)
         self.assertIn("/v1/admin/site-scans", js)
+        self.assertIn("/v1/admin/site-scans/", js)
         self.assertIn("/v1/admin/site-actions", js)
+        self.assertIn("/v1/admin/site-actions/", js)
         self.assertIn("/v1/admin/site-feature-bans", js)
         self.assertIn("授权管理员会话", js)
         self.assertIn("直接扫描网络", js)
@@ -120,11 +126,15 @@ class AdminConsoleTests(unittest.TestCase):
             "appealIdInput",
             "appealNoteInput",
             "appealStatusSelect",
+            "clearAppealsBtn",
+            "deleteAppeal-${record.punishment_id}",
             "approveAppealBtn",
             "rejectAppealBtn",
             "actionIdInput",
             "actionStatusSelect",
             "cleanupActionsBtn",
+            "clearActionRecordsBtn",
+            "deleteActionRecord-${record.id}",
             "revokeActionBtn",
             "llmState",
             "circuitState",
@@ -162,6 +172,8 @@ class AdminConsoleTests(unittest.TestCase):
             "outputSummary",
             "resultSummary",
             "ledgerLimitInput",
+            "clearLedgerRecordsBtn",
+            "deleteLedgerRecord-${record.id}",
             "configSaveBtn",
             "localeSelect",
             "configModeSelect",
@@ -207,6 +219,8 @@ class AdminConsoleTests(unittest.TestCase):
             "asyncReviewStatusSelect",
             "asyncReviewsBtn",
             "runAsyncReviewsBtn",
+            "clearAsyncReviewsBtn",
+            "deleteAsyncReview-${record.id}",
             "managedSitesBtn",
             "managedSiteNameInput",
             "managedSiteBaseUrlInput",
@@ -230,12 +244,16 @@ class AdminConsoleTests(unittest.TestCase):
             "siteScanHighRiskSwitch",
             "startSiteScanBtn",
             "siteScansBtn",
+            "clearSiteScansBtn",
+            "deleteSiteScan-${record.id}",
             "scan-error-text",
             "scan-error-detail",
             "siteActionSiteSelect",
             "siteActionRiskSelect",
             "siteActionTypeSelect",
             "siteActionsBtn",
+            "clearSiteActionsBtn",
+            "deleteSiteAction-${record.id}",
             "siteFeatureBanSiteSelect",
             "siteFeatureBanFeatureInput",
             "siteFeatureBanDurationInput",
@@ -287,7 +305,9 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/api-keys", source)
         self.assertIn("/v1/admin/sites", source)
         self.assertIn("/v1/admin/site-scans", source)
+        self.assertIn("/v1/admin/site-scans/", source)
         self.assertIn("/v1/admin/site-actions", source)
+        self.assertIn("/v1/admin/site-actions/", source)
         self.assertIn("/v1/admin/site-feature-bans", source)
         self.assertIn("startPageGuard", source)
         self.assertIn("classifyControl", source)

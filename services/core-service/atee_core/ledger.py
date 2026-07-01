@@ -43,6 +43,20 @@ class SQLiteLedgerStore:
             row = conn.execute("SELECT COUNT(*) FROM ledger_records").fetchone()
             return int(row[0] if row else 0)
 
+    def delete(self, record_id: int) -> int:
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute("DELETE FROM ledger_records WHERE id = ?", (int(record_id),))
+            conn.commit()
+            return int(cursor.rowcount)
+
+    def clear(self) -> int:
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute("DELETE FROM ledger_records")
+            deleted = int(cursor.rowcount)
+            conn.commit()
+            conn.execute("VACUUM")
+            return deleted
+
     def recent(self, limit: int = 20, include_payload: bool = False) -> list[dict[str, Any]]:
         payload_column = ", payload_json" if include_payload else ""
         with self._lock, closing(self._connect()) as conn:
@@ -186,6 +200,24 @@ class SecurityLedgerLite:
         if not include_details:
             return [{key: value for key, value in record.items() if key != "details"} for record in records]
         return records
+
+    def delete_record(self, record_id: int) -> int:
+        if self.store:
+            deleted = self.store.delete(record_id)
+        else:
+            before = len(self.records)
+            self.records = [record for record in self.records if int(record.get("id") or -1) != int(record_id)]
+            deleted = before - len(self.records)
+        return deleted
+
+    def clear_records(self) -> int:
+        if self.store:
+            deleted = self.store.clear()
+        else:
+            deleted = len(self.records)
+        self.records.clear()
+        self.aggregates.clear()
+        return deleted
 
     def _trim_if_needed(self) -> None:
         rough_bytes = sum(len(str(record)) for record in self.records)

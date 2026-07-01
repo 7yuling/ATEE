@@ -68,6 +68,22 @@ class SQLiteAppealStore:
             )
             conn.commit()
 
+    def delete(self, punishment_id: str) -> int:
+        with closing(sqlite3.connect(self.path)) as conn:
+            cursor = conn.execute("DELETE FROM appeals WHERE punishment_id = ?", (punishment_id,))
+            conn.commit()
+            return int(cursor.rowcount)
+
+    def clear(self, status: str = "all") -> int:
+        status = status if status in {"pending", "approved", "rejected", "all"} else "all"
+        with closing(sqlite3.connect(self.path)) as conn:
+            if status == "all":
+                cursor = conn.execute("DELETE FROM appeals")
+            else:
+                cursor = conn.execute("DELETE FROM appeals WHERE status = ?", (status,))
+            conn.commit()
+            return int(cursor.rowcount)
+
     def review(self, punishment_id: str, status: str, admin_note: str) -> dict[str, Any] | None:
         now = datetime.now(timezone.utc).isoformat()
         with closing(sqlite3.connect(self.path)) as conn:
@@ -161,6 +177,28 @@ class AppealService:
         if status != "all":
             appeals = [appeal for appeal in appeals if appeal.get("status") == status]
         return appeals[: max(1, min(int(limit), 100))]
+
+    def delete(self, punishment_id: str) -> int:
+        punishment_id = str(punishment_id or "")
+        if self.store:
+            deleted = self.store.delete(punishment_id)
+        else:
+            deleted = 1 if punishment_id in self.appeals else 0
+        self.appeals.pop(punishment_id, None)
+        return deleted
+
+    def clear(self, status: str = "all") -> int:
+        status = status if status in {"pending", "approved", "rejected", "all"} else "all"
+        if self.store:
+            deleted = self.store.clear(status)
+            self.appeals = self.store.load_pending()
+            return deleted
+        before = len(self.appeals)
+        if status == "all":
+            self.appeals.clear()
+            return before
+        self.appeals = {key: appeal for key, appeal in self.appeals.items() if appeal.get("status") != status}
+        return before - len(self.appeals)
 
     def review(self, payload: dict[str, Any]) -> dict[str, Any]:
         punishment_id = str(payload.get("punishment_id") or "")

@@ -289,6 +289,27 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertEqual(site_actions["count"], 1)
         self.assertEqual(site_actions["actions"][0]["action_type"], "delete")
 
+        delete_appeal = self._json("DELETE", "/v1/admin/appeals/http-e2e-p2")
+        clear_appeals = self._json("DELETE", "/v1/admin/appeals?status=pending")
+        delete_action_record = self._json("DELETE", f"/v1/admin/actions/{action_id}")
+        clear_action_records = self._json("DELETE", "/v1/admin/actions?status=revoked")
+        delete_async_review = self._json("DELETE", f"/v1/admin/async-reviews/{async_completed['jobs'][0]['id']}")
+        delete_site_action = self._json("DELETE", f"/v1/admin/site-actions/{site_actions['actions'][0]['id']}")
+        clear_site_scans = self._json("DELETE", f"/v1/admin/site-scans?site_id={registered_site['site']['id']}")
+        ledger_recent = self._json("GET", "/v1/admin/ledger/recent?limit=1&details=1")
+        delete_ledger = self._json("DELETE", f"/v1/admin/ledger/records/{ledger_recent['records'][0]['id']}")
+        clear_ledger = self._json("DELETE", "/v1/admin/ledger/records")
+
+        self.assertTrue(delete_appeal["ok"])
+        self.assertEqual(clear_appeals["deleted"], 1)
+        self.assertTrue(delete_action_record["ok"])
+        self.assertGreaterEqual(clear_action_records["deleted"], 1)
+        self.assertTrue(delete_async_review["ok"])
+        self.assertTrue(delete_site_action["ok"])
+        self.assertEqual(clear_site_scans["deleted"], 1)
+        self.assertTrue(delete_ledger["ok"])
+        self.assertTrue(clear_ledger["ok"])
+
     def test_admin_console_csp_nonce_is_generated_per_response(self):
         status_one, headers_one, html_one = self._response("GET", "/")
         status_two, headers_two, html_two = self._response("GET", "/")
@@ -488,6 +509,11 @@ class AteeHttpE2ETests(unittest.TestCase):
                 f"/proxy/sites/{site_id}/api/appeal",
                 {"punishment_id": "proxy-appeal-p1", "reason": "through proxy"},
             )
+            proxied_site_form_appeal = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/api/appeal",
+                {"username": "target-user", "reason": "through proxy site form", "contact": ""},
+            )
             proxied_form_appeal = self._form_json(
                 f"/proxy/sites/{site_id}/api/appeal/submit",
                 {"punishment_id": "proxy-appeal-p2", "reason": "through proxy form"},
@@ -552,9 +578,11 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertTrue(referer_login["target_login"])
             self.assertIn(f"Path=/proxy/sites/{site_id}/", referer_login_headers["Set-Cookie"])
             self.assertEqual(proxied_appeal["status"], 202)
+            self.assertEqual(proxied_site_form_appeal["status"], 202)
+            self.assertTrue(proxied_site_form_appeal["appeal"]["punishment_id"].startswith(f"site:{site_id}:user:"))
             self.assertEqual(proxied_form_appeal["status"], 202)
             self.assertEqual(referer_form_appeal["status"], 202)
-            self.assertEqual(pending_appeals["count"], 3)
+            self.assertEqual(pending_appeals["count"], 4)
             self.assertTrue(
                 {"proxy-appeal-p1", "proxy-appeal-p2", "proxy-appeal-p3"}.issubset(
                     {item["punishment_id"] for item in pending_appeals["appeals"]}

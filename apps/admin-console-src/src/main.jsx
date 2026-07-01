@@ -104,7 +104,15 @@ const PAGE_ARCHITECTURE_META = {
   },
   sites: {
     domain: "External Site / Action Inventory Domain",
-    endpoints: ["GET /v1/admin/sites", "POST /v1/admin/sites", "POST /v1/admin/site-scans", "GET /v1/admin/site-actions", "POST /v1/admin/site-feature-bans"],
+    endpoints: [
+      "GET /v1/admin/sites",
+      "POST /v1/admin/sites",
+      "POST /v1/admin/site-scans",
+      "DELETE /v1/admin/site-scans/{id}",
+      "GET /v1/admin/site-actions",
+      "DELETE /v1/admin/site-actions/{id}",
+      "POST /v1/admin/site-feature-bans",
+    ],
   },
   admins: {
     domain: "Access Control Domain",
@@ -112,19 +120,19 @@ const PAGE_ARCHITECTURE_META = {
   },
   appeals: {
     domain: "User Appeal Domain",
-    endpoints: ["GET /v1/admin/appeals?status=", "POST /v1/admin/appeals/review"],
+    endpoints: ["GET /v1/admin/appeals?status=", "DELETE /v1/admin/appeals/{punishment_id}", "POST /v1/admin/appeals/review"],
   },
   asyncReviews: {
     domain: "Queue / Manual Disposition Domain",
-    endpoints: ["GET /v1/admin/async-reviews?status=", "POST /v1/admin/async-reviews/run"],
+    endpoints: ["GET /v1/admin/async-reviews?status=", "DELETE /v1/admin/async-reviews/{id}", "POST /v1/admin/async-reviews/run"],
   },
   actions: {
     domain: "Action Lifecycle Domain",
-    endpoints: ["GET /v1/admin/actions?status=", "POST /v1/admin/actions/revoke"],
+    endpoints: ["GET /v1/admin/actions?status=", "DELETE /v1/admin/actions/{id}", "POST /v1/admin/actions/revoke"],
   },
   ledger: {
     domain: "Audit Ledger Domain",
-    endpoints: ["GET /v1/admin/ledger/recent?limit=&details=1"],
+    endpoints: ["GET /v1/admin/ledger/recent?limit=&details=1", "DELETE /v1/admin/ledger/records/{id}"],
   },
   config: {
     domain: "Gateway Configuration / Key Material Domain",
@@ -705,21 +713,67 @@ function App() {
     });
   }
 
+  async function deleteSiteScan(scanId) {
+    await run("delete-site-scan", async () => {
+      const { data } = await apiRequest(`/v1/admin/site-scans/${scanId}`, { method: "DELETE" });
+      await showSiteScans();
+      await showSiteActions();
+      await showManagedSites();
+      return data;
+    });
+  }
+
+  async function clearSiteScans() {
+    await run("clear-site-scans", async () => {
+      const { data } = await apiRequest("/v1/admin/site-scans", { method: "DELETE" });
+      await showSiteScans();
+      await showSiteActions();
+      await showManagedSites();
+      return data;
+    });
+  }
+
+  function currentSiteActionParams() {
+    const params = new URLSearchParams({ limit: "100" });
+    if (siteActionSiteId) {
+      params.set("site_id", String(siteActionSiteId));
+    }
+    if (siteActionRisk && siteActionRisk !== "all") {
+      params.set("risk_level", siteActionRisk);
+    }
+    if (siteActionType && siteActionType !== "all") {
+      params.set("action_type", siteActionType);
+    }
+    return params;
+  }
+
   async function showSiteActions() {
     await run("site-actions", async () => {
-      const params = new URLSearchParams({ limit: "100" });
-      if (siteActionSiteId) {
-        params.set("site_id", String(siteActionSiteId));
-      }
-      if (siteActionRisk && siteActionRisk !== "all") {
-        params.set("risk_level", siteActionRisk);
-      }
-      if (siteActionType && siteActionType !== "all") {
-        params.set("action_type", siteActionType);
-      }
+      const params = currentSiteActionParams();
       const { data } = await apiRequest(`/v1/admin/site-actions?${params.toString()}`);
       setSiteActions(data.actions || []);
       await refresh();
+      return data;
+    });
+  }
+
+  async function deleteSiteAction(actionId) {
+    await run("delete-site-action", async () => {
+      const { data } = await apiRequest(`/v1/admin/site-actions/${actionId}`, { method: "DELETE" });
+      await showSiteActions();
+      await showManagedSites();
+      return data;
+    });
+  }
+
+  async function clearSiteActions() {
+    await run("clear-site-actions", async () => {
+      const params = currentSiteActionParams();
+      params.delete("limit");
+      const query = params.toString();
+      const { data } = await apiRequest(`/v1/admin/site-actions${query ? `?${query}` : ""}`, { method: "DELETE" });
+      await showSiteActions();
+      await showManagedSites();
       return data;
     });
   }
@@ -738,11 +792,44 @@ function App() {
     });
   }
 
+  async function deleteLedgerRecord(recordId) {
+    await run("delete-ledger-record", async () => {
+      const { data } = await apiRequest(`/v1/admin/ledger/records/${recordId}`, { method: "DELETE" });
+      await showLedger();
+      return data;
+    });
+  }
+
+  async function clearLedgerRecords() {
+    await run("clear-ledger-records", async () => {
+      const { data } = await apiRequest("/v1/admin/ledger/records", { method: "DELETE" });
+      setLedgerRecords([]);
+      await refresh();
+      return data;
+    });
+  }
+
   async function showAppeals(statusFilter = appealStatus) {
     await run("appeals", async () => {
       const { data } = await apiRequest(`/v1/admin/appeals?status=${encodeURIComponent(statusFilter)}`);
       setAppeals(data.appeals || []);
       await refresh();
+      return data;
+    });
+  }
+
+  async function deleteAppeal(punishmentId) {
+    await run("delete-appeal", async () => {
+      const { data } = await apiRequest(`/v1/admin/appeals/${encodeURIComponent(punishmentId)}`, { method: "DELETE" });
+      await showAppeals(appealStatus);
+      return data;
+    });
+  }
+
+  async function clearAppeals() {
+    await run("clear-appeals", async () => {
+      const { data } = await apiRequest(`/v1/admin/appeals?status=${encodeURIComponent(appealStatus)}`, { method: "DELETE" });
+      await showAppeals(appealStatus);
       return data;
     });
   }
@@ -772,11 +859,43 @@ function App() {
     });
   }
 
+  async function deleteActionRecord(actionId) {
+    await run("delete-action-record", async () => {
+      const { data } = await apiRequest(`/v1/admin/actions/${actionId}`, { method: "DELETE" });
+      await showActions(actionStatus);
+      return data;
+    });
+  }
+
+  async function clearActionRecords() {
+    await run("clear-action-records", async () => {
+      const { data } = await apiRequest(`/v1/admin/actions?status=${encodeURIComponent(actionStatus)}`, { method: "DELETE" });
+      await showActions(actionStatus);
+      return data;
+    });
+  }
+
   async function showAsyncReviews(statusFilter = asyncReviewStatus) {
     await run("async-reviews", async () => {
       const { data } = await apiRequest(`/v1/admin/async-reviews?status=${encodeURIComponent(statusFilter)}`);
       setAsyncReviews(data.jobs || []);
       await refresh();
+      return data;
+    });
+  }
+
+  async function deleteAsyncReview(jobId) {
+    await run("delete-async-review", async () => {
+      const { data } = await apiRequest(`/v1/admin/async-reviews/${jobId}`, { method: "DELETE" });
+      await showAsyncReviews(asyncReviewStatus);
+      return data;
+    });
+  }
+
+  async function clearAsyncReviews() {
+    await run("clear-async-reviews", async () => {
+      const { data } = await apiRequest(`/v1/admin/async-reviews?status=${encodeURIComponent(asyncReviewStatus)}`, { method: "DELETE" });
+      await showAsyncReviews(asyncReviewStatus);
       return data;
     });
   }
@@ -1051,6 +1170,10 @@ function App() {
           setSiteActionType={setSiteActionType}
           siteActionSiteId={siteActionSiteId}
           setSiteActionSiteId={setSiteActionSiteId}
+          deleteSiteScan={deleteSiteScan}
+          clearSiteScans={clearSiteScans}
+          deleteSiteAction={deleteSiteAction}
+          clearSiteActions={clearSiteActions}
           writeLocked={writeLocked}
         />
       ));
@@ -1078,6 +1201,8 @@ function App() {
           appeals={appeals}
           appealForm={appealForm}
           reviewAppeal={reviewAppeal}
+          deleteAppeal={deleteAppeal}
+          clearAppeals={clearAppeals}
           writeLocked={writeLocked}
         />
       ));
@@ -1093,6 +1218,8 @@ function App() {
           actionForm={actionForm}
           cleanupActions={cleanupActions}
           revokeAction={revokeAction}
+          deleteActionRecord={deleteActionRecord}
+          clearActionRecords={clearActionRecords}
           writeLocked={writeLocked}
         />
       ));
@@ -1108,6 +1235,8 @@ function App() {
           manualReviewForm={manualReviewForm}
           manualFeatureBan={manualFeatureBan}
           runAsyncReviews={runAsyncReviews}
+          deleteAsyncReview={deleteAsyncReview}
+          clearAsyncReviews={clearAsyncReviews}
           writeLocked={writeLocked}
         />
       ));
@@ -1120,6 +1249,9 @@ function App() {
           showLedger={showLedger}
           ledgerColumns={ledgerColumns}
           ledgerRecords={ledgerRecords}
+          deleteLedgerRecord={deleteLedgerRecord}
+          clearLedgerRecords={clearLedgerRecords}
+          writeLocked={writeLocked}
         />
       ));
     }

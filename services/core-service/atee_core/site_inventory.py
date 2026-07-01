@@ -256,6 +256,37 @@ class SiteProxyConfigMixin:
             text = default
         return text[:limit]
 
+    def _dedupe_site_actions(self, actions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for action in actions:
+            key = self._action_inventory_key(action)
+            if key in seen:
+                continue
+            deduped.append(action)
+            seen.add(key)
+        return deduped, len(actions) - len(deduped)
+
+    def _action_inventory_key(self, action: dict[str, Any]) -> tuple[str, ...]:
+        selector = self._normalize_action_selector(action.get("selector"))
+        return (
+            self._text(action.get("page_url"), "", 500).lower(),
+            self._text(action.get("action_type"), "", 80).lower(),
+            self._text(action.get("risk_level"), "", 40).lower(),
+            self._text(action.get("label"), "", 160).lower(),
+            selector,
+            self._text(action.get("form_method"), "", 20).upper(),
+            self._text(action.get("form_action") or action.get("href"), "", 240).lower(),
+            self._text(action.get("suggested_feature_scope"), "", 120).lower(),
+        )
+
+    def _normalize_action_selector(self, value: Any) -> str:
+        selector = self._text(value, "", 240).lower()
+        selector = re.sub(r"\s*>\s*", ">", selector)
+        selector = re.sub(r"\s+", " ", selector)
+        selector = re.sub(r":nth-(?:child|of-type)\(\d+\)", ":nth(*)", selector)
+        return selector
+
 
 class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
     def __init__(self, path: str | Path):
@@ -380,8 +411,13 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
                 ),
             )
             scan_id = int(cursor.lastrowid)
+            existing_action_keys = self._existing_action_keys(conn, int(site_id))
             for action in actions:
+                action_key = self._action_inventory_key(action)
+                if action_key in existing_action_keys:
+                    continue
                 self._insert_action(conn, int(site_id), scan_id, action, now)
+                existing_action_keys.add(action_key)
             conn.commit()
             row = conn.execute("SELECT * FROM site_scan_runs WHERE id = ?", (scan_id,)).fetchone()
         return self._scan_from_row(row)
@@ -408,6 +444,7 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
         action_type: str = "all",
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        desired_limit = max(1, min(int(limit or 100), 500))
         clauses: list[str] = []
         params: list[Any] = []
         if site_id:
@@ -426,11 +463,101 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY CASE risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id DESC LIMIT ?"
-        params.append(max(1, min(int(limit or 100), 500)))
+        params.append(500)
         with self._lock, closing(self._connect()) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(query, tuple(params)).fetchall()
-        return [self._action_from_row(row) for row in rows]
+        actions, _ = self._dedupe_site_actions([self._action_from_row(row) for row in rows])
+        return actions[:desired_limit]
+
+    def _existing_action_keys(self, conn: sqlite3.Connection, site_id: int) -> set[tuple[str, ...]]:
+        rows = conn.execute("SELECT * FROM site_action_inventory WHERE site_id = ?", (int(site_id),)).fetchall()
+        return {self._action_inventory_key(self._action_from_row(row)) for row in rows}
+
+    def delete_scan(self, scan_id: int) -> dict[str, Any]:
+        with self._lock, closing(self._connect()) as conn:
+            action_cursor = conn.execute("DELETE FROM site_action_inventory WHERE scan_id = ?", (int(scan_id),))
+            scan_cursor = conn.execute("DELETE FROM site_scan_runs WHERE id = ?", (int(scan_id),))
+            conn.commit()
+        deleted = int(scan_cursor.rowcount)
+        if not deleted:
+            return {"ok": False, "status": 404, "reason": "site_scan_not_found"}
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": deleted,
+            "deleted_actions": int(action_cursor.rowcount),
+            "scan_id": int(scan_id),
+        }
+
+    def clear_scans(self, site_id: int | None = None) -> dict[str, Any]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if site_id:
+            clauses.append("site_id = ?")
+            params.append(int(site_id))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._lock, closing(self._connect()) as conn:
+            scan_ids = [
+                int(row[0])
+                for row in conn.execute(f"SELECT id FROM site_scan_runs{where}", tuple(params)).fetchall()
+            ]
+            deleted_actions = 0
+            if scan_ids:
+                placeholders = ",".join("?" for _ in scan_ids)
+                deleted_actions = int(
+                    conn.execute(
+                        f"DELETE FROM site_action_inventory WHERE scan_id IN ({placeholders})",
+                        tuple(scan_ids),
+                    ).rowcount
+                )
+            scan_cursor = conn.execute(f"DELETE FROM site_scan_runs{where}", tuple(params))
+            conn.commit()
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": int(scan_cursor.rowcount),
+            "deleted_actions": deleted_actions,
+            "site_id": int(site_id) if site_id else None,
+        }
+
+    def delete_action(self, action_id: int) -> dict[str, Any]:
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute("DELETE FROM site_action_inventory WHERE id = ?", (int(action_id),))
+            conn.commit()
+        deleted = int(cursor.rowcount)
+        if not deleted:
+            return {"ok": False, "status": 404, "reason": "site_action_not_found"}
+        return {"ok": True, "status": 200, "deleted": deleted, "action_id": int(action_id)}
+
+    def clear_actions(
+        self,
+        site_id: int | None = None,
+        scan_id: int | None = None,
+        risk_level: str = "all",
+        action_type: str = "all",
+    ) -> dict[str, Any]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if site_id:
+            clauses.append("site_id = ?")
+            params.append(int(site_id))
+        if scan_id:
+            clauses.append("scan_id = ?")
+            params.append(int(scan_id))
+        if risk_level in RISK_LEVELS:
+            clauses.append("risk_level = ?")
+            params.append(risk_level)
+        if action_type in ACTION_TYPES:
+            clauses.append("action_type = ?")
+            params.append(action_type)
+        query = "DELETE FROM site_action_inventory"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute(query, tuple(params))
+            conn.commit()
+        return {"ok": True, "status": 200, "deleted": int(cursor.rowcount)}
 
     def _insert_action(
         self,
@@ -694,6 +821,7 @@ class SiteInventory(SiteProxyConfigMixin):
             return {"ok": False, "status": 409, "reason": "production_high_risk_scan_requires_confirmation"}
         actions = scanner_result.get("actions") if scanner_result else payload.get("actions")
         actions = [self._action_from_payload(action, site, payload) for action in (actions or [])]
+        actions, duplicates_removed = self._dedupe_site_actions(actions)
         auto_mapping = self._auto_match_site_actions(site, actions)
         status = "completed" if scanner_result is None or scanner_result.get("ok", True) else "failed"
         if not actions and not scanner_result:
@@ -717,9 +845,11 @@ class SiteInventory(SiteProxyConfigMixin):
                 "scan": record,
                 "actions": actions,
                 "count": len(actions),
+                "duplicates_removed": duplicates_removed,
                 "auto_mapping": auto_mapping,
             }
         result = self._record_memory_scan(site_id, scan, actions)
+        result["duplicates_removed"] = duplicates_removed
         result["auto_mapping"] = auto_mapping
         return result
 
@@ -871,7 +1001,89 @@ class SiteInventory(SiteProxyConfigMixin):
             actions = [action for action in actions if action["risk_level"] == risk_level]
         if action_type in ACTION_TYPES:
             actions = [action for action in actions if action["action_type"] == action_type]
-        return list(reversed(actions))[: max(1, min(int(limit or 100), 500))]
+        actions, _ = self._dedupe_site_actions(list(reversed(actions)))
+        return actions[: max(1, min(int(limit or 100), 500))]
+
+    def delete_scan(self, scan_id: int) -> dict[str, Any]:
+        if self.store:
+            return self.store.delete_scan(scan_id)
+        scan_id = int(scan_id)
+        before_scans = len(self._scans)
+        before_actions = len(self._actions)
+        self._scans = [scan for scan in self._scans if int(scan["id"]) != scan_id]
+        self._actions = [action for action in self._actions if int(action["scan_id"]) != scan_id]
+        deleted = before_scans - len(self._scans)
+        if not deleted:
+            return {"ok": False, "status": 404, "reason": "site_scan_not_found"}
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": deleted,
+            "deleted_actions": before_actions - len(self._actions),
+            "scan_id": scan_id,
+        }
+
+    def clear_scans(self, site_id: int | None = None) -> dict[str, Any]:
+        if self.store:
+            return self.store.clear_scans(site_id=site_id)
+        site_id = int(site_id) if site_id else None
+        deleted_scan_ids = {
+            int(scan["id"])
+            for scan in self._scans
+            if site_id is None or int(scan["site_id"]) == site_id
+        }
+        before_scans = len(self._scans)
+        before_actions = len(self._actions)
+        self._scans = [scan for scan in self._scans if int(scan["id"]) not in deleted_scan_ids]
+        self._actions = [action for action in self._actions if int(action["scan_id"]) not in deleted_scan_ids]
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": before_scans - len(self._scans),
+            "deleted_actions": before_actions - len(self._actions),
+            "site_id": site_id,
+        }
+
+    def delete_action(self, action_id: int) -> dict[str, Any]:
+        if self.store:
+            return self.store.delete_action(action_id)
+        action_id = int(action_id)
+        before = len(self._actions)
+        self._actions = [action for action in self._actions if int(action["id"]) != action_id]
+        deleted = before - len(self._actions)
+        if not deleted:
+            return {"ok": False, "status": 404, "reason": "site_action_not_found"}
+        return {"ok": True, "status": 200, "deleted": deleted, "action_id": action_id}
+
+    def clear_actions(
+        self,
+        site_id: int | None = None,
+        scan_id: int | None = None,
+        risk_level: str = "all",
+        action_type: str = "all",
+    ) -> dict[str, Any]:
+        if self.store:
+            return self.store.clear_actions(
+                site_id=site_id,
+                scan_id=scan_id,
+                risk_level=risk_level,
+                action_type=action_type,
+            )
+        before = len(self._actions)
+
+        def keep(action: dict[str, Any]) -> bool:
+            if site_id and int(action["site_id"]) != int(site_id):
+                return True
+            if scan_id and int(action["scan_id"]) != int(scan_id):
+                return True
+            if risk_level in RISK_LEVELS and action["risk_level"] != risk_level:
+                return True
+            if action_type in ACTION_TYPES and action["action_type"] != action_type:
+                return True
+            return False
+
+        self._actions = [action for action in self._actions if keep(action)]
+        return {"ok": True, "status": 200, "deleted": before - len(self._actions)}
 
     def _record_memory_scan(self, site_id: int, scan: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
@@ -883,13 +1095,22 @@ class SiteInventory(SiteProxyConfigMixin):
             "updated_at": now,
         }
         self._next_scan_id += 1
+        existing_action_keys = {
+            self._action_inventory_key(action)
+            for action in self._actions
+            if int(action.get("site_id") or 0) == int(site_id)
+        }
         for action in actions:
+            action_key = self._action_inventory_key(action)
+            if action_key in existing_action_keys:
+                continue
             action["id"] = self._next_action_id
             action["site_id"] = site_id
             action["scan_id"] = scan_record["id"]
             action["created_at"] = now
             self._next_action_id += 1
             self._actions.append(action)
+            existing_action_keys.add(action_key)
         self._scans.append(scan_record)
         return {"ok": scan["status"] != "failed", "scan": scan_record, "actions": actions, "count": len(actions)}
 

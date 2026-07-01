@@ -173,7 +173,9 @@ class CoreService:
         ctx = RequestContext.from_payload(payload, remote_addr=remote_addr)
         real_ip = self.ip_resolver.resolve(ctx.headers, ctx.remote_addr)
         ip_hash = self.packet_compiler._hash(real_ip.get("client_ip"))
-        result = self.appeals.submit(payload, ip_hash)
+        appeal_payload = dict(payload)
+        self._fill_implicit_appeal_punishment_id(appeal_payload, ip_hash)
+        result = self.appeals.submit(appeal_payload, ip_hash)
         result["display"] = self._appeal_display(result)
         if result["status"] != 429:
             self.ledger.record(
@@ -801,6 +803,92 @@ class CoreService:
             "display": {"locale": "zh-CN", "message_zh": "页面扫描历史已加载。"},
         }
 
+    def delete_site_scan_record(self, scan_id: int, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_delete"}
+        result = self.site_inventory.delete_scan(scan_id)
+        if result.get("ok"):
+            self._record_admin_audit(
+                "admin_record_delete",
+                "delete_site_scan",
+                f"scan_id={scan_id} deleted_actions={result.get('deleted_actions', 0)}",
+                actor,
+            )
+        return result
+
+    def _fill_implicit_appeal_punishment_id(self, payload: dict[str, Any], ip_hash: str) -> None:
+        if str(payload.get("punishment_id") or "").strip():
+            return
+        site_id = self._optional_site_id(payload.get("site_id"))
+        if site_id is None:
+            return
+        action = self._matching_site_appeal_action(payload, site_id)
+        if action and action.get("punishment_id"):
+            payload["punishment_id"] = action["punishment_id"]
+            return
+        user_identifier = self._appeal_user_identifier(payload)
+        hash_source = user_identifier or str(payload.get("banned_ip_hash") or ip_hash or "anonymous")
+        hash_kind = "user" if user_identifier else "ip"
+        feature = self._appeal_feature(payload)
+        suffix = f":feature:{feature}" if feature else ""
+        payload["punishment_id"] = f"site:{site_id}:{hash_kind}:{self.packet_compiler._hash(hash_source)}{suffix}"
+
+    def _matching_site_appeal_action(self, payload: dict[str, Any], site_id: int) -> dict[str, Any] | None:
+        feature = self._appeal_feature(payload)
+        user_hashes = self._appeal_user_hashes(payload)
+        if not user_hashes:
+            return None
+        if feature:
+            for user_hash in user_hashes:
+                action = self.executor.find_active_user_feature(user_hash, feature, site_id)
+                if action:
+                    return action
+        for action in self.executor.list_actions(status="active"):
+            target = action.get("target_scope") or {}
+            target_site_id = self._optional_site_id(target.get("site_id"))
+            if (
+                action.get("action") == "feature_ban"
+                and target.get("type") == "user_feature"
+                and (target_site_id is None or target_site_id == site_id)
+                and str(target.get("user_hash") or "") in user_hashes
+            ):
+                return action
+        return None
+
+    def _appeal_user_hashes(self, payload: dict[str, Any]) -> set[str]:
+        hashes = {str(payload.get("user_hash") or "").strip()}
+        identifier = self._appeal_user_identifier(payload)
+        if identifier:
+            hashes.add(self.packet_compiler._hash(identifier))
+        return {item for item in hashes if item}
+
+    def _appeal_user_identifier(self, payload: dict[str, Any]) -> str:
+        for key in ("user_id", "username", "account", "login", "uid", "user", "name"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _appeal_feature(self, payload: dict[str, Any]) -> str:
+        for key in ("feature_scope", "feature", "blocked_feature"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value[:120]
+        return ""
+
+    def clear_site_scan_records(self, site_id: int | None = None, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_clear"}
+        result = self.site_inventory.clear_scans(site_id=site_id)
+        if result.get("ok") and int(result.get("deleted") or 0) > 0:
+            self._record_admin_audit(
+                "admin_record_clear",
+                "clear_site_scans",
+                f"site_id={site_id or 'all'} deleted={result.get('deleted')} deleted_actions={result.get('deleted_actions', 0)}",
+                actor,
+            )
+        return result
+
     def admin_site_actions(
         self,
         site_id: int | None = None,
@@ -822,6 +910,42 @@ class CoreService:
             "count": len(actions),
             "display": {"locale": "zh-CN", "message_zh": "接入网站动作台账已加载。"},
         }
+
+    def delete_site_action_record(self, action_id: int, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_delete"}
+        result = self.site_inventory.delete_action(action_id)
+        if result.get("ok"):
+            self._record_admin_audit("admin_record_delete", "delete_site_action", f"action_id={action_id}", actor)
+        return result
+
+    def clear_site_action_records(
+        self,
+        site_id: int | None = None,
+        scan_id: int | None = None,
+        risk_level: str = "all",
+        action_type: str = "all",
+        actor: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_clear"}
+        result = self.site_inventory.clear_actions(
+            site_id=site_id,
+            scan_id=scan_id,
+            risk_level=risk_level,
+            action_type=action_type,
+        )
+        if result.get("ok") and int(result.get("deleted") or 0) > 0:
+            self._record_admin_audit(
+                "admin_record_clear",
+                "clear_site_actions",
+                (
+                    f"site_id={site_id or 'all'} scan_id={scan_id or 'all'} "
+                    f"risk_level={risk_level} action_type={action_type} deleted={result.get('deleted')}"
+                ),
+                actor,
+            )
+        return result
 
     def create_site_feature_ban(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         if self.config.runtime_mode == "read_only":
@@ -1127,6 +1251,33 @@ class CoreService:
             },
         }
 
+    def delete_async_review_record(self, job_id: int, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_delete"}
+        if not self.async_reviews:
+            return {"ok": False, "status": 503, "reason": "async_review_queue_unavailable"}
+        result = self.async_reviews.delete(job_id)
+        if result.get("ok"):
+            self._record_admin_audit("admin_record_delete", "delete_async_review", f"job_id={job_id}", actor)
+            result["queue"] = self.async_reviews.status()
+        return result
+
+    def clear_async_review_records(self, status: str = "all", actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_clear"}
+        if not self.async_reviews:
+            return {"ok": False, "status": 503, "reason": "async_review_queue_unavailable"}
+        result = self.async_reviews.clear(status=status)
+        if result.get("ok") and int(result.get("deleted") or 0) > 0:
+            self._record_admin_audit(
+                "admin_record_clear",
+                "clear_async_reviews",
+                f"status={result.get('filter_status')} deleted={result.get('deleted')}",
+                actor,
+            )
+            result["queue"] = self.async_reviews.status()
+        return result
+
     def process_async_reviews(self, limit: int = 10) -> dict[str, Any]:
         if self.config.runtime_mode == "read_only":
             return {
@@ -1378,6 +1529,20 @@ class CoreService:
             },
         }
 
+    def delete_ledger_record(self, record_id: int, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_delete"}
+        deleted = self.ledger.delete_record(record_id)
+        if not deleted:
+            return {"ok": False, "status": 404, "reason": "ledger_record_not_found"}
+        return {"ok": True, "status": 200, "deleted": deleted, "record_id": int(record_id)}
+
+    def clear_ledger_records(self, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_clear"}
+        deleted = self.ledger.clear_records()
+        return {"ok": True, "status": 200, "deleted": deleted}
+
     def admin_appeals(self, status: str = "pending", limit: int = 50) -> dict[str, Any]:
         appeals = self.appeals.list(status=status, limit=limit)
         return {
@@ -1389,6 +1554,34 @@ class CoreService:
                 "message_zh": "申诉列表已返回。申诉理由按不可信文本处理。",
             },
         }
+
+    def delete_appeal_record(self, punishment_id: str, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_delete"}
+        deleted = self.appeals.delete(punishment_id)
+        if not deleted:
+            return {"ok": False, "status": 404, "reason": "appeal_record_not_found"}
+        self._record_admin_audit(
+            "admin_record_delete",
+            "delete_appeal",
+            f"punishment_id={punishment_id}",
+            actor,
+        )
+        return {"ok": True, "status": 200, "deleted": deleted, "punishment_id": punishment_id}
+
+    def clear_appeal_records(self, status: str = "all", actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_clear"}
+        status = status if status in {"pending", "approved", "rejected", "all"} else "all"
+        deleted = self.appeals.clear(status=status)
+        if deleted:
+            self._record_admin_audit(
+                "admin_record_clear",
+                "clear_appeals",
+                f"status={status} deleted={deleted}",
+                actor,
+            )
+        return {"ok": True, "status": 200, "deleted": deleted, "filter_status": status}
 
     def admin_captcha(self) -> dict[str, Any]:
         return self.admin_auth.create_captcha()
@@ -1517,6 +1710,41 @@ class CoreService:
                 "message_zh": "动作列表已返回。撤销只影响 ATEE 执行动作记录。",
             },
         }
+
+    def delete_action_record(self, action_id: int, actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_delete"}
+        result = self.executor.delete_record(action_id)
+        if result.get("ok"):
+            self.ledger.record(
+                {
+                    "severity": "medium",
+                    "event_type": "action_record_delete",
+                    "endpoint_type": "admin",
+                    "action": "delete_action_record",
+                    "summary": self._admin_summary(f"action_record_delete id={action_id}", actor),
+                }
+            )
+        return result
+
+    def clear_action_records(self, status: str = "all", actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {"ok": False, "status": 423, "reason": "read_only_mode_blocks_record_clear"}
+        result = self.executor.clear_records(status=status)
+        if result.get("ok") and int(result.get("deleted") or 0) > 0:
+            self.ledger.record(
+                {
+                    "severity": "medium",
+                    "event_type": "action_record_clear",
+                    "endpoint_type": "admin",
+                    "action": "clear_action_records",
+                    "summary": self._admin_summary(
+                        f"action_record_clear status={result.get('filter_status')} deleted={result.get('deleted')}",
+                        actor,
+                    ),
+                }
+            )
+        return result
 
     def revoke_action(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         if self.config.runtime_mode == "read_only":

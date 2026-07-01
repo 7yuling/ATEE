@@ -85,6 +85,25 @@ class SQLiteActionStore:
         record["reversible"] = bool(record["reversible"])
         return record
 
+    def delete_non_active(self, action_id: int) -> int:
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "DELETE FROM action_records WHERE id = ? AND status <> 'active'",
+                (int(action_id),),
+            )
+            conn.commit()
+            return int(cursor.rowcount)
+
+    def clear_non_active(self, status: str = "all") -> int:
+        status = status if status in {"revoked", "expired", "all"} else "all"
+        with self._lock, closing(self._connect()) as conn:
+            if status == "all":
+                cursor = conn.execute("DELETE FROM action_records WHERE status <> 'active'")
+            else:
+                cursor = conn.execute("DELETE FROM action_records WHERE status = ?", (status,))
+            conn.commit()
+            return int(cursor.rowcount)
+
     def mark_expired(self, now_iso: str) -> int:
         with self._lock, closing(self._connect()) as conn:
             cursor = conn.execute(
@@ -247,6 +266,52 @@ class ActionExecutor:
                 record["status"] = "expired"
                 changed += 1
         return changed
+
+    def delete_record(self, action_id: int) -> dict[str, Any]:
+        if self.store:
+            self.actions = self.store.load_all()
+        for record in self.actions:
+            if int(record.get("id") or -1) == int(action_id) and record.get("status", "active") == "active":
+                return {"ok": False, "status": 409, "reason": "active_action_must_be_revoked_before_delete"}
+        if self.store:
+            deleted = self.store.delete_non_active(action_id)
+            self.actions = self.store.load_all()
+        else:
+            before = len(self.actions)
+            self.actions = [record for record in self.actions if int(record.get("id") or -1) != int(action_id)]
+            deleted = before - len(self.actions)
+        if deleted:
+            return {"ok": True, "status": 200, "deleted": deleted, "action_id": int(action_id)}
+        return {"ok": False, "status": 404, "reason": "action_record_not_found"}
+
+    def clear_records(self, status: str = "all") -> dict[str, Any]:
+        if status == "active":
+            return {
+                "ok": False,
+                "status": 409,
+                "reason": "active_actions_must_be_revoked_before_delete",
+            }
+        status = status if status in {"revoked", "expired", "all"} else "all"
+        if self.store:
+            self.actions = self.store.load_all()
+        active_skipped = sum(1 for record in self.actions if record.get("status", "active") == "active")
+        if self.store:
+            deleted = self.store.clear_non_active(status)
+            self.actions = self.store.load_all()
+        else:
+            before = len(self.actions)
+            if status == "all":
+                self.actions = [record for record in self.actions if record.get("status", "active") == "active"]
+            else:
+                self.actions = [record for record in self.actions if record.get("status", "active") != status]
+            deleted = before - len(self.actions)
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": deleted,
+            "filter_status": status,
+            "active_skipped": active_skipped if status == "all" else 0,
+        }
 
     def _idempotency_key(self, action: str, decision: dict[str, Any]) -> str:
         target = decision.get("target_scope") or {}

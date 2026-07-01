@@ -238,6 +238,91 @@ class AteeHandler(BaseHTTPRequestHandler):
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return
         path = urlsplit(self.path).path
+        if path == "/v1/admin/ledger/records":
+            result = CORE.clear_ledger_records(actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path.startswith("/v1/admin/ledger/records/"):
+            _, _, raw_id = path.rpartition("/")
+            try:
+                record_id = int(raw_id)
+            except ValueError:
+                self._send_json({"ok": False, "status": 400, "reason": "ledger_record_id_required"}, status=400)
+                return
+            result = CORE.delete_ledger_record(record_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path == "/v1/admin/appeals":
+            result = CORE.clear_appeal_records(self._query_value("status", "all"), actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path.startswith("/v1/admin/appeals/"):
+            punishment_id = unquote(path.removeprefix("/v1/admin/appeals/"))
+            result = CORE.delete_appeal_record(punishment_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path == "/v1/admin/actions":
+            result = CORE.clear_action_records(self._query_value("status", "all"), actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path.startswith("/v1/admin/actions/"):
+            _, _, raw_id = path.rpartition("/")
+            try:
+                action_id = int(raw_id)
+            except ValueError:
+                self._send_json({"ok": False, "status": 400, "reason": "action_id_required"}, status=400)
+                return
+            result = CORE.delete_action_record(action_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path == "/v1/admin/async-reviews":
+            result = CORE.clear_async_review_records(self._query_value("status", "all"), actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path.startswith("/v1/admin/async-reviews/"):
+            _, _, raw_id = path.rpartition("/")
+            try:
+                job_id = int(raw_id)
+            except ValueError:
+                self._send_json({"ok": False, "status": 400, "reason": "job_id_required"}, status=400)
+                return
+            result = CORE.delete_async_review_record(job_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path == "/v1/admin/site-scans":
+            result = CORE.clear_site_scan_records(site_id=self._query_optional_int("site_id"), actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path.startswith("/v1/admin/site-scans/"):
+            _, _, raw_id = path.rpartition("/")
+            try:
+                scan_id = int(raw_id)
+            except ValueError:
+                self._send_json({"ok": False, "status": 400, "reason": "site_scan_id_required"}, status=400)
+                return
+            result = CORE.delete_site_scan_record(scan_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path == "/v1/admin/site-actions":
+            result = CORE.clear_site_action_records(
+                site_id=self._query_optional_int("site_id"),
+                scan_id=self._query_optional_int("scan_id"),
+                risk_level=self._query_value("risk_level", "all"),
+                action_type=self._query_value("action_type", "all"),
+                actor=self._admin_actor(),
+            )
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
+        if path.startswith("/v1/admin/site-actions/"):
+            _, _, raw_id = path.rpartition("/")
+            try:
+                action_id = int(raw_id)
+            except ValueError:
+                self._send_json({"ok": False, "status": 400, "reason": "site_action_id_required"}, status=400)
+                return
+            result = CORE.delete_site_action_record(action_id, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
         if path.startswith("/v1/admin/api-keys/"):
             _, _, raw_id = path.rpartition("/")
             try:

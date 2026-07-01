@@ -16,6 +16,7 @@ import {
   Typography,
 } from "antd";
 import {
+  DeleteOutlined,
   ExportOutlined,
   PlayCircleOutlined,
   PlusOutlined,
@@ -46,6 +47,10 @@ export function SiteManagementTab({
   setSiteActionType,
   siteActionSiteId,
   setSiteActionSiteId,
+  deleteSiteScan,
+  clearSiteScans,
+  deleteSiteAction,
+  clearSiteActions,
   writeLocked,
 }) {
   const siteOptions = sites.map((site) => ({
@@ -110,6 +115,23 @@ export function SiteManagementTab({
       },
     },
     { title: "更新时间", dataIndex: "updated_at", key: "updated_at" },
+    {
+      title: "操作",
+      key: "recordActions",
+      width: 96,
+      render: (_, record) => (
+        <Popconfirm
+          title="删除扫描记录"
+          description="会同时删除该扫描生成的动作资产记录。"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={() => deleteSiteScan(record.id)}
+          disabled={writeLocked}
+        >
+          <Button id={`deleteSiteScan-${record.id}`} danger size="small" icon={<DeleteOutlined />} disabled={writeLocked} />
+        </Popconfirm>
+      ),
+    },
   ];
   const actionColumns = [
     { title: "风险", dataIndex: "risk_level", key: "risk_level", width: 90, render: (value) => <RiskTag value={value} /> },
@@ -126,6 +148,23 @@ export function SiteManagementTab({
         const status = record.metadata?.atee_auto_match?.status || "unapplied";
         return <Tag color={status === "applied" ? "success" : "warning"}>{status === "applied" ? "已应用" : "未应用"}</Tag>;
       },
+    },
+    {
+      title: "操作",
+      key: "recordActions",
+      width: 96,
+      render: (_, record) => (
+        <Popconfirm
+          title="删除动作资产记录"
+          description="仅删除 ATEE 发现的动作资产台账，不影响原站业务数据。"
+          okText="删除"
+          cancelText="取消"
+          onConfirm={() => deleteSiteAction(record.id)}
+          disabled={writeLocked}
+        >
+          <Button id={`deleteSiteAction-${record.id}`} danger size="small" icon={<DeleteOutlined />} disabled={writeLocked} />
+        </Popconfirm>
+      ),
     },
   ];
   return (
@@ -273,6 +312,16 @@ export function SiteManagementTab({
                 <Button id="siteScansBtn" icon={<ReloadOutlined />} onClick={showSiteScans}>
                   扫描历史
                 </Button>
+                <Popconfirm
+                  title="清空扫描历史"
+                  description="会清空当前 ATEE 扫描历史，并删除对应动作资产记录。"
+                  okText="清空"
+                  cancelText="取消"
+                  onConfirm={clearSiteScans}
+                  disabled={writeLocked}
+                >
+                  <Button id="clearSiteScansBtn" danger icon={<DeleteOutlined />} disabled={writeLocked}>清空扫描</Button>
+                </Popconfirm>
               </Space>
               <Text type="secondary">生产环境高风险点击会被后端保护，除非请求显式确认。</Text>
             </Form>
@@ -398,6 +447,16 @@ export function SiteManagementTab({
             <Button id="siteActionsBtn" icon={<SearchOutlined />} onClick={showSiteActions}>
               查询动作
             </Button>
+            <Popconfirm
+              title="清空当前动作资产"
+              description="按当前筛选清空 ATEE 动作资产台账，不影响原站业务数据。"
+              okText="清空"
+              cancelText="取消"
+              onConfirm={clearSiteActions}
+              disabled={writeLocked}
+            >
+              <Button id="clearSiteActionsBtn" danger icon={<DeleteOutlined />} disabled={writeLocked}>清空动作</Button>
+            </Popconfirm>
           </Space>
           <Table rowKey="id" columns={actionColumns} dataSource={siteActions} pagination={{ pageSize: 10 }} />
         </Card>
