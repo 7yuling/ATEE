@@ -32,6 +32,20 @@ HOP_BY_HOP_HEADERS = {
     "authorization",
 }
 PROXY_MAX_BODY_BYTES = 10 * 1024 * 1024
+IDENTITY_COOKIE_NAMES = (
+    "session",
+    "sessionid",
+    "sid",
+    "connect.sid",
+    "phpsessid",
+    "jsessionid",
+    "laravel_session",
+    "auth",
+    "auth_token",
+    "access_token",
+    "jwt",
+    "token",
+)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -112,7 +126,11 @@ def handle_site_proxy_request(handler: Any, core: Any, page_guard_dir: Path) -> 
         if payload is None:
             return True
         payload["site_id"] = site_id
-        payload.setdefault("user_id", _proxy_user_id(handler, site))
+        identity_token = _proxy_identity_token(handler)
+        if identity_token:
+            payload["user_id"] = identity_token
+        else:
+            payload.setdefault("user_id", _proxy_user_id(handler, site))
         result = core.feature_access(payload)
         _send_json(handler, result, status=int(result.get("status", 200)))
         return True
@@ -121,6 +139,9 @@ def handle_site_proxy_request(handler: Any, core: Any, page_guard_dir: Path) -> 
         if payload is None:
             return True
         payload.setdefault("site_id", site_id)
+        identity_token = _proxy_identity_token(handler)
+        if identity_token:
+            payload["user_id"] = identity_token
         result = core.appeal(payload, remote_addr=_remote_addr(handler))
         _send_json(handler, result, status=int(result.get("status", 200)))
         return True
@@ -637,6 +658,9 @@ def _read_payload_body(handler: Any) -> dict[str, Any] | None:
 
 
 def _proxy_user_id(handler: Any, site: dict[str, Any] | None = None) -> str:
+    identity_token = _proxy_identity_token(handler)
+    if identity_token:
+        return identity_token
     headers = []
     if site:
         headers.extend(_proxy_config(site).get("user_id_headers") or [])
@@ -647,6 +671,26 @@ def _proxy_user_id(handler: Any, site: dict[str, Any] | None = None) -> str:
         if value:
             break
     return str(value).strip() or "site-proxy-user"
+
+
+def _proxy_identity_token(handler: Any) -> str:
+    raw_cookie = str(handler.headers.get("Cookie") or "").strip()
+    if not raw_cookie:
+        return ""
+    cookie = SimpleCookie()
+    try:
+        cookie.load(raw_cookie)
+    except Exception:
+        return ""
+    if not cookie:
+        return ""
+    cookie_by_name = {str(name).lower(): morsel for name, morsel in cookie.items()}
+    for name in IDENTITY_COOKIE_NAMES:
+        morsel = cookie_by_name.get(name)
+        value = str(morsel.value if morsel else "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _remote_addr(handler: Any) -> str:

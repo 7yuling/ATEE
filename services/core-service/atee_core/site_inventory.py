@@ -486,6 +486,7 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
             "ok": True,
             "status": 200,
             "deleted": deleted,
+            "record_type": "site_scan",
             "deleted_actions": int(action_cursor.rowcount),
             "scan_id": int(scan_id),
         }
@@ -517,6 +518,7 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
             "ok": True,
             "status": 200,
             "deleted": int(scan_cursor.rowcount),
+            "record_type": "site_scan",
             "deleted_actions": deleted_actions,
             "site_id": int(site_id) if site_id else None,
         }
@@ -528,7 +530,14 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
         deleted = int(cursor.rowcount)
         if not deleted:
             return {"ok": False, "status": 404, "reason": "site_action_not_found"}
-        return {"ok": True, "status": 200, "deleted": deleted, "action_id": int(action_id)}
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": deleted,
+            "record_type": "site_action",
+            "site_action_id": int(action_id),
+            "action_id": int(action_id),
+        }
 
     def clear_actions(
         self,
@@ -557,7 +566,7 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
         with self._lock, closing(self._connect()) as conn:
             cursor = conn.execute(query, tuple(params))
             conn.commit()
-        return {"ok": True, "status": 200, "deleted": int(cursor.rowcount)}
+        return {"ok": True, "status": 200, "deleted": int(cursor.rowcount), "record_type": "site_action"}
 
     def _insert_action(
         self,
@@ -1019,6 +1028,7 @@ class SiteInventory(SiteProxyConfigMixin):
             "ok": True,
             "status": 200,
             "deleted": deleted,
+            "record_type": "site_scan",
             "deleted_actions": before_actions - len(self._actions),
             "scan_id": scan_id,
         }
@@ -1040,6 +1050,7 @@ class SiteInventory(SiteProxyConfigMixin):
             "ok": True,
             "status": 200,
             "deleted": before_scans - len(self._scans),
+            "record_type": "site_scan",
             "deleted_actions": before_actions - len(self._actions),
             "site_id": site_id,
         }
@@ -1053,7 +1064,14 @@ class SiteInventory(SiteProxyConfigMixin):
         deleted = before - len(self._actions)
         if not deleted:
             return {"ok": False, "status": 404, "reason": "site_action_not_found"}
-        return {"ok": True, "status": 200, "deleted": deleted, "action_id": action_id}
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": deleted,
+            "record_type": "site_action",
+            "site_action_id": action_id,
+            "action_id": action_id,
+        }
 
     def clear_actions(
         self,
@@ -1083,7 +1101,12 @@ class SiteInventory(SiteProxyConfigMixin):
             return False
 
         self._actions = [action for action in self._actions if keep(action)]
-        return {"ok": True, "status": 200, "deleted": before - len(self._actions)}
+        return {
+            "ok": True,
+            "status": 200,
+            "deleted": before - len(self._actions),
+            "record_type": "site_action",
+        }
 
     def _record_memory_scan(self, site_id: int, scan: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()

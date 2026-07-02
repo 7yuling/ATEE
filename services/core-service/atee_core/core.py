@@ -825,13 +825,6 @@ class CoreService:
         action = self._matching_site_appeal_action(payload, site_id)
         if action and action.get("punishment_id"):
             payload["punishment_id"] = action["punishment_id"]
-            return
-        user_identifier = self._appeal_user_identifier(payload)
-        hash_source = user_identifier or str(payload.get("banned_ip_hash") or ip_hash or "anonymous")
-        hash_kind = "user" if user_identifier else "ip"
-        feature = self._appeal_feature(payload)
-        suffix = f":feature:{feature}" if feature else ""
-        payload["punishment_id"] = f"site:{site_id}:{hash_kind}:{self.packet_compiler._hash(hash_source)}{suffix}"
 
     def _matching_site_appeal_action(self, payload: dict[str, Any], site_id: int) -> dict[str, Any] | None:
         feature = self._appeal_feature(payload)

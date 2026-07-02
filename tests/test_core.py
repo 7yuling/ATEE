@@ -718,7 +718,7 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(second["status"], 429)
             self.assertEqual(len(core.appeals.appeals), 1)
 
-    def test_site_appeal_accepts_form_without_punishment_id(self):
+    def test_site_appeal_without_punishment_id_requires_matching_action(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
             site = core.register_site(
@@ -739,10 +739,9 @@ class AteeCoreTests(unittest.TestCase):
             )
             pending = core.admin_appeals(status="pending")
 
-            self.assertEqual(appeal["status"], 202)
-            self.assertEqual(pending["count"], 1)
-            self.assertTrue(pending["appeals"][0]["punishment_id"].startswith(f"site:{site['id']}:user:"))
-            self.assertEqual(pending["appeals"][0]["reason_untrusted_text"], "cannot access my account")
+            self.assertEqual(appeal["status"], 400)
+            self.assertEqual(appeal["reason"], "punishment_id_required")
+            self.assertEqual(pending["count"], 0)
 
     def test_site_appeal_without_punishment_id_matches_active_user_feature_ban(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -772,6 +771,42 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(appeal["appeal"]["punishment_id"], punishment_id)
             self.assertTrue(reviewed["auto_unban"]["executed"])
             self.assertTrue(access["allowed"])
+
+    def test_site_appeal_with_login_identity_ignores_username(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            site = core.register_site(
+                {
+                    "name": "forum",
+                    "base_url": "https://forum.example",
+                    "allowed_domains": ["forum.example"],
+                }
+            )["site"]
+            username_action = self._execute_user_feature_ban(
+                core,
+                user_id="forum-user",
+                feature_scope="uploads",
+                site_id=site["id"],
+            )
+            identity_action = self._execute_user_feature_ban(
+                core,
+                user_id="session-token",
+                feature_scope="comments",
+                site_id=site["id"],
+            )
+
+            appeal = core.appeal(
+                {
+                    "site_id": site["id"],
+                    "user_id": "session-token",
+                    "username": "forum-user",
+                    "reason": "please restore comments",
+                }
+            )
+
+            self.assertEqual(appeal["status"], 202)
+            self.assertEqual(appeal["appeal"]["punishment_id"], f"action:{identity_action['record']['id']}")
+            self.assertNotEqual(appeal["appeal"]["punishment_id"], f"action:{username_action['record']['id']}")
 
     def test_appeals_survive_core_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -995,6 +1030,71 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(cleared_site_scans["deleted_actions"], 1)
             self.assertEqual(core.admin_site_scans(site_id=site["id"])["count"], 0)
             self.assertEqual(core.admin_site_actions(site_id=site["id"])["count"], 0)
+
+    def test_action_and_site_action_deletes_do_not_cross_tables(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            action = core.executor.execute(
+                {"duration_seconds": 60, "target_scope": {"type": "request", "hash": "same-id"}},
+                {"executed": True, "effective_action": "challenge"},
+            )
+            action_id = action["record"]["id"]
+            core.revoke_action({"action_id": action_id, "reason": "same id test"})
+            site = core.register_site(
+                {
+                    "name": "records-site",
+                    "base_url": "https://records.example",
+                    "allowed_domains": ["records.example"],
+                }
+            )["site"]
+            core.create_site_scan(
+                {
+                    "site_id": site["id"],
+                    "start_url": site["base_url"],
+                    "actions": [{"page_url": site["base_url"], "action_type": "delete", "label": "Delete"}],
+                }
+            )
+            site_action_id = core.admin_site_actions(site_id=site["id"])["actions"][0]["id"]
+
+            deleted_action = core.delete_action_record(action_id)
+            remaining_site_actions = core.admin_site_actions(site_id=site["id"])
+
+            self.assertEqual(action_id, site_action_id)
+            self.assertTrue(deleted_action["ok"])
+            self.assertEqual(deleted_action["record_type"], "action_record")
+            self.assertEqual(remaining_site_actions["count"], 1)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
+            action = core.executor.execute(
+                {"duration_seconds": 60, "target_scope": {"type": "request", "hash": "same-id"}},
+                {"executed": True, "effective_action": "challenge"},
+            )
+            action_id = action["record"]["id"]
+            core.revoke_action({"action_id": action_id, "reason": "same id test"})
+            site = core.register_site(
+                {
+                    "name": "records-site",
+                    "base_url": "https://records.example",
+                    "allowed_domains": ["records.example"],
+                }
+            )["site"]
+            core.create_site_scan(
+                {
+                    "site_id": site["id"],
+                    "start_url": site["base_url"],
+                    "actions": [{"page_url": site["base_url"], "action_type": "delete", "label": "Delete"}],
+                }
+            )
+            site_action_id = core.admin_site_actions(site_id=site["id"])["actions"][0]["id"]
+
+            deleted_site_action = core.delete_site_action_record(site_action_id)
+            remaining_actions = core.admin_actions(status="revoked")
+
+            self.assertEqual(action_id, site_action_id)
+            self.assertTrue(deleted_site_action["ok"])
+            self.assertEqual(deleted_site_action["record_type"], "site_action")
+            self.assertEqual(remaining_actions["count"], 1)
 
     def test_feature_access_blocks_active_user_feature_ban_with_punishment_id(self):
         with tempfile.TemporaryDirectory() as temp_dir:

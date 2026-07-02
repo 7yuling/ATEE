@@ -474,6 +474,34 @@ class AteeHttpE2ETests(unittest.TestCase):
                 },
             )
             site_id = registered["site"]["id"]
+            username_action = http_server.CORE.executor.execute(
+                {
+                    "selected_action": "feature_ban",
+                    "duration_seconds": 3600,
+                    "target_scope": {
+                        "type": "user_feature",
+                        "site_id": site_id,
+                        "user_hash": http_server.CORE.packet_compiler._hash("target-user"),
+                        "feature": "comments",
+                    },
+                },
+                {"executed": True, "effective_action": "feature_ban"},
+            )
+            session_action = http_server.CORE.executor.execute(
+                {
+                    "selected_action": "feature_ban",
+                    "duration_seconds": 3600,
+                    "target_scope": {
+                        "type": "user_feature",
+                        "site_id": site_id,
+                        "user_hash": http_server.CORE.packet_compiler._hash("target-session-token"),
+                        "feature": "posts",
+                    },
+                },
+                {"executed": True, "effective_action": "feature_ban"},
+            )
+            username_punishment_id = f"action:{username_action['record']['id']}"
+            session_punishment_id = f"action:{session_action['record']['id']}"
             observed_actions = self._json(
                 "POST",
                 f"/proxy/sites/{site_id}/v1/page-actions",
@@ -509,6 +537,12 @@ class AteeHttpE2ETests(unittest.TestCase):
                 f"/proxy/sites/{site_id}/api/appeal",
                 {"punishment_id": "proxy-appeal-p1", "reason": "through proxy"},
             )
+            proxied_session_appeal = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/api/appeal",
+                {"username": "target-user", "reason": "through proxy session", "contact": ""},
+                headers={"Cookie": "session=target-session-token"},
+            )
             proxied_site_form_appeal = self._json(
                 "POST",
                 f"/proxy/sites/{site_id}/api/appeal",
@@ -524,6 +558,12 @@ class AteeHttpE2ETests(unittest.TestCase):
                 headers=proxy_referer_headers,
             )
             pending_appeals = self._json("GET", "/v1/admin/appeals?status=pending")
+            session_feature_access = self._json(
+                "POST",
+                f"/proxy/sites/{site_id}/v1/feature-access",
+                {"user_id": "wrong-browser-user", "feature_scope": "posts"},
+                headers={"Cookie": "session=target-session-token"},
+            )
             site_fuse = self._json(
                 "POST",
                 "/v1/admin/site-feature-bans",
@@ -578,13 +618,20 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertTrue(referer_login["target_login"])
             self.assertIn(f"Path=/proxy/sites/{site_id}/", referer_login_headers["Set-Cookie"])
             self.assertEqual(proxied_appeal["status"], 202)
+            self.assertEqual(proxied_session_appeal["status"], 202)
+            self.assertEqual(proxied_session_appeal["appeal"]["punishment_id"], session_punishment_id)
             self.assertEqual(proxied_site_form_appeal["status"], 202)
-            self.assertTrue(proxied_site_form_appeal["appeal"]["punishment_id"].startswith(f"site:{site_id}:user:"))
+            self.assertEqual(proxied_site_form_appeal["appeal"]["punishment_id"], username_punishment_id)
             self.assertEqual(proxied_form_appeal["status"], 202)
             self.assertEqual(referer_form_appeal["status"], 202)
-            self.assertEqual(pending_appeals["count"], 4)
+            self.assertEqual(pending_appeals["count"], 5)
             self.assertTrue(
                 {"proxy-appeal-p1", "proxy-appeal-p2", "proxy-appeal-p3"}.issubset(
+                    {item["punishment_id"] for item in pending_appeals["appeals"]}
+                )
+            )
+            self.assertTrue(
+                {username_punishment_id, session_punishment_id}.issubset(
                     {item["punishment_id"] for item in pending_appeals["appeals"]}
                 )
             )
@@ -618,6 +665,9 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertIn("target admin backend", referer_admin)
             self.assertEqual(managed_sites["sites"][0]["site_proxy"]["feature_map"]["#comment"], "comments")
             self.assertEqual(observed_site_actions["actions"][0]["metadata"]["atee_auto_match"]["status"], "applied")
+            self.assertFalse(session_feature_access["allowed"])
+            self.assertEqual(session_feature_access["reason"], "active_feature_ban")
+            self.assertEqual(session_feature_access["punishment_id"], session_punishment_id)
             self.assertFalse(feature_access["allowed"])
             self.assertEqual(feature_access["reason"], "active_site_feature_ban")
             self.assertEqual(blocked_login["status"], 403)

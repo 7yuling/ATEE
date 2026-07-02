@@ -281,7 +281,13 @@ class ActionExecutor:
             self.actions = [record for record in self.actions if int(record.get("id") or -1) != int(action_id)]
             deleted = before - len(self.actions)
         if deleted:
-            return {"ok": True, "status": 200, "deleted": deleted, "action_id": int(action_id)}
+            return {
+                "ok": True,
+                "status": 200,
+                "deleted": deleted,
+                "record_type": "action_record",
+                "action_id": int(action_id),
+            }
         return {"ok": False, "status": 404, "reason": "action_record_not_found"}
 
     def clear_records(self, status: str = "all") -> dict[str, Any]:
@@ -309,6 +315,7 @@ class ActionExecutor:
             "ok": True,
             "status": 200,
             "deleted": deleted,
+            "record_type": "action_record",
             "filter_status": status,
             "active_skipped": active_skipped if status == "all" else 0,
         }
