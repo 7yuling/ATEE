@@ -337,6 +337,7 @@ class AteeHttpE2ETests(unittest.TestCase):
             publish_attempts = 0
             admin_bans = 0
             admin_cookie = ""
+            my_appeals_cookie = ""
 
             def do_GET(self):
                 if self.path == "/":
@@ -377,6 +378,19 @@ class AteeHttpE2ETests(unittest.TestCase):
                 if self.path == "/api/me":
                     body = b'{"ok":true,"id":"target-user"}'
                     self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/api/my_appeals":
+                    TargetHandler.my_appeals_cookie = self.headers.get("Cookie", "")
+                    if "session=target-user" not in TargetHandler.my_appeals_cookie:
+                        body = b'{"ok":false,"error":"unauthorized"}'
+                        self.send_response(401)
+                    else:
+                        body = b'{"ok":true,"appeals":[]}'
+                        self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
@@ -532,6 +546,12 @@ class AteeHttpE2ETests(unittest.TestCase):
                 {"username": "target-user", "password": "target-password"},
                 headers=proxy_referer_headers,
             )
+            target_login_cookie = allowed_login_headers["Set-Cookie"].split(";", 1)[0]
+            root_my_appeals = self._json(
+                "GET",
+                "/api/my_appeals",
+                headers={**proxy_referer_headers, "Cookie": target_login_cookie},
+            )
             proxied_appeal = self._json(
                 "POST",
                 f"/proxy/sites/{site_id}/api/appeal",
@@ -612,11 +632,13 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertEqual(publish_fuse["site_admin_action"]["status"], "applied")
             self.assertEqual(allowed_login_status, 200)
             self.assertTrue(allowed_login["target_login"])
-            self.assertIn(f"Path=/proxy/sites/{site_id}/", allowed_login_headers["Set-Cookie"])
+            self.assertIn("Path=/", allowed_login_headers["Set-Cookie"])
             self.assertNotIn("Domain=", allowed_login_headers["Set-Cookie"])
             self.assertEqual(referer_login_status, 200)
             self.assertTrue(referer_login["target_login"])
-            self.assertIn(f"Path=/proxy/sites/{site_id}/", referer_login_headers["Set-Cookie"])
+            self.assertIn("Path=/", referer_login_headers["Set-Cookie"])
+            self.assertTrue(root_my_appeals["ok"])
+            self.assertEqual(TargetHandler.my_appeals_cookie, target_login_cookie)
             self.assertEqual(proxied_appeal["status"], 202)
             self.assertEqual(proxied_session_appeal["status"], 202)
             self.assertEqual(proxied_session_appeal["appeal"]["punishment_id"], session_punishment_id)

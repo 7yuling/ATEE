@@ -718,7 +718,7 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(second["status"], 429)
             self.assertEqual(len(core.appeals.appeals), 1)
 
-    def test_site_appeal_without_punishment_id_requires_matching_action(self):
+    def test_site_appeal_without_matching_account_returns_not_found_message(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(config_path=Path(temp_dir) / "config" / "config.json")
             site = core.register_site(
@@ -739,8 +739,10 @@ class AteeCoreTests(unittest.TestCase):
             )
             pending = core.admin_appeals(status="pending")
 
-            self.assertEqual(appeal["status"], 400)
-            self.assertEqual(appeal["reason"], "punishment_id_required")
+            self.assertEqual(appeal["status"], 404)
+            self.assertFalse(appeal["accepted"])
+            self.assertEqual(appeal["reason"], "appeal_account_not_found")
+            self.assertEqual(appeal["display"]["message_zh"], "您的账户未找到，请检查登录状态或用户名后重试。")
             self.assertEqual(pending["count"], 0)
 
     def test_site_appeal_without_punishment_id_matches_active_user_feature_ban(self):

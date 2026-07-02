@@ -175,7 +175,13 @@ class CoreService:
         ip_hash = self.packet_compiler._hash(real_ip.get("client_ip"))
         appeal_payload = dict(payload)
         self._fill_implicit_appeal_punishment_id(appeal_payload, ip_hash)
-        result = self.appeals.submit(appeal_payload, ip_hash)
+        if (
+            self._optional_site_id(appeal_payload.get("site_id")) is not None
+            and not str(appeal_payload.get("punishment_id") or "").strip()
+        ):
+            result = {"status": 404, "accepted": False, "reason": "appeal_account_not_found"}
+        else:
+            result = self.appeals.submit(appeal_payload, ip_hash)
         result["display"] = self._appeal_display(result)
         if result["status"] != 429:
             self.ledger.record(
@@ -2699,6 +2705,8 @@ class CoreService:
             message = "该处罚已有待处理申诉，请不要重复提交。"
         elif status == 429:
             message = "申诉提交过于频繁，本次没有写入数据库。"
+        elif result.get("reason") == "appeal_account_not_found":
+            message = "您的账户未找到，请检查登录状态或用户名后重试。"
         else:
             message = "申诉请求未被接受，请检查处罚编号。"
         return {"locale": "zh-CN", "message_zh": message}

@@ -126,12 +126,12 @@ class AteeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         remote_addr = self.client_address[0] if self.client_address else "127.0.0.1"
+        if self._handle_site_proxy_context():
+            return
         if self._is_public_appeal_path():
             payload = self._read_json()
             result = CORE.appeal(payload, remote_addr=remote_addr)
             self._send_json(result, status=int(result.get("status", 200)))
-            return
-        if self._handle_site_proxy_context():
             return
         if self._is_admin_api_path() and not self._ensure_admin_auth():
             return

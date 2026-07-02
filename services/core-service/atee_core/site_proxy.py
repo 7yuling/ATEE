@@ -545,15 +545,7 @@ def _rewrite_set_cookie_text(value: str, site: dict[str, Any], prefix: str) -> s
 
 
 def _proxy_cookie_path(site: dict[str, Any], prefix: str, cookie_path: str) -> str:
-    base_path = (urlsplit(site.get("base_url", "")).path or "/").rstrip("/")
-    raw_path = str(cookie_path or "/").strip() or "/"
-    if not raw_path.startswith("/"):
-        raw_path = "/"
-    if base_path and base_path != "/" and raw_path.startswith(base_path):
-        raw_path = raw_path.removeprefix(base_path) or "/"
-    if raw_path == "/":
-        return prefix.rstrip("/") + "/"
-    return prefix.rstrip("/") + "/" + raw_path.lstrip("/")
+    return "/"
 
 
 def _proxy_config(site: dict[str, Any], site_id: int | None = None) -> dict[str, Any]:
