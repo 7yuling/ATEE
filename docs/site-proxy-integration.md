@@ -117,6 +117,9 @@ ATEE checks these routes on both sides:
 - Server side: the proxy checks feature access before forwarding matching writes
   to the target site.
 
+The checked Dining Hall demo profile, including its extra pin-topic and password
+rules, is documented in [dining-hall-site-proxy.md](dining-hall-site-proxy.md).
+
 ## Custom Rules
 
 Sites can add custom rules during registration or update:
