@@ -128,7 +128,7 @@ const PAGE_ARCHITECTURE_META = {
   },
   actions: {
     domain: "Action Lifecycle Domain",
-    endpoints: ["GET /v1/admin/actions?status=", "DELETE /v1/admin/actions/{id}", "POST /v1/admin/actions/revoke"],
+    endpoints: ["GET /v1/admin/actions?status=", "DELETE /v1/admin/actions/{id}", "POST /v1/admin/actions/revoke", "POST /v1/admin/account-bans"],
   },
   ledger: {
     domain: "Audit Ledger Domain",
@@ -190,6 +190,7 @@ function App() {
   ]);
   const [appealForm] = Form.useForm();
   const [actionForm] = Form.useForm();
+  const [accountBanForm] = Form.useForm();
   const [manualReviewForm] = Form.useForm();
   const [configForm] = Form.useForm();
   const [breakGlassForm] = Form.useForm();
@@ -934,6 +935,28 @@ function App() {
     });
   }
 
+  async function manualAccountBan() {
+    await run("manual-account-ban", async () => {
+      const values = accountBanForm.getFieldsValue();
+      const { data } = await apiRequest("/v1/admin/account-bans", {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: String(values.user_id || "").trim(),
+          user_hash: String(values.user_hash || "").trim(),
+          site_id: values.site_id ? Number(values.site_id) : null,
+          duration_seconds: Number(values.duration_seconds || 3600),
+          reason: String(values.reason || "").trim(),
+        }),
+      });
+      if (data.ok) {
+        accountBanForm.resetFields();
+      }
+      await showActions(actionStatus);
+      await refresh();
+      return data;
+    });
+  }
+
   async function revokeAction() {
     await run("revoke-action", async () => {
       const values = actionForm.getFieldsValue();
@@ -1216,6 +1239,8 @@ function App() {
           actionColumns={actionColumns}
           actions={actions}
           actionForm={actionForm}
+          accountBanForm={accountBanForm}
+          manualAccountBan={manualAccountBan}
           cleanupActions={cleanupActions}
           revokeAction={revokeAction}
           deleteActionRecord={deleteActionRecord}
@@ -1290,7 +1315,7 @@ function App() {
     { title: "ID", dataIndex: "id", key: "id", width: 80 },
     { title: "动作", dataIndex: "action", key: "action" },
     { title: "状态", dataIndex: "status", key: "status", render: (value) => <Tag>{value}</Tag> },
-    { title: "目标", key: "target", render: (_, record) => record.target_scope?.feature || record.target_scope?.type || "-" },
+    { title: "目标", key: "target", render: (_, record) => record.target_scope?.feature || record.target_scope?.hash || record.target_scope?.type || "-" },
     { title: "原因", dataIndex: "reason", key: "reason", ellipsis: true },
     { title: "过期时间", dataIndex: "expires_at", key: "expires_at" },
   ];

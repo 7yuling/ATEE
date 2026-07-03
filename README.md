@@ -304,32 +304,123 @@ The browser script starts a temporary mock Core Service on a random localhost po
 
 The demo UI uses external CSS/JS assets and renders returned text with `textContent`.
 
-## Target Site HTTP API Integration Guide
+## Target Site Integration Methods
 
-The admin console "新手引导" page can generate a deterministic HTTP API integration plan for a target site. Enter the target site name, URL, Core Service URL, appeal path, and protected feature scopes, then click "生成 HTTP API 接入方案".
+ATEE has two different proxy layers. Keep them separate when planning an integration:
 
-The generated plan maps the target site to Core endpoints:
+- The public reverse proxy is your Nginx/Caddy/CDN boundary for ATEE Core. It exposes ATEE over HTTPS while Core stays private on `127.0.0.1:8787`.
+- The ATEE Site Proxy is Core's reusable `/proxy/sites/<site_id>/` path. It forwards a registered target site through ATEE, injects Page Guard, and checks protected writes before they reach the target site.
+
+Most production or shared staging deployments use both layers: Nginx/Caddy exposes ATEE Core, then testers or users open the target site through `https://atee.example.com/proxy/sites/<site_id>/`.
+
+### Public Reverse Proxy For Core
+
+Keep Core Service bound to `127.0.0.1:8787`, then put Nginx or Caddy in front of it. Use the checked examples in:
+
+```text
+deploy/reverse-proxy/nginx/atee.conf.example
+deploy/reverse-proxy/caddy/Caddyfile.example
+deploy/reverse-proxy/nginx/atee-sso.conf.example
+deploy/reverse-proxy/caddy/Caddyfile.sso.example
+```
+
+The reverse proxy should forward `Host`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-For`, and `X-Real-IP`, add HTTPS security headers, and avoid wildcard CORS. For any remotely reachable deployment, enable `admin_auth_enabled=true` and provide the Admin Token through `admin_token_env` or `admin_token_file`.
+
+If you trust the reverse proxy address, add its CIDR to `trusted_proxy_cidrs`. ATEE only trusts forwarded client IP headers when the direct `remote_addr` is inside that list. Do not put end-user IP ranges there.
+
+When the public reverse proxy is also serving `/proxy/sites/<site_id>/` traffic, preserve target-site cookies on that path. The generic Nginx example clears `Cookie` to avoid oversized public-domain cookies; for Site Proxy sessions, use a more specific `/proxy/sites/` location that forwards the cookies needed by the target site.
+
+### Thin HTTP API Integration
+
+Use this path when you can edit the target site's backend or adapter. The target site remains on its own origin and calls ATEE Core for checks; security decisions still live in `services/core-service`, not in the adapter.
+
+The admin console "新手引导" page can generate a deterministic HTTP API integration plan. Enter the target site name, URL, Core Service URL, appeal path, and protected feature scopes, then click "生成 HTTP API 接入方案".
+
+The generated plan maps target-site behavior to Core endpoints:
 
 - Synchronous high-risk checks -> `POST /v1/check`
 - Write/event traffic -> `POST /v1/event`
 - Feature gate checks -> `POST /v1/feature-access`
 - User appeals -> `POST /v1/appeal`
 
-Stage one only generates HTTP API plans. It does not modify the target site's code, call the remote model, or include secrets in the generated payloads and verification requests.
+For browser checks, let the target site's backend or local reverse proxy call Core rather than exposing a private Core URL directly to frontend code. Connected sites can embed `apps/page-guard/atee-page-guard.mjs`, which Core serves at `/page-guard/atee-page-guard.mjs`; the guard reuses `apps/page-guard/page-action-classifier.mjs` and calls `/v1/feature-access` through the site's own same-origin route before disabling protected upload, comment, or post controls.
 
-## External Site Action Inventory
+### No-Code Site Proxy Integration
 
-ATEE can register connected test/staging sites and scan their pages for actionable controls. Use the admin console "接入网站" page or the admin APIs:
+Use this path for local/staging integrations where you do not want to modify target-site code. First register the target site through the admin console "接入网站" page or `POST /v1/admin/sites`:
 
-- `POST /v1/admin/sites` registers a site with `name`, `base_url`, `environment`, `allowed_domains`, `auth_mode`, and optional `session_state_ref`.
+```json
+{
+  "name": "example-site",
+  "base_url": "http://127.0.0.1:5001/",
+  "environment": "staging",
+  "allowed_domains": ["127.0.0.1"],
+  "auth_mode": "none",
+  "protected_features": ["login", "posts", "comments"],
+  "page_guard_enabled": true,
+  "site_proxy": {
+    "enabled": true,
+    "feature_map": {
+      "#publish": "posts"
+    },
+    "path_rules": [
+      {
+        "methods": ["POST"],
+        "path": "/api/topics",
+        "feature_scope": "posts"
+      },
+      {
+        "methods": ["POST"],
+        "path_prefix": "/api/topics/",
+        "feature_scope": "comments"
+      }
+    ]
+  }
+}
+```
+
+The returned site includes:
+
+```json
+{
+  "site_proxy": {
+    "proxy_path": "/proxy/sites/1/",
+    "feature_access_path": "/proxy/sites/1/v1/feature-access"
+  }
+}
+```
+
+Open the target site through `site_proxy.proxy_path`; direct visits to the original `base_url` do not get ATEE interception. Target-site absolute paths stay under the proxy prefix, for example `/api/me` becomes `/proxy/sites/<site_id>/api/me` and `/admin` becomes `/proxy/sites/<site_id>/admin`.
+
+The standard Site Proxy defaults cover common protected writes:
+
+- `POST /api/login` -> `login`
+- `POST /api/register` -> `register`
+- `POST /api/topics` -> `posts`
+- `POST /api/topics/<id>/posts` -> `comments`
+- `DELETE /api/posts/<id>` -> `delete_posts`
+- `DELETE /api/topics/<id>` -> `delete_topics`
+- `POST/PUT/PATCH/DELETE /api/admin/*` -> `admin_actions`
+
+Add custom `site_proxy.path_rules` and `site_proxy.feature_map` for site-specific routes or controls. The proxy checks matching writes on the server side before forwarding them to the target site, and the injected Page Guard checks the matching controls in the browser. See [docs/site-proxy-integration.md](docs/site-proxy-integration.md) and [docs/dining-hall-site-proxy.md](docs/dining-hall-site-proxy.md) for a checked demo profile.
+
+### Site Inventory And Validation
+
+ATEE can scan registered test/staging sites for actionable controls:
+
+- `POST /v1/admin/sites` registers a site with `name`, `base_url`, `environment`, `allowed_domains`, `auth_mode`, `protected_features`, `page_guard_enabled`, and optional `site_proxy`.
 - `POST /v1/admin/site-scans` records a scan. Without inline `actions`, Core invokes `scripts/page-action-scan.mjs` with Playwright and the configured site boundaries.
 - `GET /v1/admin/site-actions` lists detected controls such as login, register, submit, search, save, delete, menu, pagination, dialog trigger, upload, and navigation actions.
 
 High-risk real clicking is off by default and should be used only in test/staging environments. Production high-risk scans require explicit confirmation. The inventory records selectors, labels, page URLs, risk levels, suggested ATEE event types, suggested `feature_scope`, and recommended smoke/regression test type so later test generation can build on structured data instead of rescanning blindly.
 
-Connected sites can also embed `apps/page-guard/atee-page-guard.mjs`, which Core serves at `/page-guard/atee-page-guard.mjs`. The guard reuses the shared classifier in `apps/page-guard/page-action-classifier.mjs`, identifies login/register/submit/search/save/delete/menu/pagination/dialog/upload controls, and calls `/v1/feature-access` through the site's own proxy before disabling protected upload, comment, or post controls. Use registered site `protected_features` and `page_guard_enabled` to keep the admin console and runtime guard aligned.
+To validate a Site Proxy integration:
 
-For no-code local/staging integration, ATEE also serves a reusable site proxy at `/proxy/sites/<site_id>/`. Register a site with `POST /v1/admin/sites`, then browse through the returned `site_proxy.proxy_path`; the proxy injects Page Guard and checks protected write routes before forwarding them to the target site. Custom `site_proxy.path_rules` and `site_proxy.feature_map` allow per-site action mappings without changing target-site code. See [docs/site-proxy-integration.md](docs/site-proxy-integration.md).
+1. Register the site with `POST /v1/admin/sites`.
+2. Visit `/proxy/sites/<site_id>/`.
+3. Create a temporary site feature ban with `POST /v1/admin/site-feature-bans`.
+4. Verify the matching control is disabled and the matching write returns `403` with `atee_blocked=true`.
+5. Revoke the temporary action through `/v1/admin/actions/revoke`.
 
 Administrators can confirm a site-wide feature fuse with `POST /v1/admin/site-feature-bans` using `site_id`, `feature_scope`, and `duration_seconds`. Core stores it as a reversible `feature_ban` with `target_scope.type=site_feature`; revoke it through `/v1/admin/actions/revoke`. AI-generated global fuse suggestions are advisory by default and are returned by `GET /v1/admin/sites`.
 

@@ -270,13 +270,13 @@ class SiteProxyConfigMixin:
     def _action_inventory_key(self, action: dict[str, Any]) -> tuple[str, ...]:
         selector = self._normalize_action_selector(action.get("selector"))
         return (
-            self._text(action.get("page_url"), "", 500).lower(),
+            self._normalize_action_url(action.get("page_url")),
             self._text(action.get("action_type"), "", 80).lower(),
             self._text(action.get("risk_level"), "", 40).lower(),
-            self._text(action.get("label"), "", 160).lower(),
+            self._normalize_action_label(action.get("label")),
             selector,
             self._text(action.get("form_method"), "", 20).upper(),
-            self._text(action.get("form_action") or action.get("href"), "", 240).lower(),
+            self._normalize_action_target(action.get("form_action") or action.get("href")),
             self._text(action.get("suggested_feature_scope"), "", 120).lower(),
         )
 
@@ -285,7 +285,46 @@ class SiteProxyConfigMixin:
         selector = re.sub(r"\s*>\s*", ">", selector)
         selector = re.sub(r"\s+", " ", selector)
         selector = re.sub(r":nth-(?:child|of-type)\(\d+\)", ":nth(*)", selector)
+        selector = re.sub(r"\b\d{2,}\b", "*", selector)
+        selector = re.sub(r"([#._-])\d+\b", r"\1*", selector)
         return selector
+
+    def _normalize_action_label(self, value: Any) -> str:
+        label = self._text(value, "", 160).lower()
+        label = re.sub(r"\s+", " ", label)
+        label = re.sub(r"\b\d{2,}\b", "*", label)
+        return label
+
+    def _normalize_action_target(self, value: Any) -> str:
+        target = self._text(value, "", 240)
+        if not target:
+            return ""
+        parsed = urlsplit(target if "://" in target else f"https://target.example{target if target.startswith('/') else '/' + target}")
+        path = self._normalize_action_path(parsed.path or "/")
+        if "://" in target:
+            return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).lower()
+        return path.lower()
+
+    def _normalize_action_url(self, value: Any) -> str:
+        raw = self._text(value, "", 500)
+        parsed = urlsplit(raw)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return raw.lower()
+        return urlunsplit((parsed.scheme, parsed.netloc, self._normalize_action_path(parsed.path or "/"), "", "")).lower()
+
+    def _normalize_action_path(self, value: Any) -> str:
+        path = str(value or "/")
+        parts = []
+        for part in path.split("/"):
+            if not part:
+                continue
+            if re.fullmatch(r"\d+", part) or re.fullmatch(r"[0-9a-f]{8,}", part, flags=re.IGNORECASE):
+                parts.append(":id")
+            elif re.fullmatch(r"[0-9a-f]{8}-[0-9a-f-]{18,}", part, flags=re.IGNORECASE):
+                parts.append(":id")
+            else:
+                parts.append(part.lower())
+        return "/" + "/".join(parts)
 
 
 class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
@@ -386,9 +425,21 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
         actions: list[dict[str, Any]],
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
-        summary = self._scan_summary(actions, scan.get("status", "completed"))
+        existing_duplicates = 0
         with self._lock, closing(self._connect()) as conn:
             conn.row_factory = sqlite3.Row
+            existing_action_keys = self._existing_action_keys(conn, int(site_id))
+            new_actions: list[dict[str, Any]] = []
+            for action in actions:
+                action_key = self._action_inventory_key(action)
+                if action_key in existing_action_keys:
+                    existing_duplicates += 1
+                    continue
+                new_actions.append(action)
+                existing_action_keys.add(action_key)
+            if scan.get("status") == "completed" and actions and not new_actions:
+                return self._duplicate_scan_record(int(site_id), scan, now, existing_duplicates)
+            summary = self._scan_summary(new_actions, scan.get("status", "completed"))
             cursor = conn.execute(
                 """
                 INSERT INTO site_scan_runs
@@ -411,16 +462,14 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
                 ),
             )
             scan_id = int(cursor.lastrowid)
-            existing_action_keys = self._existing_action_keys(conn, int(site_id))
-            for action in actions:
-                action_key = self._action_inventory_key(action)
-                if action_key in existing_action_keys:
-                    continue
+            for action in new_actions:
                 self._insert_action(conn, int(site_id), scan_id, action, now)
-                existing_action_keys.add(action_key)
             conn.commit()
             row = conn.execute("SELECT * FROM site_scan_runs WHERE id = ?", (scan_id,)).fetchone()
-        return self._scan_from_row(row)
+        record = self._scan_from_row(row)
+        record["inserted_actions"] = len(new_actions)
+        record["existing_duplicates_removed"] = existing_duplicates
+        return record
 
     def list_scans(self, site_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit or 50), 200))
@@ -473,6 +522,31 @@ class SQLiteSiteInventoryStore(SiteProxyConfigMixin):
     def _existing_action_keys(self, conn: sqlite3.Connection, site_id: int) -> set[tuple[str, ...]]:
         rows = conn.execute("SELECT * FROM site_action_inventory WHERE site_id = ?", (int(site_id),)).fetchall()
         return {self._action_inventory_key(self._action_from_row(row)) for row in rows}
+
+    def _duplicate_scan_record(
+        self,
+        site_id: int,
+        scan: dict[str, Any],
+        created_at: str,
+        existing_duplicates: int,
+    ) -> dict[str, Any]:
+        return {
+            "id": None,
+            "site_id": int(site_id),
+            "start_url": scan["start_url"],
+            "status": "duplicate",
+            "allow_high_risk_actions": bool(scan["allow_high_risk_actions"]),
+            "max_pages": int(scan["max_pages"]),
+            "max_actions": int(scan["max_actions"]),
+            "timeout_ms": int(scan["timeout_ms"]),
+            "summary": self._scan_summary([], "duplicate"),
+            "error_untrusted_text": "",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "duplicate_of_existing": True,
+            "inserted_actions": 0,
+            "existing_duplicates_removed": existing_duplicates,
+        }
 
     def delete_scan(self, scan_id: int) -> dict[str, Any]:
         with self._lock, closing(self._connect()) as conn:
@@ -849,16 +923,18 @@ class SiteInventory(SiteProxyConfigMixin):
         }
         if self.store:
             record = self.store.insert_scan(site_id, scan, actions)
+            existing_duplicates = int(record.get("existing_duplicates_removed") or 0)
+            inserted_actions = int(record.get("inserted_actions") if record.get("inserted_actions") is not None else len(actions))
             return {
                 "ok": status != "failed",
                 "scan": record,
-                "actions": actions,
-                "count": len(actions),
-                "duplicates_removed": duplicates_removed,
+                "actions": [] if record.get("duplicate_of_existing") else actions,
+                "count": inserted_actions,
+                "duplicates_removed": duplicates_removed + existing_duplicates,
                 "auto_mapping": auto_mapping,
             }
         result = self._record_memory_scan(site_id, scan, actions)
-        result["duplicates_removed"] = duplicates_removed
+        result["duplicates_removed"] = duplicates_removed + int((result.get("scan") or {}).get("existing_duplicates_removed") or 0)
         result["auto_mapping"] = auto_mapping
         return result
 
@@ -1110,32 +1186,52 @@ class SiteInventory(SiteProxyConfigMixin):
 
     def _record_memory_scan(self, site_id: int, scan: dict[str, Any], actions: list[dict[str, Any]]) -> dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
-        scan_record = {
-            "id": self._next_scan_id,
-            **scan,
-            "summary": self._memory_summary(actions, scan["status"]),
-            "created_at": now,
-            "updated_at": now,
-        }
-        self._next_scan_id += 1
         existing_action_keys = {
             self._action_inventory_key(action)
             for action in self._actions
             if int(action.get("site_id") or 0) == int(site_id)
         }
+        new_actions = []
+        existing_duplicates = 0
         for action in actions:
             action_key = self._action_inventory_key(action)
             if action_key in existing_action_keys:
+                existing_duplicates += 1
                 continue
+            new_actions.append(action)
+            existing_action_keys.add(action_key)
+        if scan["status"] == "completed" and actions and not new_actions:
+            scan_record = {
+                "id": None,
+                **scan,
+                "status": "duplicate",
+                "summary": self._memory_summary([], "duplicate"),
+                "created_at": now,
+                "updated_at": now,
+                "duplicate_of_existing": True,
+                "inserted_actions": 0,
+                "existing_duplicates_removed": existing_duplicates,
+            }
+            return {"ok": True, "scan": scan_record, "actions": [], "count": 0}
+        scan_record = {
+            "id": self._next_scan_id,
+            **scan,
+            "summary": self._memory_summary(new_actions, scan["status"]),
+            "created_at": now,
+            "updated_at": now,
+            "inserted_actions": len(new_actions),
+            "existing_duplicates_removed": existing_duplicates,
+        }
+        self._next_scan_id += 1
+        for action in new_actions:
             action["id"] = self._next_action_id
             action["site_id"] = site_id
             action["scan_id"] = scan_record["id"]
             action["created_at"] = now
             self._next_action_id += 1
             self._actions.append(action)
-            existing_action_keys.add(action_key)
         self._scans.append(scan_record)
-        return {"ok": scan["status"] != "failed", "scan": scan_record, "actions": actions, "count": len(actions)}
+        return {"ok": scan["status"] != "failed", "scan": scan_record, "actions": new_actions, "count": len(new_actions)}
 
     def _site_from_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         base_url = self._url(payload.get("base_url") or payload.get("site_url"), "https://target.example")

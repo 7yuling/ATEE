@@ -187,6 +187,10 @@ class AteeHandler(BaseHTTPRequestHandler):
             result = CORE.create_site_feature_ban(payload, actor=self._admin_actor())
             self._send_json(result, status=int(result.get("status", 200)))
             return
+        if self.path == "/v1/admin/account-bans":
+            result = CORE.manual_account_ban(payload, actor=self._admin_actor())
+            self._send_json(result, status=int(result.get("status", 200)))
+            return
         if self.path == "/v1/admin/site-scans":
             result = CORE.create_site_scan(payload, actor=self._admin_actor())
             self._send_json(result, status=int(result.get("status", 200)))

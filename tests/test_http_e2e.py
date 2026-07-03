@@ -120,14 +120,34 @@ class AteeHttpE2ETests(unittest.TestCase):
             "/v1/feature-access",
             {"user_id": feature_user, "feature_scope": feature_scope},
         )
+        manual_account_ban = self._json(
+            "POST",
+            "/v1/admin/account-bans",
+            {"user_id": "http-account-user", "duration_seconds": 3600, "reason": "http e2e account ban"},
+        )
+        manual_account_blocked = self._json(
+            "POST",
+            "/v1/feature-access",
+            {"user_id": "http-account-user", "feature_scope": "comments"},
+        )
+        manual_account_revoked = self._json(
+            "POST",
+            "/v1/admin/actions/revoke",
+            {"action_id": manual_account_ban["action_result"]["record"]["id"], "reason": "http e2e restore"},
+        )
+        manual_account_restored = self._json(
+            "POST",
+            "/v1/feature-access",
+            {"user_id": "http-account-user", "feature_scope": "comments"},
+        )
         appeal = self._json("POST", "/v1/appeal", {"punishment_id": "http-e2e-p1", "reason": "please review"})
         alias_appeal = self._json(
             "POST",
-            "/api/appeal",
-            {"punishment_id": "http-e2e-p2", "reason": "legacy site route"},
+            "/atee-appeal",
+            {"punishment_id": "http-e2e-p2", "reason": "atee-owned site route"},
         )
         form_appeal = self._form_json(
-            "/api/appeal/submit",
+            "/security/appeal",
             {"punishment_id": "http-e2e-p3", "reason": "form route"},
         )
         pending = self._json("GET", "/v1/admin/appeals?status=pending")
@@ -231,6 +251,7 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertIn("/v1/admin/site-scans", admin_js)
         self.assertIn("/v1/admin/site-actions", admin_js)
         self.assertIn("/v1/admin/site-feature-bans", admin_js)
+        self.assertIn("/v1/admin/account-bans", admin_js)
         self.assertIn("startPageGuard", page_guard_js)
         self.assertIn("/v1/feature-access", page_guard_js)
         self.assertEqual(chunk_status, 200)
@@ -254,6 +275,12 @@ class AteeHttpE2ETests(unittest.TestCase):
         self.assertEqual(feature_appeal["status"], 202)
         self.assertTrue(feature_reviewed["auto_unban"]["executed"])
         self.assertTrue(feature_allowed["allowed"])
+        self.assertTrue(manual_account_ban["ok"])
+        self.assertEqual(manual_account_ban["action_result"]["record"]["action"], "account_ban_short")
+        self.assertFalse(manual_account_blocked["allowed"])
+        self.assertEqual(manual_account_blocked["reason"], "active_account_ban")
+        self.assertTrue(manual_account_revoked["ok"])
+        self.assertTrue(manual_account_restored["allowed"])
         self.assertEqual(appeal["status"], 202)
         self.assertEqual(alias_appeal["status"], 202)
         self.assertEqual(form_appeal["status"], 202)
@@ -335,6 +362,7 @@ class AteeHttpE2ETests(unittest.TestCase):
         class TargetHandler(BaseHTTPRequestHandler):
             login_attempts = 0
             publish_attempts = 0
+            appeal_attempts = 0
             admin_bans = 0
             admin_cookie = ""
             my_appeals_cookie = ""
@@ -416,6 +444,9 @@ class AteeHttpE2ETests(unittest.TestCase):
                 self.end_headers()
 
             def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                if length > 0:
+                    self.rfile.read(length)
                 if self.path == "/api/login":
                     TargetHandler.login_attempts += 1
                     body = b'{"ok":true,"target_login":true}'
@@ -429,6 +460,24 @@ class AteeHttpE2ETests(unittest.TestCase):
                 if self.path == "/api/publish":
                     TargetHandler.publish_attempts += 1
                     body = b'{"ok":true,"published":true}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/api/appeal":
+                    TargetHandler.appeal_attempts += 1
+                    body = b'{"ok":true,"target_appeal":true}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/api/appeal/submit":
+                    TargetHandler.appeal_attempts += 1
+                    body = b'{"ok":true,"target_appeal_form":true}'
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
@@ -559,13 +608,13 @@ class AteeHttpE2ETests(unittest.TestCase):
             )
             proxied_session_appeal = self._json(
                 "POST",
-                f"/proxy/sites/{site_id}/api/appeal",
+                f"/proxy/sites/{site_id}/atee-appeal",
                 {"username": "target-user", "reason": "through proxy session", "contact": ""},
                 headers={"Cookie": "session=target-session-token"},
             )
             proxied_site_form_appeal = self._json(
                 "POST",
-                f"/proxy/sites/{site_id}/api/appeal",
+                f"/proxy/sites/{site_id}/security/appeal",
                 {"username": "target-user", "reason": "through proxy site form", "contact": ""},
             )
             proxied_form_appeal = self._form_json(
@@ -639,22 +688,21 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertIn("Path=/", referer_login_headers["Set-Cookie"])
             self.assertTrue(root_my_appeals["ok"])
             self.assertEqual(TargetHandler.my_appeals_cookie, target_login_cookie)
-            self.assertEqual(proxied_appeal["status"], 202)
+            self.assertTrue(proxied_appeal["target_appeal"])
             self.assertEqual(proxied_session_appeal["status"], 202)
             self.assertEqual(proxied_session_appeal["appeal"]["punishment_id"], session_punishment_id)
             self.assertEqual(proxied_site_form_appeal["status"], 202)
             self.assertEqual(proxied_site_form_appeal["appeal"]["punishment_id"], username_punishment_id)
-            self.assertEqual(proxied_form_appeal["status"], 202)
-            self.assertEqual(referer_form_appeal["status"], 202)
-            self.assertEqual(pending_appeals["count"], 5)
-            self.assertTrue(
-                {"proxy-appeal-p1", "proxy-appeal-p2", "proxy-appeal-p3"}.issubset(
-                    {item["punishment_id"] for item in pending_appeals["appeals"]}
-                )
-            )
+            self.assertTrue(proxied_form_appeal["target_appeal_form"])
+            self.assertTrue(referer_form_appeal["target_appeal_form"])
+            self.assertEqual(pending_appeals["count"], 2)
+            pending_appeal_ids = {item["punishment_id"] for item in pending_appeals["appeals"]}
+            self.assertNotIn("proxy-appeal-p1", pending_appeal_ids)
+            self.assertNotIn("proxy-appeal-p2", pending_appeal_ids)
+            self.assertNotIn("proxy-appeal-p3", pending_appeal_ids)
             self.assertTrue(
                 {username_punishment_id, session_punishment_id}.issubset(
-                    {item["punishment_id"] for item in pending_appeals["appeals"]}
+                    pending_appeal_ids
                 )
             )
             self.assertEqual(registered["site"]["site_proxy"]["standard"], "atee_site_proxy_v1")
@@ -700,6 +748,7 @@ class AteeHttpE2ETests(unittest.TestCase):
             self.assertEqual(blocked_publish["feature_scope"], "publishing")
             self.assertEqual(TargetHandler.login_attempts, 2)
             self.assertEqual(TargetHandler.publish_attempts, 0)
+            self.assertEqual(TargetHandler.appeal_attempts, 3)
             self.assertEqual(TargetHandler.admin_bans, 1)
             self.assertEqual(TargetHandler.admin_cookie, "target_admin=ok")
         finally:

@@ -25,9 +25,18 @@ def normalize_appeal_path(path: Any) -> str:
     return value.rstrip("/") or "/"
 
 
+def is_site_api_path(path: str) -> bool:
+    normalized = normalize_appeal_path(path)
+    return normalized == "/api" or normalized.startswith("/api/")
+
+
 def configured_appeal_paths(config: "AdminConfig") -> set[str]:
     paths = [*BUILT_IN_APPEAL_PATHS, *config.appeal_paths]
-    return {normalized for item in paths if (normalized := normalize_appeal_path(item))}
+    return {
+        normalized
+        for item in paths
+        if (normalized := normalize_appeal_path(item)) and not is_site_api_path(normalized)
+    }
 
 
 def is_appeal_path(path: str, config: "AdminConfig") -> bool:

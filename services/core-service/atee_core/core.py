@@ -38,6 +38,7 @@ from .tool_gateway import ToolGateway
 
 ASYNC_REVIEW_PAUSE_REASONS = {"llm_budget_exhausted"}
 MANUAL_FEATURE_BAN_MAX_SECONDS = 7 * 24 * 3600
+MANUAL_ACCOUNT_BAN_MAX_SECONDS = 24 * 3600
 INTEGRATION_PLAN_DEFAULT_FEATURES = ["comments"]
 INTEGRATION_PLAN_SENSITIVE_MARKERS = (
     "authorization",
@@ -234,6 +235,25 @@ class CoreService:
                 "display": {
                     "locale": "zh-CN",
                     "message_zh": "Feature access is blocked by an active ATEE site feature_ban.",
+                },
+            }
+
+        active_account_action = self.executor.find_active_user(str(user_hash or ""), site_id)
+        if active_account_action:
+            return {
+                "ok": True,
+                "status": 200,
+                "allowed": False,
+                "reason": "active_account_ban",
+                "site_id": site_id,
+                "user_hash": user_hash,
+                "feature_scope": feature,
+                "active_action": active_account_action,
+                "punishment_id": active_account_action.get("punishment_id"),
+                "expires_at": active_account_action.get("expires_at"),
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "Feature access is blocked by an active ATEE account_ban_short.",
                 },
             }
 
@@ -1386,6 +1406,90 @@ class CoreService:
                 actor,
             )
         return result
+
+    def manual_account_ban(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.config.runtime_mode == "read_only":
+            return {
+                "ok": False,
+                "status": 423,
+                "reason": "read_only_mode_blocks_manual_account_ban",
+                "display": {
+                    "locale": "zh-CN",
+                    "message_zh": "Read-only mode blocks manual account bans.",
+                },
+            }
+        user_hash = self._manual_account_user_hash(payload)
+        if not user_hash:
+            return {"ok": False, "status": 400, "reason": "user_identifier_required"}
+        site_id = self._optional_site_id(payload.get("site_id"))
+        if site_id is not None and not self.site_inventory.get_site(site_id):
+            return {"ok": False, "status": 404, "reason": "site_not_found"}
+        try:
+            duration_seconds = int(payload.get("duration_seconds") or 3600)
+        except (TypeError, ValueError):
+            duration_seconds = 3600
+        duration_seconds = max(60, min(duration_seconds, MANUAL_ACCOUNT_BAN_MAX_SECONDS))
+        reason = str(payload.get("reason") or payload.get("admin_note") or "manual account ban").strip()[:1000]
+        target_scope = {
+            "type": "user",
+            "hash": user_hash,
+        }
+        if site_id:
+            target_scope["site_id"] = site_id
+        decision = {
+            "selected_action": "account_ban_short",
+            "scores": {
+                "evidence_score": 1.0,
+                "behavior_score": 1.0,
+                "reputation_score": 1.0,
+                "ai_confidence": 0.0,
+                "final_confidence": 1.0,
+            },
+            "reason_codes": ["manual_account_ban"],
+            "admin_explanation": "Manual reviewer applied a reversible short account ban.",
+            "duration_seconds": duration_seconds,
+            "target_scope": target_scope,
+        }
+        gateway = {
+            "allowed": True,
+            "executed": True,
+            "effective_action": "account_ban_short",
+            "reason": "manual_account_ban_policy_passed",
+        }
+        action_record = self.executor.execute(decision, gateway)
+        ledger_record = self.ledger.record(
+            {
+                "severity": "high",
+                "event_type": "manual_account_ban",
+                "endpoint_type": "admin",
+                "action": "account_ban_short",
+                "summary": self._admin_summary(
+                    (
+                        f"manual_account_ban site_id={site_id or ''} user_hash={user_hash} "
+                        f"duration_seconds={duration_seconds} duplicate={bool(action_record.get('duplicate'))} "
+                        f"reason={reason}"
+                    ),
+                    actor,
+                ),
+            }
+        )
+        return {
+            "ok": True,
+            "status": 200,
+            "manual_review": True,
+            "reviewer_action": "account_ban_short",
+            "decision": decision,
+            "tool_gateway": gateway,
+            "action_result": action_record,
+            "ledger_record": ledger_record,
+            "raw_prompt_stored": False,
+            "raw_request_body_stored": False,
+            "raw_user_identifier_stored": False,
+            "display": {
+                "locale": "zh-CN",
+                "message_zh": "Manual account ban has been recorded.",
+            },
+        }
 
     def manual_review_async_job(self, payload: dict[str, Any], actor: dict[str, str] | None = None) -> dict[str, Any]:
         if self.config.runtime_mode == "read_only":
@@ -2612,6 +2716,16 @@ class CoreService:
         if action_id <= 0:
             return None, "invalid_action_punishment_id"
         return action_id, "ok"
+
+    def _manual_account_user_hash(self, payload: dict[str, Any]) -> str:
+        supplied_hash = str(payload.get("user_hash") or "").strip()
+        if supplied_hash:
+            return supplied_hash[:128]
+        for key in ("user_id", "username", "account", "login", "uid", "user"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return str(self.packet_compiler._hash(value) or "")
+        return ""
 
     def _optional_site_id(self, value: Any) -> int | None:
         if value is None or value == "":

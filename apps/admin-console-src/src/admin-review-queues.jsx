@@ -160,6 +160,8 @@ export function ActionsTab({
   actionColumns,
   actions,
   actionForm,
+  accountBanForm,
+  manualAccountBan,
   cleanupActions,
   revokeAction,
   deleteActionRecord,
@@ -239,6 +241,35 @@ export function ActionsTab({
         pagination={{ pageSize: 5 }}
         onRow={(record) => activatableRow(() => actionForm.setFieldsValue({ action_id: record.id }))}
       />
+      <Form form={accountBanForm} layout="inline" className="review-form">
+        <Form.Item label="账号 ID" name="user_id">
+          <Input id="manualAccountUserIdInput" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="用户哈希" name="user_hash">
+          <Input id="manualAccountUserHashInput" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="站点 ID" name="site_id">
+          <Input id="manualAccountSiteIdInput" inputMode="numeric" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="封禁秒数" name="duration_seconds">
+          <Input id="manualAccountDurationInput" inputMode="numeric" autoComplete="off" />
+        </Form.Item>
+        <Form.Item label="原因" name="reason">
+          <Input id="manualAccountReasonInput" autoComplete="off" />
+        </Form.Item>
+        <Form.Item>
+          <Popconfirm
+            title="确认手动封禁账号"
+            description="只记录可撤销的 ATEE account_ban_short 动作；不会写入接入站业务数据库。"
+            okText="确认封禁"
+            cancelText="取消"
+            onConfirm={manualAccountBan}
+            disabled={writeLocked}
+          >
+            <Button id="manualAccountBanBtn" danger disabled={writeLocked}>手动封禁账号</Button>
+          </Popconfirm>
+        </Form.Item>
+      </Form>
       <Form form={actionForm} layout="inline" className="review-form">
         <Form.Item label="动作编号" name="action_id">
           <Input id="actionIdInput" inputMode="numeric" autoComplete="off" />

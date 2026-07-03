@@ -444,7 +444,11 @@ class AteeCoreTests(unittest.TestCase):
             self.assertTrue(scan["ok"])
             self.assertEqual(scan["duplicates_removed"], 2)
             self.assertTrue(repeat_scan["ok"])
+            self.assertEqual(repeat_scan["scan"]["status"], "duplicate")
+            self.assertEqual(repeat_scan["count"], 0)
+            self.assertEqual(repeat_scan["duplicates_removed"], 1)
             self.assertEqual(core.admin_site_actions(site_id=site["id"])["count"], 3)
+            self.assertEqual(core.admin_site_scans(site_id=site["id"])["count"], 1)
             self.assertEqual(len(delete_actions), 2)
             self.assertEqual(
                 {action["page_url"] for action in delete_actions},
@@ -2020,6 +2024,37 @@ class AteeCoreTests(unittest.TestCase):
             self.assertIn("manual_async_review", result["ledger_record"]["summary"])
             self.assertNotIn("user-123", json.dumps(result, ensure_ascii=False))
 
+    def test_manual_account_ban_records_reversible_action_and_blocks_feature_access(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="auto", llm_mode="mock"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+            result = core.manual_account_ban(
+                {
+                    "user_id": "account-123",
+                    "duration_seconds": 7200,
+                    "reason": "confirmed abuse pattern",
+                },
+                actor={"id": "ops", "id_hash": "sha256:ops", "source_hash": "sha256:src"},
+            )
+            duplicate = core.manual_account_ban({"user_id": "account-123", "duration_seconds": 7200})
+            access = core.feature_access({"user_id": "account-123", "feature_scope": "comments"})
+            actions = core.admin_actions(status="active")["actions"]
+            user_hash = core.packet_compiler._hash("account-123")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["reviewer_action"], "account_ban_short")
+            self.assertEqual(result["action_result"]["record"]["action"], "account_ban_short")
+            self.assertEqual(result["action_result"]["record"]["target_scope"]["type"], "user")
+            self.assertEqual(result["action_result"]["record"]["target_scope"]["hash"], user_hash)
+            self.assertTrue(duplicate["action_result"]["duplicate"])
+            self.assertEqual(len(actions), 1)
+            self.assertFalse(access["allowed"])
+            self.assertEqual(access["reason"], "active_account_ban")
+            self.assertEqual(access["punishment_id"], result["action_result"]["record"]["punishment_id"])
+            self.assertNotIn("account-123", json.dumps({"result": result, "access": access}, ensure_ascii=False))
+
     def test_read_only_blocks_manual_async_review_action(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             core = CoreService(
@@ -2043,6 +2078,20 @@ class AteeCoreTests(unittest.TestCase):
             self.assertEqual(result["status"], 423)
             self.assertEqual(result["reason"], "read_only_mode_blocks_manual_review")
             self.assertEqual(core.admin_async_reviews(status="pending")["count"], 1)
+            self.assertEqual(core.admin_actions(status="active")["count"], 0)
+
+    def test_read_only_blocks_manual_account_ban(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            core = CoreService(
+                config=AdminConfig(runtime_mode="read_only", llm_mode="mock"),
+                config_path=Path(temp_dir) / "config" / "config.json",
+            )
+
+            result = core.manual_account_ban({"user_id": "account-123"})
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["status"], 423)
+            self.assertEqual(result["reason"], "read_only_mode_blocks_manual_account_ban")
             self.assertEqual(core.admin_actions(status="active")["count"], 0)
 
     def test_read_only_blocks_async_review_processing(self):

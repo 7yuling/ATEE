@@ -173,6 +173,9 @@ class ActionExecutor:
             "revoked_at": None,
             "revoke_reason_untrusted_text": None,
         }
+        existing = self._active_by_idempotency_key(record["idempotency_key"])
+        if existing:
+            return {"executed": True, "record": self._decorate_record(existing), "duplicate": True}
         if self.store:
             record["id"] = self.store.insert(record)
         self.actions.append(record)
@@ -217,6 +220,21 @@ class ActionExecutor:
                 and target.get("type") == "site_feature"
                 and self._clean_site_id(target.get("site_id")) == site_id
                 and str(target.get("feature") or "") == feature
+            ):
+                return record
+        return None
+
+    def find_active_user(self, user_hash: str, site_id: int | None = None) -> dict[str, Any] | None:
+        user_hash = str(user_hash or "").strip()
+        if not user_hash:
+            return None
+        for record in self.list_actions(status="active"):
+            target = record.get("target_scope") or {}
+            if (
+                record.get("action") == "account_ban_short"
+                and target.get("type") == "user"
+                and str(target.get("hash") or target.get("user_hash") or "") == user_hash
+                and self._site_matches(target, site_id)
             ):
                 return record
         return None
@@ -329,13 +347,27 @@ class ActionExecutor:
             )
         if target.get("type") == "site_feature":
             return f"{action}:site_feature:{target.get('site_id') or 'unknown'}:{target.get('feature') or 'unknown'}"
+        if target.get("type") == "user":
+            return (
+                f"{action}:user:{target.get('site_id') or 'global'}:"
+                f"{target.get('hash') or target.get('user_hash') or 'unknown'}"
+            )
         return f"{action}:{target.get('type')}:{target.get('hash') or target.get('name') or target.get('user_hash') or 'request'}"
 
     def _decorate_record(self, record: dict[str, Any]) -> dict[str, Any]:
         decorated = dict(record)
-        if decorated.get("action") == "feature_ban" and decorated.get("id") is not None:
+        if decorated.get("action") in {"feature_ban", "account_ban_short"} and decorated.get("id") is not None:
             decorated["punishment_id"] = f"action:{decorated['id']}"
         return decorated
+
+    def _active_by_idempotency_key(self, key: str) -> dict[str, Any] | None:
+        self.cleanup_expired()
+        if self.store:
+            self.actions = self.store.load_all()
+        for record in self.actions:
+            if record.get("status", "active") == "active" and record.get("idempotency_key") == key:
+                return record
+        return None
 
     def _site_matches(self, target: dict[str, Any], site_id: int | None) -> bool:
         site_id = self._clean_site_id(site_id)

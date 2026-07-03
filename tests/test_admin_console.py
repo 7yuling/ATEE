@@ -58,6 +58,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/actions?status=", js)
         self.assertIn("/v1/admin/actions/", js)
         self.assertIn("/v1/admin/actions/revoke", js)
+        self.assertIn("/v1/admin/account-bans", js)
         self.assertIn("/v1/admin/async-reviews?status=", js)
         self.assertIn("/v1/admin/async-reviews/", js)
         self.assertIn("/v1/admin/async-reviews/run", js)
@@ -135,6 +136,12 @@ class AdminConsoleTests(unittest.TestCase):
             "cleanupActionsBtn",
             "clearActionRecordsBtn",
             "deleteActionRecord-${record.id}",
+            "manualAccountUserIdInput",
+            "manualAccountUserHashInput",
+            "manualAccountSiteIdInput",
+            "manualAccountDurationInput",
+            "manualAccountReasonInput",
+            "manualAccountBanBtn",
             "revokeActionBtn",
             "llmState",
             "circuitState",
@@ -309,6 +316,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertIn("/v1/admin/site-actions", source)
         self.assertIn("/v1/admin/site-actions/", source)
         self.assertIn("/v1/admin/site-feature-bans", source)
+        self.assertIn("/v1/admin/account-bans", source)
         self.assertIn("startPageGuard", source)
         self.assertIn("classifyControl", source)
         self.assertIn("details=1", source)
