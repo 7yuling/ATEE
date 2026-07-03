@@ -392,6 +392,20 @@ The returned site includes:
 
 Open the target site through `site_proxy.proxy_path`; direct visits to the original `base_url` do not get ATEE interception. Target-site absolute paths stay under the proxy prefix, for example `/api/me` becomes `/proxy/sites/<site_id>/api/me` and `/admin` becomes `/proxy/sites/<site_id>/admin`.
 
+For a local demo site, the `base_url` or admin console "入口 URL" field should be the URL that ATEE Core can reach for the target site, not the ATEE proxy URL. For example:
+
+```text
+ATEE Core:        http://127.0.0.1:8787/
+Target demo site: http://127.0.0.1:8791/
+入口 URL:          http://127.0.0.1:8791/
+Visitor URL:      http://127.0.0.1:8787/proxy/sites/1/
+Target admin:     http://127.0.0.1:8787/proxy/sites/1/admin
+```
+
+If the target site is `http://47.96.1.3:5001/` and its admin page is `http://47.96.1.3:5001/admin`, register the site with `base_url` set to `http://47.96.1.3:5001/`. Do not put `/admin` in the entry URL; after registration, visit the admin page through `/proxy/sites/<site_id>/admin`.
+
+Visitors should use the ATEE proxy entry, not the target site's original URL. Local single-machine demos can open `http://127.0.0.1:8787/proxy/sites/<site_id>/` directly and do not need Nginx. Remote demos, shared staging, or production deployments should expose ATEE Core through Nginx/Caddy, then visitors open `https://atee.example.com/proxy/sites/<site_id>/`. In that topology Nginx/Caddy publishes ATEE, and ATEE Site Proxy forwards allowed traffic to the target site.
+
 The standard Site Proxy defaults cover common protected writes:
 
 - `POST /api/login` -> `login`
