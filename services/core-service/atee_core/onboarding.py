@@ -68,7 +68,7 @@ ONBOARDING_STEPS = [
         "id": "appeal",
         "title_zh": "6. 申诉通道",
         "plain_text_zh": "被限制用户仍应能访问申诉入口，管理员在申诉页只处理必要记录。",
-        "recommended_default_zh": "保留 /atee-appeal、/security/appeal 和 /api/appeal/submit 等入口。",
+        "recommended_default_zh": "保留 /atee-appeal、/security/appeal 和 /.well-known/atee-appeal 等入口。",
         "risk_zh": "申诉入口必须限流，且申诉理由按不可信文本渲染。",
         "next_action_zh": "打开申诉处理",
         "details_zh": [

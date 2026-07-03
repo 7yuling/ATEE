@@ -6,13 +6,11 @@ from typing import Any
 
 
 CORE_APPEAL_PATH = "/v1/appeal"
-BUILT_IN_APPEAL_PATHS = (CORE_APPEAL_PATH, "/api/appeal")
+BUILT_IN_APPEAL_PATHS = (CORE_APPEAL_PATH,)
 DEFAULT_APPEAL_PATHS = (
     "/atee-appeal",
     "/security/appeal",
     "/.well-known/atee-appeal",
-    "/api/appeal",
-    "/api/appeal/submit",
 )
 
 

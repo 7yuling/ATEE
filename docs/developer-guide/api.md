@@ -216,7 +216,7 @@ The optional demo site runs separately on `http://127.0.0.1:8790/` and uses the 
 - `POST /api/login` maps to Core `/v1/check` with `event_type=login`.
 - `POST /api/comment` maps to Core `/v1/event` with `event_type=comment_create`.
 - `POST /api/upload` maps to Core `/v1/event` with `event_type=file_upload`.
-- `POST /api/appeal` maps to Core `/v1/appeal`.
+- `POST /api/appeal` maps to Core `/v1/appeal` in this thin-adapter demo only. In Site Proxy integrations, target-site `/api/appeal` remains target-owned; use `/v1/appeal` or ATEE-owned aliases such as `/atee-appeal`, `/security/appeal`, and `/.well-known/atee-appeal` for ATEE appeals.
 
 The demo response includes a compact `security` summary plus the raw `core_response` for local verification.
 

@@ -14,7 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "services" / "core-service"))
 
 from atee_core import http_server  # noqa: E402
-from atee_core.config import AdminConfig  # noqa: E402
+from atee_core.config import (  # noqa: E402
+    AdminConfig,
+    configured_appeal_paths,
+    is_appeal_path,
+)
 from atee_core.core import CoreService  # noqa: E402
 from atee_core.site_proxy import proxy_path_from_referer  # noqa: E402
 
@@ -24,6 +28,30 @@ SPEC = importlib.util.spec_from_file_location("dining_hall_integration_smoke", S
 dining_hall_smoke = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(dining_hall_smoke)
+
+
+class DiningHallAppealPathConfigTests(unittest.TestCase):
+    def test_site_api_appeal_paths_stay_target_owned(self):
+        default_paths = configured_appeal_paths(AdminConfig())
+        self.assertIn("/v1/appeal", default_paths)
+        self.assertIn("/atee-appeal", default_paths)
+        self.assertIn("/security/appeal", default_paths)
+        self.assertIn("/.well-known/atee-appeal", default_paths)
+        self.assertNotIn("/api/appeal", default_paths)
+        self.assertNotIn("/api/appeal/submit", default_paths)
+
+        config = AdminConfig(
+            appeal_paths=("/api/appeal", "/api/appeal/submit", "/security/appeal"),
+        )
+        paths = configured_appeal_paths(config)
+
+        self.assertIn("/v1/appeal", paths)
+        self.assertIn("/security/appeal", paths)
+        self.assertNotIn("/api/appeal", paths)
+        self.assertNotIn("/api/appeal/submit", paths)
+        self.assertFalse(is_appeal_path("/api/appeal", config))
+        self.assertFalse(is_appeal_path("/api/appeal/submit", config))
+        self.assertTrue(is_appeal_path("/security/appeal", config))
 
 
 class DiningHallSiteProxyTests(unittest.TestCase):

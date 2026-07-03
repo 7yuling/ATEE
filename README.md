@@ -302,6 +302,11 @@ The browser script starts a temporary mock Core Service on a random localhost po
 - Upload: `POST /api/upload` -> Core `/v1/event`
 - Appeal: `POST /api/appeal` -> Core `/v1/appeal`
 
+This `/api/appeal` route is owned by the demo thin adapter. Under Site Proxy,
+target-site `/api/appeal` and `/api/appeal/submit` remain target routes; ATEE
+appeals use `/v1/appeal`, `/atee-appeal`, `/security/appeal`, or
+`/.well-known/atee-appeal`.
+
 The demo UI uses external CSS/JS assets and renders returned text with `textContent`.
 
 ## Target Site Integration Methods

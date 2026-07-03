@@ -6,8 +6,7 @@
   "appeal_paths": [
     "/atee-appeal",
     "/security/appeal",
-    "/.well-known/atee-appeal",
-    "/api/appeal/submit"
+    "/.well-known/atee-appeal"
   ],
   "auto_ip_ban_enabled": false,
   "bypass_enabled": false,

@@ -63,7 +63,8 @@ PUT  /api/me/password      -> account_settings
 ```
 
 `/api/appeal` remains a Dining Hall route. Do not map it to ATEE `/v1/appeal`
-for this first integration; ATEE appeals still use ATEE-owned appeal paths.
+for this first integration; ATEE appeals use `/v1/appeal` or ATEE-owned aliases
+such as `/atee-appeal`, `/security/appeal`, and `/.well-known/atee-appeal`.
 
 ## Verification Notes
 
